@@ -1,0 +1,22 @@
+node_modules/
+dist/
+out/
+release/
+.DS_Store
+*.log
+
+# Secrets
+plexfixer.env
+.env
+.env.*
+
+# Bundled ffmpeg binaries (fetched via npm run fetch:ffmpeg).
+# The per-platform folders are tracked so electron-builder always has an
+# extraResources source to point at; the binaries themselves are not.
+resources/bin/**
+!resources/bin/*/
+!resources/bin/*/.gitkeep
+
+# Vite
+.vite/
+stats.html

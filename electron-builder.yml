@@ -1,0 +1,62 @@
+appId: com.timothyweaver.plexfixer
+productName: PlexFixer
+copyright: Copyright © 2026 Timothy Weaver
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+
+# Static ffmpeg/ffprobe are bundled per platform and land in
+# `process.resourcesPath/bin/<platform>-<arch>/`, which `locate.ts` looks in.
+extraResources:
+  - from: resources/bin/${platform}-${arch}
+    to: bin/${platform}-${arch}
+    filter:
+      - '**/*'
+
+asar: true
+# ffmpeg is spawned as a child process, so it must stay outside the asar
+# archive — extraResources already places it there.
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.video
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSDocumentsFolderUsageDescription: PlexFixer needs access to the folders holding your media files.
+    NSDownloadsFolderUsageDescription: PlexFixer needs access to the folders holding your media files.
+    NSRemovableVolumeUsageDescription: PlexFixer needs access to external drives holding your media files.
+    NSNetworkVolumesUsageDescription: PlexFixer needs access to network shares holding your media files.
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-Setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: PlexFixer
+
+linux:
+  target:
+    - AppImage
+  category: AudioVideo

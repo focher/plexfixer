@@ -1,0 +1,367 @@
+/**
+ * Turning a `RepairPlan` into ffmpeg arguments.
+ *
+ * The fiddly part is stream addressing. `-map` takes absolute input indexes
+ * (`0:3`), but `-disposition`, `-metadata` and per-stream codec options take
+ * *output* ordinals within a type (`:a:1` is the second audio track of the
+ * output). The builder therefore tracks both as it assembles the map list.
+ */
+
+import type {
+  AnalysisResult,
+  AppSettings,
+  EncoderCapabilities,
+  MediaStream,
+  RepairPlan,
+  TrackPlanChange
+} from '@shared/types.js'
+import { canStreamCopyIntoMp4 } from '@shared/plex/rules.js'
+
+/** Per-type output ordinal for a mapped stream. */
+interface MappedStream {
+  source: MediaStream
+  /** 'v' | 'a' | 's' | 't' — the ffmpeg stream-specifier letter. */
+  specifier: 'v' | 'a' | 's' | 't'
+  ordinal: number
+}
+
+function specifierFor(stream: MediaStream): 'v' | 'a' | 's' | 't' | undefined {
+  switch (stream.kind) {
+    case 'video':
+      return 'v'
+    case 'audio':
+      return 'a'
+    case 'subtitle':
+      return 's'
+    case 'attachment':
+      return 't'
+    default:
+      return undefined
+  }
+}
+
+function changeFor(plan: RepairPlan, streamIndex: number): TrackPlanChange | undefined {
+  // Several changes can target one stream (language + flags); merge them.
+  const matches = plan.trackChanges.filter((c) => c.streamIndex === streamIndex)
+  if (matches.length === 0) return undefined
+  return matches.reduce((acc, next) => ({
+    ...acc,
+    ...next,
+    reason: acc.reason === next.reason ? acc.reason : `${acc.reason}; ${next.reason}`
+  }))
+}
+
+/* ------------------------------------------------------------------ *
+ * Video encoder selection
+ * ------------------------------------------------------------------ */
+
+export interface EncoderChoice {
+  /** ffmpeg encoder name, e.g. `h264_nvenc`. */
+  encoder: string
+  /** Rate-control arguments for the chosen quality. */
+  rateControl: string[]
+  /** Human label for the UI. */
+  label: string
+  hardware: boolean
+}
+
+/**
+ * Pick the video encoder.
+ *
+ * NVENC is preferred when it is actually usable (detection runs a real test
+ * encode, so a build that merely advertises it does not win). VideoToolbox
+ * covers Apple hardware, which has no NVENC at all. libx264/libx265 is the
+ * fallback and is always correct, just slow.
+ */
+export function chooseVideoEncoder(
+  codec: 'h264' | 'hevc',
+  quality: number,
+  settings: AppSettings,
+  caps: EncoderCapabilities | undefined
+): EncoderChoice {
+  const preference = settings.hardwareEncoder
+  const want = (kind: 'nvenc' | 'videotoolbox' | 'qsv' | 'amf'): boolean => {
+    if (preference === 'none') return false
+    if (preference !== 'auto' && preference !== kind) return false
+    return caps?.[kind] === true
+  }
+
+  if (want('nvenc')) {
+    return {
+      encoder: `${codec}_nvenc`,
+      // Constant-quality VBR: -cq sets the target, -b:v 0 keeps the bitrate
+      // cap out of the way so quality, not bitrate, drives the encode.
+      rateControl: ['-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', String(quality), '-b:v', '0'],
+      label: `NVIDIA NVENC (${codec.toUpperCase()})`,
+      hardware: true
+    }
+  }
+
+  if (want('qsv')) {
+    return {
+      encoder: `${codec}_qsv`,
+      rateControl: ['-global_quality', String(quality), '-preset', 'medium'],
+      label: `Intel Quick Sync (${codec.toUpperCase()})`,
+      hardware: true
+    }
+  }
+
+  if (want('amf')) {
+    return {
+      encoder: `${codec}_amf`,
+      rateControl: ['-rc', 'cqp', '-qp_i', String(quality), '-qp_p', String(quality), '-quality', 'balanced'],
+      label: `AMD AMF (${codec.toUpperCase()})`,
+      hardware: true
+    }
+  }
+
+  if (want('videotoolbox')) {
+    // VideoToolbox quality runs 1-100, higher is better — the inverse of CRF.
+    const q = Math.max(10, Math.min(95, Math.round(100 - quality * 1.8)))
+    return {
+      encoder: `${codec}_videotoolbox`,
+      rateControl: ['-q:v', String(q)],
+      label: `Apple VideoToolbox (${codec.toUpperCase()})`,
+      hardware: true
+    }
+  }
+
+  return {
+    encoder: codec === 'hevc' ? 'libx265' : 'libx264',
+    rateControl: ['-preset', 'medium', '-crf', String(quality)],
+    label: codec === 'hevc' ? 'libx265 (CPU)' : 'libx264 (CPU)',
+    hardware: false
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Main command
+ * ------------------------------------------------------------------ */
+
+export interface BuildCommandOptions {
+  result: AnalysisResult
+  settings: AppSettings
+  caps?: EncoderCapabilities
+  outputPath: string
+}
+
+export interface BuiltCommand {
+  args: string[]
+  /** Encoder used for video, when re-encoding. */
+  encoderLabel?: string
+}
+
+export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
+  const { result, settings, caps, outputPath } = options
+  const { file, plan } = result
+  const toMp4 = plan.targetContainer === 'mp4'
+
+  const args: string[] = ['-i', file.path]
+  const mapped: MappedStream[] = []
+  const counters: Record<'v' | 'a' | 's' | 't', number> = { v: 0, a: 0, s: 0, t: 0 }
+
+  /* --- 1. Decide which streams survive, in output order --------------- */
+
+  const keep = (stream: MediaStream): void => {
+    const specifier = specifierFor(stream)
+    if (!specifier) return
+    args.push('-map', `0:${stream.index}`)
+    mapped.push({ source: stream, specifier, ordinal: counters[specifier]++ })
+  }
+
+  const dropped = new Set(plan.trackChanges.filter((c) => c.drop).map((c) => c.streamIndex))
+
+  const videoTracks = file.streams.filter((s) => s.kind === 'video' && !dropped.has(s.index))
+  const audioTracks = file.streams.filter((s) => s.kind === 'audio' && !dropped.has(s.index))
+  const subtitleTracks = file.streams.filter((s) => s.kind === 'subtitle' && !dropped.has(s.index))
+  const attachments = file.streams.filter((s) => s.kind === 'attachment')
+
+  for (const stream of videoTracks) keep(stream)
+
+  // The companion AAC track is mapped first so that clients which ignore the
+  // default flag entirely still land on a track they can play.
+  let compatAudioOrdinal: number | undefined
+  if (plan.addCompatibilityAudio) {
+    const source = file.streams.find((s) => s.index === plan.addCompatibilityAudio!.sourceStreamIndex)
+    if (source) {
+      args.push('-map', `0:${source.index}`)
+      compatAudioOrdinal = counters.a++
+    }
+  }
+
+  for (const stream of audioTracks) {
+    // Backstop: the planner keeps the container as MKV when an audio codec
+    // cannot live in MP4, so this should never drop anything. It exists so a
+    // bad plan produces a file missing a track rather than an unplayable mux.
+    if (toMp4 && !canStreamCopyIntoMp4('audio', stream.codec)) continue
+    keep(stream)
+  }
+
+  for (const stream of subtitleTracks) {
+    // MP4 can only carry text subtitles; anything else was already dropped by
+    // the planner, but guard here so a bad plan cannot produce a broken mux.
+    if (toMp4 && !canStreamCopyIntoMp4('subtitle', stream.codec)) continue
+    keep(stream)
+  }
+
+  // Fonts and other attachments only belong in MKV.
+  if (!toMp4) for (const stream of attachments) keep(stream)
+
+  /* --- 2. Codecs ------------------------------------------------------- */
+
+  let encoderLabel: string | undefined
+
+  if (plan.videoTranscode) {
+    const spec = plan.videoTranscode
+    const choice = chooseVideoEncoder(spec.codec, spec.quality, settings, caps)
+    encoderLabel = choice.label
+
+    const filters: string[] = []
+    // yadif over bwdif: present in every ffmpeg build, and the quality
+    // difference does not matter once the source is already interlaced SD.
+    if (spec.deinterlace) filters.push('yadif=mode=0:parity=-1:deint=0')
+    if (spec.scaleHeight) filters.push(`scale=-2:${spec.scaleHeight}:flags=lanczos`)
+
+    args.push('-c:v', choice.encoder, ...choice.rateControl)
+
+    if (spec.forceYuv420p) {
+      // Hardware encoders reject 10-bit input for H.264 outright, so the
+      // conversion is done in the filter graph rather than left to the encoder.
+      filters.push('format=yuv420p')
+    }
+    if (filters.length > 0) args.push('-vf', filters.join(','))
+
+    if (spec.codec === 'h264') {
+      args.push('-profile:v', 'high')
+      // Only cap the level where the resolution can actually fit inside it —
+      // Level 4.1 cannot express 4K, and ffmpeg would reject the combination.
+      const primaryVideo = videoTracks[0]
+      const sourceHeight = primaryVideo && primaryVideo.kind === 'video' ? primaryVideo.height : 0
+      const outputHeight = spec.scaleHeight ?? sourceHeight
+      if (outputHeight > 0 && outputHeight <= 1080) args.push('-level:v', '4.1')
+    } else {
+      args.push('-profile:v', 'main10')
+    }
+  } else {
+    args.push('-c:v', 'copy')
+  }
+
+  args.push('-c:a', 'copy')
+  if (compatAudioOrdinal != null && plan.addCompatibilityAudio) {
+    const spec = plan.addCompatibilityAudio
+    args.push(
+      `-c:a:${compatAudioOrdinal}`,
+      'aac',
+      `-ac:a:${compatAudioOrdinal}`,
+      String(spec.channels),
+      `-b:a:${compatAudioOrdinal}`,
+      `${spec.bitrateKbps}k`,
+      // Keep the AAC profile at LC: HE-AAC saves bitrate but is not universal.
+      `-profile:a:${compatAudioOrdinal}`,
+      'aac_low'
+    )
+  }
+
+  if (counters.s > 0) {
+    // MP4 stores text subtitles as tx3g; MKV keeps whatever came in.
+    args.push('-c:s', toMp4 ? 'mov_text' : 'copy')
+  }
+  if (counters.t > 0) args.push('-c:t', 'copy')
+
+  /* --- 3. Metadata, dispositions and languages -------------------------- */
+
+  for (const entry of mapped) {
+    const change = changeFor(plan, entry.source.index)
+    const target = `${entry.specifier}:${entry.ordinal}`
+
+    if (change?.setLanguage) {
+      args.push(`-metadata:s:${target}`, `language=${change.setLanguage}`)
+    }
+
+    // Dispositions are copied from the source by default, so only emit an
+    // override where the plan actually changes something.
+    const setDefault = change?.setDefault
+    const setForced = change?.setForced
+    if (setDefault != null || setForced != null) {
+      const flags: string[] = []
+      const isDefault = setDefault ?? entry.source.disposition.default
+      const isForced = setForced ?? entry.source.disposition.forced
+      if (isDefault) flags.push('default')
+      if (isForced) flags.push('forced')
+      if (entry.source.disposition.hearingImpaired) flags.push('hearing_impaired')
+      if (entry.source.disposition.visualImpaired) flags.push('visual_impaired')
+      if (entry.source.disposition.commentary) flags.push('comment')
+      if (entry.source.disposition.original) flags.push('original')
+      args.push(`-disposition:${target}`, flags.length > 0 ? flags.join('+') : '0')
+    }
+  }
+
+  if (compatAudioOrdinal != null && plan.addCompatibilityAudio) {
+    const spec = plan.addCompatibilityAudio
+    args.push(
+      `-metadata:s:a:${compatAudioOrdinal}`,
+      `language=${spec.language}`,
+      `-metadata:s:a:${compatAudioOrdinal}`,
+      `title=AAC ${spec.channels > 2 ? `${spec.channels}ch` : 'Stereo'} (PlexFixer)`,
+      `-disposition:a:${compatAudioOrdinal}`,
+      'default'
+    )
+  }
+
+  /* --- 4. Container options -------------------------------------------- */
+
+  if (plan.videoCodecTag && counters.v > 0) args.push('-tag:v', plan.videoCodecTag)
+
+  if (toMp4) {
+    // +faststart rewrites the file at the end to put the index first.
+    args.push('-movflags', '+faststart')
+  }
+
+  // Chapters and global metadata carry over by default; keep them explicit so
+  // the behaviour does not shift with ffmpeg versions.
+  args.push('-map_metadata', '0', '-map_chapters', '0')
+  // Remuxing a long file with many streams can overflow the default queue.
+  args.push('-max_muxing_queue_size', '4096')
+  args.push('-y', outputPath)
+
+  return { args, encoderLabel }
+}
+
+/* ------------------------------------------------------------------ *
+ * Subtitle extraction
+ * ------------------------------------------------------------------ */
+
+/**
+ * Build one ffmpeg invocation per subtitle track to extract as a sidecar.
+ *
+ * Separate invocations rather than one multi-output command: a single bad
+ * track then fails on its own instead of taking the others with it.
+ */
+export function buildSubtitleExtractCommands(
+  result: AnalysisResult,
+  outputStem: string
+): { args: string[]; outputPath: string }[] {
+  const commands: { args: string[]; outputPath: string }[] = []
+  const used = new Set<string>()
+
+  for (const entry of result.plan.extractSubtitles) {
+    const parts = [entry.language]
+    if (entry.forced) parts.push('forced')
+    let suffix = parts.join('.')
+    // Plex matches sidecars by `<stem>.<lang>[.forced].srt`; keep them unique.
+    let candidate = `${outputStem}.${suffix}.srt`
+    let counter = 2
+    while (used.has(candidate)) {
+      suffix = `${parts.join('.')}.${counter++}`
+      candidate = `${outputStem}.${suffix}.srt`
+    }
+    used.add(candidate)
+
+    commands.push({
+      outputPath: candidate,
+      args: ['-i', result.file.path, '-map', `0:${entry.streamIndex}`, '-c:s', 'srt', '-y', candidate]
+    })
+  }
+
+  return commands
+}
