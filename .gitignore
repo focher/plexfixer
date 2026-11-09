@@ -4,6 +4,7 @@ out/
 release/
 .DS_Store
 *.log
+*.tsbuildinfo
 
 # Secrets
 plexfixer.env

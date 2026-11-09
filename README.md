@@ -102,7 +102,7 @@ npm run dev
 PlexFixer needs `ffmpeg` and `ffprobe`. `npm run fetch:ffmpeg` downloads static
 builds into `resources/bin/<platform>-<arch>/`; failing that the app falls back
 to whatever is on `PATH` (Homebrew's `ffmpeg` works), and Settings → FFmpeg lets
-you point at a specific binary.
+you point at a specific binary. Add `--force` to replace binaries already there.
 
 You can also launch it with paths to scan:
 
@@ -121,8 +121,27 @@ npm run dist
 ```
 
 `npm run dist:mac` and `npm run dist:win` build one platform. Installers land in
-`release/`. Builds are unsigned unless you supply signing credentials to
-electron-builder.
+`release/`:
+
+| Artifact | Platform |
+| --- | --- |
+| `PlexFixer-<version>-arm64.dmg` / `-arm64-mac.zip` | macOS, Apple Silicon |
+| `PlexFixer-<version>-x64.dmg` / `-mac.zip` | macOS, Intel |
+| `PlexFixer-<version>-Setup.exe` | Windows x64 |
+
+Each build embeds only its own platform's ffmpeg, so `npm run fetch:ffmpeg --
+--all` has to run first. An `afterPack` hook fails the build if the binaries did
+not land where the app looks for them, rather than shipping an installer that
+cannot probe anything.
+
+Building the **Windows** installer from macOS needs Wine, which electron-builder
+downloads itself (pinned to Wine 11 in `electron-builder.yml`). That build is
+x86_64, so on Apple Silicon it needs Rosetta 2:
+`softwareupdate --install-rosetta`.
+
+macOS builds are signed if a Developer ID certificate is in your keychain, and
+are **not** notarized unless you supply notarization credentials — without
+notarization, other Macs will need a right-click → Open on first launch.
 
 ## Tests
 
@@ -165,8 +184,10 @@ command will run before anything touches the disk.
   whether HEVC counts as compatible, and the H.264 level ceiling.
 - Dolby Vision profile 5 and 7 are reported, not repaired — converting them
   correctly needs tooling beyond ffmpeg.
-- There is no maintained static ffmpeg build for macOS arm64 that is safe to
-  pin, so Apple Silicon uses `PATH` (`brew install ffmpeg`).
+- The bundled ffmpeg binaries are **GPL** builds (that is what carries NVENC and
+  libx264); PlexFixer's own code is MIT. They are shipped as separate
+  executables and invoked as subprocesses, never linked. Sources and versions are
+  listed in [NOTICE.md](NOTICE.md).
 
 ## License
 

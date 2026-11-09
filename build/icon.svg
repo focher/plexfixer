@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#262b36"/>
+      <stop offset="1" stop-color="#14161c"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5b933"/>
+      <stop offset="1" stop-color="#e5a00d"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="none" stroke="#39404f" stroke-width="8"/>
+
+  <!-- Film-strip perforations, top and bottom -->
+  <g fill="#39404f">
+    <rect x="236" y="214" width="78" height="56" rx="16"/>
+    <rect x="368" y="214" width="78" height="56" rx="16"/>
+    <rect x="500" y="214" width="78" height="56" rx="16"/>
+    <rect x="632" y="214" width="78" height="56" rx="16"/>
+    <rect x="236" y="754" width="78" height="56" rx="16"/>
+    <rect x="368" y="754" width="78" height="56" rx="16"/>
+    <rect x="500" y="754" width="78" height="56" rx="16"/>
+    <rect x="632" y="754" width="78" height="56" rx="16"/>
+  </g>
+
+  <!-- Frame around the picture area -->
+  <rect x="212" y="318" width="600" height="388" rx="40" fill="none" stroke="#39404f" stroke-width="14"/>
+
+  <!-- Check mark: the media is verified -->
+  <path d="M322 512 L452 636 L706 388"
+        fill="none" stroke="url(#amber)" stroke-width="86"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
