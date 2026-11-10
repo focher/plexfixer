@@ -408,6 +408,8 @@ export interface JobProgress {
   outTimeSeconds?: number
   speed?: string
   fps?: number
+  /** Bytes written so far; the only progress signal on some sources. */
+  bytesWritten?: number
 }
 
 export type JobLogLevel = 'info' | 'warn' | 'error'

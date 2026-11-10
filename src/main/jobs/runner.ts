@@ -212,10 +212,11 @@ export class RepairRunner {
 
     const { args, encoderLabel } = buildRepairCommand({ result, settings, caps, outputPath })
     const temporaryPath = temporaryPathFor(outputPath)
-    // ffmpeg infers the container from the extension, and the temporary name
-    // keeps it, so no explicit -f is needed.
-    //
     const finalArgs = redirectOutput(args, outputPath, temporaryPath)
+
+    // Progress milestones, so a long copy leaves a trail in the log.
+    let loggedMilestone = -1
+    let announcedFinalise = false
 
     this.update({
       ...current,
@@ -239,11 +240,46 @@ export class RepairRunner {
         ffmpegPath: this.binaries.ffmpegPath,
         args: finalArgs,
         durationSeconds: result.file.durationSeconds,
+        expectedBytes: result.file.sizeBytes,
         signal,
         onProgress: (progress) => {
           const job = this.jobs.get(id)
           if (!job || job.state !== 'running') return
           this.update({ ...job, progress })
+
+          // A multi-gigabyte remux over a network share runs for minutes with
+          // nothing to show for it, which is indistinguishable from a hang.
+          // Milestones go in the log so the report carries evidence of
+          // movement rather than stopping at "writing to a temporary file".
+          const milestone = Math.floor(progress.fraction * 10) * 10
+          if (milestone > loggedMilestone && milestone < 100) {
+            loggedMilestone = milestone
+            // ffmpeg reports no position on some sources, and "0:00 of
+            // 30:56" reads like a stall; bytes written are always real.
+            const position =
+              progress.outTimeSeconds > 0
+                ? `${formatSeconds(progress.outTimeSeconds)} of ${formatSeconds(result.file.durationSeconds ?? 0)}`
+                : progress.bytesWritten
+                  ? `${formatBytes(progress.bytesWritten)} written`
+                  : 'in progress'
+            const speed = progress.speed ? `  speed ${progress.speed}` : ''
+            this.log(id, 'info', `${milestone}% copied`, `${position}${speed}`)
+          }
+
+          // The index move is a second pass over the whole file, and ffmpeg
+          // reports no progress during it. On a network share it can take as
+          // long again as the copy, so say so rather than appearing stuck at
+          // 100%.
+          if (!announcedFinalise && progress.fraction >= 0.999 && result.plan.faststart) {
+            announcedFinalise = true
+            this.log(
+              id,
+              'info',
+              'Moving the index to the front',
+              'ffmpeg rewrites the whole file to do this and reports no progress while it runs. ' +
+                'On a network share it can take about as long as the copy itself.'
+            )
+          }
         }
       })
 
@@ -361,6 +397,24 @@ export class RepairRunner {
 }
 
 const BACKUP_LABEL = '.plexfixer-backups'
+
+/** Bytes written so far, for progress lines when ffmpeg reports no position. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+/** `1856` -> `30:56`, for progress lines in the job log. */
+function formatSeconds(total: number): string {
+  if (!Number.isFinite(total) || total <= 0) return '0:00'
+  const whole = Math.floor(total)
+  const hours = Math.floor(whole / 3600)
+  const minutes = Math.floor((whole % 3600) / 60)
+  const seconds = whole % 60
+  const mm = hours > 0 ? String(minutes).padStart(2, '0') : String(minutes)
+  return `${hours > 0 ? `${hours}:` : ''}${mm}:${String(seconds).padStart(2, '0')}`
+}
 
 /* ------------------------------------------------------------------ *
  * Log formatting

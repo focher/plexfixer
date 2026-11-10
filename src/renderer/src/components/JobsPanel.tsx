@@ -34,6 +34,13 @@ function JobLog({ job }: { job: Job }): React.JSX.Element {
   )
 }
 
+/** Bytes written so far, so a long copy visibly moves even at 0%. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
 export default function JobsPanel({
   jobs,
   resultsByPath,
@@ -148,7 +155,9 @@ export default function JobsPanel({
                 </span>
                 <span className="muted nowrap" style={{ fontSize: 12 }}>
                   {job.state === 'running'
-                    ? `${Math.round(job.progress.fraction * 100)}%${job.progress.speed ? ` · ${job.progress.speed}` : ''}`
+                    ? `${Math.round(job.progress.fraction * 100)}%${job.progress.speed ? ` · ${job.progress.speed}` : ''}${
+                        job.progress.bytesWritten ? ` · ${formatBytes(job.progress.bytesWritten)}` : ''
+                      }`
                     : job.startedAt && job.finishedAt
                       ? `${Math.round((job.finishedAt - job.startedAt) / 1000)}s`
                       : ''}
