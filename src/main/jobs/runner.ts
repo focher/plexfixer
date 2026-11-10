@@ -6,6 +6,7 @@
  * successfully. A failed or cancelled job leaves the original untouched.
  */
 
+import { open } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -27,6 +28,8 @@ import {
   temporaryPathFor
 } from './output.js'
 import { TaskQueue } from './queue.js'
+import { inPlaceVerdict } from '@shared/plex/inplace.js'
+import { applyPatches, packLanguage, readMp4Tracks, revertPatches, type BytePatch } from './mp4-patch.js'
 
 export interface RunnerBinaries {
   ffmpegPath: string
@@ -200,6 +203,137 @@ export class RepairRunner {
     return base
   }
 
+  /**
+   * Write a metadata-only repair straight into the file.
+   *
+   * Returns false when the plan is anything more than language tags and
+   * default flags, or when the file does not look exactly as expected — in
+   * which case the caller falls back to the full remux, which is always safe.
+   *
+   * The result is re-probed afterwards, as a remux is, and the original bytes
+   * go back if it does not say what it should.
+   */
+  private async tryInPlace(id: string, options: EnqueueOptions, outputPath: string): Promise<boolean> {
+    const { result, settings } = options
+    if (settings.outputPlacement !== 'in-place' || outputPath !== result.file.path) return false
+
+    const verdict = inPlaceVerdict(result)
+    if (!verdict.changes) return false
+
+    const tracks = await readMp4Tracks(result.file.path)
+    if (!tracks) return false
+
+    const patches: BytePatch[] = []
+    for (const change of verdict.changes) {
+      const track = tracks[change.streamIndex]
+      // The nth trak is ffprobe's nth stream for an MP4. If the file does not
+      // line up with what was probed, do nothing clever.
+      if (!track || track.index !== change.streamIndex) return false
+
+      if (change.setLanguage != null) {
+        const packed = packLanguage(change.setLanguage)
+        const currentPacked = packLanguage(track.language)
+        if (packed == null || currentPacked == null) return false
+        if (packed !== currentPacked) {
+          const expected = Buffer.alloc(2)
+          expected.writeUInt16BE(currentPacked)
+          const replacement = Buffer.alloc(2)
+          replacement.writeUInt16BE(packed)
+          patches.push({
+            offset: track.languageOffset,
+            expected,
+            replacement,
+            description: `stream ${change.streamIndex}: language ${track.language} -> ${change.setLanguage}`
+          })
+        }
+      }
+
+      if (change.setDefault != null && change.setDefault !== track.enabled) {
+        const handle = await open(result.file.path, 'r')
+        let currentByte: number
+        try {
+          const buffer = Buffer.alloc(1)
+          const { bytesRead } = await handle.read(buffer, 0, 1, track.enabledFlagOffset)
+          if (bytesRead !== 1) return false
+          currentByte = buffer.readUInt8(0)
+        } finally {
+          await handle.close()
+        }
+        const nextByte = change.setDefault ? currentByte | 0x01 : currentByte & ~0x01
+        if (nextByte !== currentByte) {
+          patches.push({
+            offset: track.enabledFlagOffset,
+            expected: Buffer.from([currentByte]),
+            replacement: Buffer.from([nextByte & 0xff]),
+            description: `stream ${change.streamIndex}: default ${track.enabled} -> ${change.setDefault}`
+          })
+        }
+      }
+    }
+
+    if (patches.length === 0) return false
+
+    const job = this.jobs.get(id)
+    if (!job) return false
+    this.update({ ...job, state: 'running', startedAt: Date.now(), command: [] })
+    this.log(id, 'info', 'Planned actions', describePlan(result))
+    this.log(
+      id,
+      'info',
+      `Editing ${patches.length} field${patches.length === 1 ? '' : 's'} in place`,
+      `${patches.map((p) => p.description).join('\n')}\n\n` +
+        'These are fixed-width fields in the file header, so nothing is copied and no ' +
+        'other byte is touched. No backup is kept, because the original is not being ' +
+        'replaced — the before and after of every field is listed above, and the edit ' +
+        'is undone automatically if the file does not read back correctly.'
+    )
+
+    try {
+      await applyPatches(result.file.path, patches)
+    } catch (error) {
+      // Nothing was written, or it was put back. The remux still works.
+      this.log(id, 'warn', 'Could not edit in place; falling back to a full remux', String(error))
+      return false
+    }
+
+    try {
+      const probed = await probeFile(result.file.path, {
+        ffprobePath: this.binaries.ffprobePath,
+        includeSidecars: false
+      })
+      const wrong = verdict.changes.filter((change) => {
+        const stream = probed.streams.find((s) => s.index === change.streamIndex)
+        if (!stream) return true
+        if (change.setLanguage != null && stream.language?.toLowerCase() !== change.setLanguage.toLowerCase()) return true
+        if (change.setDefault != null && stream.disposition.default !== change.setDefault) return true
+        return false
+      })
+      if (wrong.length > 0) {
+        throw new Error(`the file does not read back with the expected ${wrong.length === 1 ? 'value' : 'values'}`)
+      }
+      this.log(id, 'info', 'Re-probed the file', describeStreams(probed))
+    } catch (error) {
+      await revertPatches(result.file.path, patches).catch(() => undefined)
+      this.log(id, 'warn', 'Edit did not verify; put the original bytes back', String(error))
+      return false
+    }
+
+    const finished = this.jobs.get(id)
+    if (finished) {
+      const seconds = finished.startedAt ? ((Date.now() - finished.startedAt) / 1000).toFixed(1) : '?'
+      this.update({
+        ...finished,
+        state: 'done',
+        outputPath: result.file.path,
+        progress: { ...finished.progress, fraction: 1 },
+        message: 'edited in place — nothing copied',
+        finishedAt: Date.now(),
+        log: [...finished.log, { at: Date.now(), level: 'info', text: `Done in ${seconds}s` }]
+      })
+    }
+    return true
+  }
+
   private async execute(
     id: string,
     options: EnqueueOptions,
@@ -209,6 +343,12 @@ export class RepairRunner {
     const { result, settings, caps } = options
     const current = this.jobs.get(id)
     if (!current) return
+
+    // Language tags and default flags are fixed-width fields in the moov
+    // atom, so they can be written straight into the file. Rewriting 6 GB
+    // across a network share to change four bytes is the slowest thing this
+    // app does, and for most of a real library it is all a repair amounts to.
+    if (await this.tryInPlace(id, options, outputPath)) return
 
     const { args, encoderLabel } = buildRepairCommand({ result, settings, caps, outputPath })
     const temporaryPath = temporaryPathFor(outputPath)
