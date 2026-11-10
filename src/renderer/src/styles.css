@@ -260,12 +260,70 @@ code {
 
 .row {
   display: grid;
-  grid-template-columns: 28px 70px 1fr 150px 130px 150px;
+  grid-template-columns: 28px 66px 1fr 1.25fr 128px 124px 104px;
   gap: 10px;
   align-items: center;
   padding: 9px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
+}
+
+/* The window can go down to 940px, where seven columns stop fitting. */
+@media (max-width: 1120px) {
+  .row {
+    grid-template-columns: 24px 60px 1fr 1.1fr 104px 112px 92px;
+    gap: 8px;
+  }
+}
+
+/* ---------- the "why" column ---------- */
+
+.reason {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  cursor: help;
+}
+
+.reason-text {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text);
+  /* Two lines, then ellipsis — the tooltip and the detail pane have the rest. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.reason-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reason-note .badge {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+button.more {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-decoration: underline dotted;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button.more:hover {
+  color: var(--text-dim);
+  background: none;
 }
 
 .row:last-child {

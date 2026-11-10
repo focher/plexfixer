@@ -123,7 +123,8 @@ function dispositionOf(raw: RawDisposition | undefined): StreamDisposition {
     visualImpaired: flag('visual_impaired'),
     commentary: flag('comment'),
     dub: flag('dub'),
-    original: flag('original')
+    original: flag('original'),
+    attachedPic: flag('attached_pic')
   }
 }
 

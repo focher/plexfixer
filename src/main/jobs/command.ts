@@ -16,6 +16,7 @@ import type {
   TrackPlanChange
 } from '@shared/types.js'
 import { canStreamCopyIntoMp4 } from '@shared/plex/rules.js'
+import { isCoverArt } from '@shared/plex/tracks.js'
 
 /** Per-type output ordinal for a mapped stream. */
 interface MappedStream {
@@ -171,7 +172,15 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
 
   const dropped = new Set(plan.trackChanges.filter((c) => c.drop).map((c) => c.streamIndex))
 
-  const videoTracks = file.streams.filter((s) => s.kind === 'video' && !dropped.has(s.index))
+  // Embedded artwork is a still-image `video` stream as far as ffprobe is
+  // concerned. It must not be mapped: every per-video option here (-c:v, -vf,
+  // -tag:v, -profile:v) would otherwise apply to the poster as well, and
+  // tagging a JPEG as `hvc1` makes the MP4 muxer refuse to write a header.
+  // The analyzer already ignores these, so keeping them would also mean
+  // muxing a track the plan never reasoned about.
+  const videoTracks = file.streams.filter(
+    (s) => s.kind === 'video' && !isCoverArt(s) && !dropped.has(s.index)
+  )
   const audioTracks = file.streams.filter((s) => s.kind === 'audio' && !dropped.has(s.index))
   const subtitleTracks = file.streams.filter((s) => s.kind === 'subtitle' && !dropped.has(s.index))
   const attachments = file.streams.filter((s) => s.kind === 'attachment')
@@ -310,7 +319,13 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
 
   /* --- 4. Container options -------------------------------------------- */
 
-  if (plan.videoCodecTag && counters.v > 0) args.push('-tag:v', plan.videoCodecTag)
+  // Scoped to the one video stream the plan reasoned about. A bare `-tag:v`
+  // applies to every video output stream, which is how a stray still-image
+  // track used to poison the whole mux.
+  if (plan.videoCodecTag) {
+    const primary = mapped.find((entry) => entry.specifier === 'v')
+    if (primary) args.push(`-tag:v:${primary.ordinal}`, plan.videoCodecTag)
+  }
 
   if (toMp4) {
     // +faststart rewrites the file at the end to put the index first.

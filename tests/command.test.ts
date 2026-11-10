@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import type { EncoderCapabilities } from '@shared/types.js'
 import { buildRepairCommand, buildSubtitleExtractCommands, chooseVideoEncoder } from '../src/main/jobs/command.js'
-import { audio, flags, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
+import { audio, coverArt, flags, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
 const OUT = '/out/Example (2020).mp4'
 
@@ -64,7 +64,7 @@ describe('buildRepairCommand — remux', () => {
       settings
     )
     const { args } = buildRepairCommand({ result, settings, outputPath: OUT })
-    expect(valueAfter(args, '-tag:v')).toBe('hvc1')
+    expect(valueAfter(args, '-tag:v:0')).toBe('hvc1')
     expect(valueAfter(args, '-c:v')).toBe('copy')
   })
 })
@@ -288,5 +288,62 @@ describe('buildSubtitleExtractCommands', () => {
     )
     const paths = buildSubtitleExtractCommands(result, '/out/Example').map((c) => c.outputPath)
     expect(new Set(paths).size).toBe(paths.length)
+  })
+})
+
+describe('buildRepairCommand — embedded cover art', () => {
+  /**
+   * Regression: an M4V carrying poster artwork failed to repair with
+   * "Tag hvc1 incompatible with output codec id '7' (mp4v)". ffprobe reports
+   * artwork as a video stream, the builder mapped it, and the unscoped
+   * `-tag:v hvc1` landed on the JPEG as well as the HEVC track — so the MP4
+   * muxer refused to write a header and every other stream failed with it.
+   */
+  const settings = { ...DEFAULT_SETTINGS, allowHevc: true }
+
+  const withArt = (): ReturnType<typeof analyzeFile> =>
+    analyzeFile(
+      mp4([
+        video({ codec: 'hevc', codecTag: 'hev1', profile: 'Main 10', language: 'eng' }),
+        mainAudio({ index: 1, codec: 'aac', language: 'eng' }),
+        coverArt({ index: 2 })
+      ]),
+      settings
+    )
+
+  it('never maps the artwork into the output', () => {
+    const result = withArt()
+    const { args } = buildRepairCommand({ result, settings, outputPath: OUT })
+    expect(maps(args)).not.toContain('0:2')
+  })
+
+  it('scopes the HEVC codec tag to the real video stream', () => {
+    const result = withArt()
+    const { args } = buildRepairCommand({ result, settings, outputPath: OUT })
+
+    expect(result.plan.videoCodecTag).toBe('hvc1')
+    // A bare `-tag:v` would apply to every video output stream.
+    expect(args).not.toContain('-tag:v')
+    expect(valueAfter(args, '-tag:v:0')).toBe('hvc1')
+  })
+
+  it('counts artwork as neither a video track nor a reason to rewrite', () => {
+    const result = withArt()
+    expect(result.findings.some((f) => f.code === 'video-multiple')).toBe(false)
+
+    // Artwork alone must not manufacture a plan for an otherwise clean file.
+    const clean = analyzeFile(
+      mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' }), coverArt({ index: 2 })], {
+        faststart: true
+      }),
+      settings
+    )
+    expect(clean.plan.strategy).toBe('none')
+    expect(clean.plan.actions).toEqual([])
+  })
+
+  it('tells the user the artwork goes away when a repair does run', () => {
+    const result = withArt()
+    expect(result.plan.actions.some((a) => /cover-art/i.test(a.label))).toBe(true)
   })
 })

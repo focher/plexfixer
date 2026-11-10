@@ -11,6 +11,7 @@
 import type {
   AudioStream,
   MediaFile,
+  MediaStream,
   SubtitleStream,
   VideoStream,
   AppSettings,
@@ -41,12 +42,28 @@ const FORCED_TITLE_PATTERNS = [/forced/i, /\bsigns\b/i, /signs ?(&|and|\/) ?song
 /** Title keywords that mark a subtitle track as SDH / hearing-impaired. */
 const SDH_TITLE_PATTERNS = [/\bsdh\b/i, /hearing impaired/i, /\bcc\b/i, /closed caption/i]
 
+/**
+ * Still-image codecs that only ever show up as embedded artwork, never as a
+ * real video track. A poster muxed into an MKV or M4V is a `video` stream as
+ * far as ffprobe is concerned, so every consumer has to filter it out the same
+ * way — hence one definition here rather than a copy per call site.
+ */
+const COVER_ART_CODECS = new Set(['mjpeg', 'png', 'bmp', 'gif', 'webp'])
+
+/** True when a stream is embedded artwork rather than a playable video track. */
+export function isCoverArt(stream: MediaStream): boolean {
+  if (stream.kind !== 'video') return false
+  if (stream.disposition.attachedPic) return true
+  return COVER_ART_CODECS.has(stream.codec.toLowerCase())
+}
+
+export function coverArtStreams(file: MediaFile): VideoStream[] {
+  return file.streams.filter((s): s is VideoStream => s.kind === 'video' && isCoverArt(s))
+}
+
 export function videoStreams(file: MediaFile): VideoStream[] {
   // Cover art in MKV/MP4 shows up as a video stream; exclude those.
-  return file.streams.filter(
-    (s): s is VideoStream =>
-      s.kind === 'video' && !['mjpeg', 'png', 'bmp', 'gif', 'webp'].includes(s.codec.toLowerCase())
-  )
+  return file.streams.filter((s): s is VideoStream => s.kind === 'video' && !isCoverArt(s))
 }
 
 export function audioStreams(file: MediaFile): AudioStream[] {

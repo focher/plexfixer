@@ -36,7 +36,14 @@ import {
   isTextSubtitle,
   videoCodecTier
 } from './rules.js'
-import { audioStreams, resolvePrimaryLanguage, resolveTracks, subtitleStreams, videoStreams } from './tracks.js'
+import {
+  audioStreams,
+  coverArtStreams,
+  resolvePrimaryLanguage,
+  resolveTracks,
+  subtitleStreams,
+  videoStreams
+} from './tracks.js'
 
 /* ------------------------------------------------------------------ *
  * Per-stream verdicts
@@ -659,6 +666,20 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
           ? `Default audio becomes the ${languageName(trackResolution.defaultAudioLanguage)} track, matching the ` +
             `video's language (${languageName(primary.language)}).`
           : 'Track metadata is corrected so clients select predictably.'
+    })
+  }
+
+  // Embedded artwork is dropped during any repair: it is a still-image video
+  // stream, so every per-video ffmpeg option would otherwise apply to it too.
+  // Nothing flags it on its own — a poster is not a direct-play problem, and
+  // proposing a rewrite just to strip one would be worse than leaving it.
+  const coverArt = coverArtStreams(file)
+  if (coverArt.length > 0 && strategy !== 'none') {
+    actions.push({
+      label: `Drop ${coverArt.length} embedded cover-art track${coverArt.length === 1 ? '' : 's'}`,
+      detail:
+        'Plex takes artwork from its own metadata agents, and a still-image video ' +
+        'track confuses client track pickers.'
     })
   }
 

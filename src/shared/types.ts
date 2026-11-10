@@ -21,6 +21,8 @@ export interface StreamDisposition {
   /** ffprobe `dub` flag — often used for alternate-language dubs. */
   dub: boolean
   original: boolean
+  /** Embedded artwork (a poster muxed in as a still-image video stream). */
+  attachedPic: boolean
 }
 
 export interface BaseStream {

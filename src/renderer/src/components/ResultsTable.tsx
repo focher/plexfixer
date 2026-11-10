@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { AnalysisResult, Job, ModeOverrides, RepairMode } from '@shared/types.js'
+import { summarizeReason, type ReasonTone } from '@shared/plex/reason.js'
 import FileDetail from './FileDetail.js'
 import { parentDirectory, shortenPath } from '../format.js'
 
@@ -21,6 +22,14 @@ const MODE_LABEL: Record<RepairMode, string> = {
   report: 'Report only',
   'safe-remux': 'Safe remux',
   'force-transcode': 'Force transcode'
+}
+
+/** Badge colour for the outcome note under each reason. */
+const REASON_TONE: Record<ReasonTone, string> = {
+  ok: 'ok',
+  fix: 'info',
+  transcode: 'warn',
+  manual: 'fail'
 }
 
 const JOB_TONE: Record<Job['state'], string> = {
@@ -71,6 +80,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         />
         <span>Status</span>
         <span>File</span>
+        <span>Why</span>
         <span>Plan</span>
         <span>Mode</span>
         <span>Action</span>
@@ -82,6 +92,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         const mode = props.resolveMode(path)
         const isOverridden = props.overrides[path] != null
         const open = expanded.has(path)
+        const reason = summarizeReason(result)
 
         return (
           <div key={path}>
@@ -101,6 +112,17 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 </button>
                 {result.file.fileName}
                 <span className="dir">{shortenPath(parentDirectory(path), 2)}</span>
+              </span>
+              <span className="reason" title={reason.detail}>
+                <span className="reason-text">{reason.headline}</span>
+                <span className="reason-note">
+                  <span className={`badge ${REASON_TONE[reason.tone]}`}>{reason.outcome}</span>
+                  {reason.others > 0 ? (
+                    <button className="more" onClick={() => toggleExpanded(path)}>
+                      +{reason.others} more
+                    </button>
+                  ) : null}
+                </span>
               </span>
               <span className="muted nowrap" style={{ fontSize: 12 }}>
                 {STRATEGY_LABEL[result.plan.strategy]}

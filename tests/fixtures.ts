@@ -7,7 +7,8 @@ const NO_FLAGS: StreamDisposition = {
   visualImpaired: false,
   commentary: false,
   dub: false,
-  original: false
+  original: false,
+  attachedPic: false
 }
 
 export function flags(overrides: Partial<StreamDisposition> = {}): StreamDisposition {
@@ -35,6 +36,21 @@ export function video(overrides: Partial<VideoStream> = {}): VideoStream {
     isAnamorphic: false,
     ...overrides
   }
+}
+
+/** Embedded poster artwork, which ffprobe reports as a still-image video stream. */
+export function coverArt(overrides: Partial<VideoStream> = {}): VideoStream {
+  return video({
+    index: 9,
+    codec: 'mjpeg',
+    width: 600,
+    height: 900,
+    profile: undefined,
+    level: undefined,
+    frameRate: 90000,
+    disposition: flags({ attachedPic: true }),
+    ...overrides
+  })
 }
 
 /** An audio track with no disposition flags set. */

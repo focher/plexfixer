@@ -217,3 +217,58 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
     expect(analyzeFile(repaired, DEFAULT_SETTINGS).plan.requiresTranscode).toBe(false)
   }, 300_000)
 })
+
+describe.runIf(enabled)('integration: embedded cover art', () => {
+  /**
+   * Regression for a repair that died with
+   *   Tag hvc1 incompatible with output codec id '7' (mp4v)
+   *   Could not write header (incorrect codec parameters ?)
+   * on an HEVC file carrying poster artwork. ffprobe reports artwork as a
+   * video stream, so the builder mapped it and the unscoped `-tag:v hvc1`
+   * landed on the JPEG too — the MP4 muxer then refused to write a header and
+   * every other stream, subtitles included, failed along with it.
+   */
+  it('repairs an hev1 file with a poster instead of failing to write a header', async () => {
+    const hevc = await makeFile('hevcArt-base.mp4', [
+      ...SOURCES.slice(0, 8),
+      '-map', '0:v', '-map', '1:a',
+      '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=none',
+      '-tag:v', 'hev1', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-metadata:s:v:0', 'language=eng',
+      '-metadata:s:a:0', 'language=eng'
+    ])
+    const poster = await makeFile('poster.jpg', [
+      '-f', 'lavfi', '-i', 'color=c=red:size=300x450:duration=1',
+      '-frames:v', '1'
+    ])
+    const path = await makeFile('hevcArt.mp4', [
+      '-i', hevc, '-i', poster,
+      '-map', '0', '-map', '1', '-c', 'copy', '-tag:v:0', 'hev1',
+      '-disposition:v:1', 'attached_pic'
+    ])
+
+    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    // The poster really is a video stream as far as the probe is concerned.
+    expect(file.streams.filter((s) => s.kind === 'video')).toHaveLength(2)
+
+    const settings = { ...DEFAULT_SETTINGS, allowHevc: true }
+    const result = analyzeFile(file, settings)
+    // ...but not as far as the analysis is concerned.
+    expect(result.findings.some((f) => f.code === 'video-multiple')).toBe(false)
+    expect(result.plan.videoCodecTag).toBe('hvc1')
+
+    const outputPath = join(workDir, 'hevcArt.fixed.mp4')
+    const { args } = buildRepairCommand({ result, settings, outputPath })
+    // This is the call that used to fail outright.
+    await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 120_000 })
+
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const video = repaired.streams.filter((s) => s.kind === 'video')
+    expect(video).toHaveLength(1)
+    expect(video[0].codec).toBe('hevc')
+    expect((video[0] as { codecTag?: string }).codecTag).toBe('hvc1')
+    expect(repaired.streams.filter((s) => s.kind === 'audio')).toHaveLength(1)
+    expect(await hasFaststart(outputPath)).toBe(true)
+  }, 180_000)
+})
