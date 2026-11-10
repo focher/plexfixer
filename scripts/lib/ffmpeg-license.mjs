@@ -10,46 +10,97 @@
  * Both the fetch script and the packaging hook use this, so a nonfree build is
  * refused when it arrives and, if one is already sitting in `resources/bin`,
  * again at the moment it would be packaged.
+ *
+ * The line is found by the marker FFmpeg itself prints — `configuration: ` —
+ * and then read to the end of the C string. An earlier version instead matched
+ * the flags with a regex, which was wrong in both directions: it read nothing
+ * at all from a build configured without `--prefix`, and on a build whose
+ * `--extra-version` held a quoted URL it stopped at the quote and reported the
+ * truncated prefix. That prefix happened to omit `--enable-gpl`, so a GPL
+ * build was reported as LGPL — and a line truncated before `--enable-nonfree`
+ * would have been reported as shippable. Nothing is returned here unless the
+ * whole NUL-terminated string was seen.
  */
 
 import { open } from 'node:fs/promises'
 
 const CHUNK = 4 * 1024 * 1024
-/** Enough to cover a configure line split across two reads. */
-const OVERLAP = 8192
-/** Comfortably longer than any real configure line. */
-const WINDOW = 64 * 1024
+/** Longest line considered; real configure lines run to one or two KB. */
+const MAX_LINE = 16 * 1024
+/** Overlap so a marker cannot be missed by falling across a chunk edge. */
+const OVERLAP = MAX_LINE + 64
+/** What `ffmpeg -version` prints in front of the flags. */
+const MARKER = 'configuration: '
 
-const CONFIGURE_LINE = /--prefix=\S*(?:[ \t]--[a-z0-9=\-_/.]+)+/
-
-/** The `--prefix=... --enable-... ` line, or undefined if there is none. */
+/** The configure line, or undefined if the binary does not carry a whole one. */
 export async function readConfiguration(path) {
   const handle = await open(path, 'r')
   try {
     const { size } = await handle.stat()
     const buffer = Buffer.alloc(Math.min(size, CHUNK))
     let offset = 0
+    // Builds differ in how the banner is stored. Some hold the marker and the
+    // flags as one literal, so the flags follow the marker; others print them
+    // with `"%sconfiguration: %s"`, which leaves the flags as a string of
+    // their own somewhere else entirely. The marker is the reliable anchor
+    // when it is there, so a free-standing line is only fallen back on once
+    // the whole file has failed to produce a marked one.
+    let unmarked
     while (offset < size) {
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset)
       if (bytesRead <= 0) break
-      const match = CONFIGURE_LINE.exec(buffer.toString('latin1', 0, bytesRead))
-      if (match) {
-        // The line may run past the end of this chunk, in which case the match
-        // is a truncated prefix of it — and a truncated configure line is
-        // worse than none, because the flag that matters may be in the part
-        // that was cut off. Re-read from where it starts.
-        const start = offset + match.index
-        const window = Buffer.alloc(Math.min(WINDOW, size - start))
-        const read = await handle.read(window, 0, window.length, start)
-        const full = CONFIGURE_LINE.exec(window.toString('latin1', 0, read.bytesRead))
-        return full ? full[0] : match[0]
+      const text = buffer.toString('latin1', 0, bytesRead)
+      for (let at = text.indexOf(MARKER); at >= 0; at = text.indexOf(MARKER, at + 1)) {
+        // The marker may sit near the end of this chunk with the flags running
+        // past it, so the string is re-read from the file rather than sliced
+        // out of the chunk.
+        const line = await stringAt(handle, size, offset + at + MARKER.length)
+        if (line) return line
       }
+      unmarked ??= await findUnmarked(handle, size, text, offset)
       offset += Math.max(1, bytesRead - OVERLAP)
     }
-    return undefined
+    return unmarked
   } finally {
     await handle.close()
   }
+}
+
+/**
+ * A configure line stored without the marker in front of it.
+ *
+ * Every `--enable-`/`--disable-` in the chunk is a candidate, and most are
+ * help text for some encoder's options, so each is widened to the whole
+ * NUL-terminated string it sits in and then put through the same check.
+ */
+async function findUnmarked(handle, size, text, offset) {
+  const flags = /--(?:enable|disable)-/g
+  let match
+  while ((match = flags.exec(text)) != null) {
+    const from = text.lastIndexOf('\0', match.index) + 1
+    if (from === 0 || match.index - from > MAX_LINE) continue
+    const line = await stringAt(handle, size, offset + from)
+    if (line) return line
+  }
+  return undefined
+}
+
+/**
+ * The NUL-terminated string starting at `start`, if it looks like a configure
+ * line. Undefined when the terminator is not within reach, so a line that was
+ * cut short is never mistaken for a complete one.
+ */
+async function stringAt(handle, size, start) {
+  const window = Buffer.alloc(Math.min(MAX_LINE, size - start))
+  const { bytesRead } = await handle.read(window, 0, window.length, start)
+  const text = window.toString('latin1', 0, bytesRead)
+  const end = text.indexOf('\0')
+  if (end < 0) return undefined
+  const line = text.slice(0, end).trim()
+  if (!line.startsWith('-')) return undefined
+  if (!/--(?:enable|disable)-/.test(line)) return undefined
+  if (/[^\x20-\x7e]/.test(line)) return undefined
+  return line
 }
 
 /**

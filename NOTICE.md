@@ -27,8 +27,13 @@ first.
 | --- | --- | --- |
 | Windows x64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | `ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip` |
 | Linux x64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | `ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz` (not shipped; fetched by name only) |
-| macOS arm64 | [eugeneware/ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) | release tag `b6.1.1`, `ffmpeg-darwin-arm64` (reports FFmpeg 6.0) — **see below** |
-| macOS x64 | [eugeneware/ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) | release tag `b6.1.1`, `ffmpeg-darwin-x64` (reports FFmpeg 6.0) |
+| macOS arm64 | [shaka-project/static-ffmpeg-binaries](https://github.com/shaka-project/static-ffmpeg-binaries) | release tag `n8.1.2-2`, `ffmpeg-osx-arm64` / `ffprobe-osx-arm64` |
+| macOS x64 | [shaka-project/static-ffmpeg-binaries](https://github.com/shaka-project/static-ffmpeg-binaries) | release tag `n8.1.2-2`, `ffmpeg-osx-x64` / `ffprobe-osx-x64` |
+
+Both macOS architectures come from one upstream build, configured
+`--enable-gpl --enable-version3` with libx264, libx265 and VideoToolbox. That
+is deliberate: 0.1.1 took the two architectures from two different projects,
+and only one of them turned out to be redistributable.
 
 `scripts/fetch-ffmpeg.mjs` is the single place these URLs are defined; change
 them there to pin a different build.
@@ -37,27 +42,38 @@ The binaries are not committed to this repository. They are downloaded at build
 time by `npm run fetch:ffmpeg`, so a clone of this repository contains no
 GPL-licensed material.
 
-### The macOS arm64 build cannot be redistributed
+### Withdraw the 0.1.1 macOS arm64 artifacts
 
-The `b6.1.1` macOS **arm64** binaries are configured `--enable-gpl
---enable-nonfree`. A nonfree build may be used but **not redistributed**, so it
-must not go into an installer. The macOS x64 binaries from the same release are
-a plain GPL build and are fine; the two architectures come from different
-upstream builds, which is why they differ.
+PlexFixer **0.1.1** shipped a macOS arm64 FFmpeg configured `--enable-gpl
+--enable-nonfree`, taken from `eugeneware/ffmpeg-static` `b6.1.1`. A nonfree
+build may be used but **not redistributed**, so `PlexFixer-0.1.1-arm64.dmg` and
+`PlexFixer-0.1.1-arm64-mac.zip` should not be distributed further. The x64
+artifacts from that release are unaffected.
 
-PlexFixer 0.1.1 shipped a nonfree binary inside `PlexFixer-0.1.1-arm64.dmg` and
-`PlexFixer-0.1.1-arm64-mac.zip`. Those artifacts should not be distributed
-further. Until the arm64 source is replaced — with another build, or one built
-from source without `--enable-nonfree` — no macOS arm64 installer should be
-published.
+0.1.2 replaces both macOS architectures with the GPL builds listed above and
+carries no nonfree code.
 
-This is now enforced rather than remembered. Every FFmpeg build embeds its
-configure line as a plain string, so the licence can be read out of the binary
-without running it: `scripts/lib/ffmpeg-license.mjs` does that, and
+### How this is now prevented
+
+Every FFmpeg build embeds its configure line as a plain string, so the licence
+can be read out of a binary without running it. `scripts/lib/ffmpeg-license.mjs`
+does that, and
 
 - `npm run fetch:ffmpeg` refuses to install a nonfree build (`--allow-nonfree`
   overrides it for local use), and
-- the `afterPack` hook fails the build if one is about to be packaged.
+- the `afterPack` hook fails the build if one is about to be packaged, or if a
+  binary's configure line cannot be read at all — an unverified licence is not
+  a licence, and this is the last gate before an installer is published.
+
+The reader looks for the `configuration: ` marker FFmpeg itself prints and
+takes the whole NUL-terminated string, falling back to a free-standing flags
+string for builds that print the two separately. It returns nothing unless it
+has seen a complete line. The first version instead matched the flags with a
+regex, which was wrong in both directions — it read nothing from a build
+configured without `--prefix`, and on a build whose `--extra-version` held a
+quoted URL it stopped at the quote and reported a GPL build as LGPL. A line
+truncated a little earlier would have been reported as shippable, which is
+precisely the mistake this is here to catch.
 
 ## Electron
 

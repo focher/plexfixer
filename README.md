@@ -111,7 +111,9 @@ size of bundling two static binaries that each embed the whole library.
 
 The fetch refuses a build configured `--enable-nonfree`, which may be used but
 not redistributed; `--allow-nonfree` overrides that for local use, and the
-packaging hook refuses it again if one would be shipped. See [NOTICE.md](NOTICE.md).
+packaging hook refuses it again if one would be shipped — or if a binary's
+configure line cannot be read at all, since an unverified licence is not a
+licence. See [NOTICE.md](NOTICE.md).
 
 You can also launch it with paths to scan:
 

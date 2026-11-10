@@ -11,9 +11,11 @@
  *     of codecs twice. Shared, the two executables come to under a megabyte
  *     between them and the libraries are carried once — 315 MB down to 190 MB
  *     on Windows, with nothing lost.
- *   - macOS (arm64 + x64): eugeneware/ffmpeg-static, pinned to a release tag.
- *     BtbN does not build for macOS, and evermeet.cx (the long-standing macOS
- *     source) now returns HTTP 410.
+ *   - macOS (arm64 + x64): shaka-project/static-ffmpeg-binaries, pinned to a
+ *     release tag. BtbN does not build for macOS, and evermeet.cx (the
+ *     long-standing macOS source) now returns HTTP 410. One upstream covers
+ *     both architectures, which is the point: 0.1.1 took arm64 and x64 from
+ *     two different projects and only one of them was redistributable.
  *
  * `npm run fetch:ffmpeg` fetches this machine's platform; `-- --all` fetches
  * every platform, which is what building installers needs. `-- --force`
@@ -41,10 +43,11 @@ const BTBN = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest'
 /** Platforms `--all` fetches: the ones `npm run dist` actually builds. */
 const SHIPPED = ['darwin-arm64', 'darwin-x64', 'win32-x64']
 /**
- * Pinned release of the macOS static builds. Note the tag (`b6.1.1`) is the
- * packaging release, not the FFmpeg version — these binaries report 6.0.
+ * Pinned release of the macOS static builds — FFmpeg 8.1.2, the same release
+ * line BtbN ships for Windows, built GPL v3 with libx264, libx265 and
+ * VideoToolbox. The tag suffix (`-2`) is the packaging revision.
  */
-const EUGENEWARE = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1'
+const SHAKA = 'https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-2'
 
 /**
  * `archive` targets download one bundle and are searched for the binaries.
@@ -68,18 +71,18 @@ const TARGETS = {
   },
   'darwin-arm64': {
     kind: 'files',
-    gzip: true,
+    gzip: false,
     urls: {
-      ffmpeg: `${EUGENEWARE}/ffmpeg-darwin-arm64.gz`,
-      ffprobe: `${EUGENEWARE}/ffprobe-darwin-arm64.gz`
+      ffmpeg: `${SHAKA}/ffmpeg-osx-arm64`,
+      ffprobe: `${SHAKA}/ffprobe-osx-arm64`
     }
   },
   'darwin-x64': {
     kind: 'files',
-    gzip: true,
+    gzip: false,
     urls: {
-      ffmpeg: `${EUGENEWARE}/ffmpeg-darwin-x64.gz`,
-      ffprobe: `${EUGENEWARE}/ffprobe-darwin-x64.gz`
+      ffmpeg: `${SHAKA}/ffmpeg-osx-x64`,
+      ffprobe: `${SHAKA}/ffprobe-osx-x64`
     }
   }
 }

@@ -64,11 +64,16 @@ export default async function afterPack(context) {
           '  Replace it in resources/bin and rebuild — see NOTICE.md.'
       )
     }
-    if (license.redistributable === true) {
-      console.log(`  • ${basename(path)} licence: ${license.license}`)
-    } else {
-      console.log(`  ! ${basename(path)} build configuration unreadable; licence unverified`)
+    // An unreadable build is refused too. This is the last gate before an
+    // installer is published, and "we could not tell" is not a licence.
+    if (license.redistributable === 'unknown') {
+      throw new Error(
+        `afterPack: the build configuration could not be read from ${path}.\n` +
+          '  Its licence therefore cannot be verified, and an unverified binary is not\n' +
+          '  shipped. Pin a build whose configure line is readable — see NOTICE.md.'
+      )
     }
+    console.log(`  • ${basename(path)} licence: ${license.license}`)
   }
 
   // Windows and Linux ship a shared build: the executables are a few hundred
