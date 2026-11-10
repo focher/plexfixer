@@ -2,7 +2,8 @@
  * Walking the filesystem for media files.
  */
 
-import { readdir, stat } from 'node:fs/promises'
+import { lstat, readdir, stat } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { extname, join } from 'node:path'
 
 /** Directories that never contain library media and cost time to walk. */
@@ -30,6 +31,31 @@ export interface WalkOptions {
  * Symlinked directories are not followed, which both avoids loops and keeps a
  * library with cross-linked season folders from being scanned twice.
  */
+/**
+ * What a directory entry is, when the entry itself does not say.
+ *
+ * `readdir(withFileTypes)` answers from the directory entry alone, and SMB,
+ * NFS and several FUSE filesystems — where a Plex library usually lives —
+ * report every entry as an unknown type. Both `isDirectory()` and `isFile()`
+ * are then false, which silently hides the entire library. Anything that is
+ * not plainly one or the other gets a real `lstat`; symlinks stay excluded on
+ * purpose, as documented above.
+ */
+async function kindOf(full: string, entry: Dirent): Promise<'dir' | 'file' | 'skip'> {
+  if (entry.isDirectory()) return 'dir'
+  if (entry.isFile()) return 'file'
+  if (entry.isSymbolicLink()) return 'skip'
+  try {
+    const info = await lstat(full)
+    if (info.isSymbolicLink()) return 'skip'
+    if (info.isDirectory()) return 'dir'
+    if (info.isFile()) return 'file'
+  } catch {
+    // Vanished mid-walk or unreadable: treat as nothing.
+  }
+  return 'skip'
+}
+
 export async function collectMediaFiles(paths: string[], options: WalkOptions): Promise<string[]> {
   const extensions = new Set(options.extensions.map((ext) => ext.toLowerCase().replace(/^\./, '')))
   const found = new Set<string>()
@@ -49,11 +75,12 @@ export async function collectMediaFiles(paths: string[], options: WalkOptions): 
     for (const entry of entries) {
       if (entry.name.startsWith('._')) continue // macOS resource forks
       const full = join(dir, entry.name)
-      if (entry.isDirectory()) {
+      const kind = await kindOf(full, entry)
+      if (kind === 'dir') {
         if (!options.recursive) continue
         if (SKIP_DIRECTORIES.has(entry.name)) continue
         await walk(full, depth + 1)
-      } else if (entry.isFile() && isMedia(entry.name)) {
+      } else if (kind === 'file' && isMedia(entry.name)) {
         found.add(full)
       }
     }

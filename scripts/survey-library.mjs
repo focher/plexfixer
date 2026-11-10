@@ -15,7 +15,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { readdir, stat, writeFile } from 'node:fs/promises'
+import { readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, extname, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,15 +37,17 @@ const argv = process.argv.slice(2)
 const roots = []
 let jsonPath = 'plexfixer-survey.json'
 let allFiles = false
+let verbose = false
 let concurrency = Math.max(2, Math.min(8, cpus().length))
 
 for (let i = 0; i < argv.length; i++) {
   const arg = argv[i]
   if (arg === '--json') jsonPath = argv[++i]
   else if (arg === '--all-files') allFiles = true
+  else if (arg === '--verbose' || arg === '-v') verbose = true
   else if (arg === '--jobs') concurrency = Math.max(1, Number(argv[++i]) || 4)
   else if (arg === '--help' || arg === '-h') {
-    console.log('usage: node scripts/survey-library.mjs [--json out.json] [--all-files] [--jobs N] <folder...>')
+    console.log('usage: node scripts/survey-library.mjs [--json out.json] [--all-files] [--verbose] [--jobs N] <folder...>')
     process.exit(0)
   } else roots.push(arg)
 }
@@ -85,22 +87,66 @@ const FFPROBE = findFfprobe()
  * Walking
  * ------------------------------------------------------------------ */
 
+let foldersVisited = 0
+const unreadable = []
+
+/**
+ * What a directory entry actually is.
+ *
+ * `readdir(withFileTypes)` answers from the directory entry alone, which is
+ * fast but incomplete: a symlink to a folder reports neither `isDirectory()`
+ * nor `isFile()`, and SMB, NFS and several FUSE filesystems report every entry
+ * as unknown. Either case silently prunes whole branches of a library, so
+ * anything that is not plainly a file or a folder gets a real `stat()`.
+ */
+async function kindOf(full, entry) {
+  if (entry.isDirectory()) return 'dir'
+  if (entry.isFile()) return 'file'
+  try {
+    const info = await stat(full) // follows symlinks
+    if (info.isDirectory()) return 'dir'
+    if (info.isFile()) return 'file'
+  } catch {
+    // Broken symlink or no permission: not worth reporting per entry.
+  }
+  return 'other'
+}
+
 async function collect(root) {
   const found = []
   const stack = [root]
+  // Symlinks can point back up the tree; walking the same real folder twice
+  // would double every tally and, in a cycle, never finish.
+  const seen = new Set()
+
   while (stack.length > 0) {
     const dir = stack.pop()
+
+    let key = dir
+    try {
+      key = await realpath(dir)
+    } catch {
+      // Keep the literal path as the key if it cannot be resolved.
+    }
+    if (seen.has(key)) continue
+    seen.add(key)
+
     let entries
     try {
       entries = await readdir(dir, { withFileTypes: true })
-    } catch {
-      continue // unreadable directory: skip rather than abort the survey
+    } catch (error) {
+      unreadable.push({ path: dir, error: error.message })
+      continue // skip rather than abort the survey
     }
+    foldersVisited++
+    if (verbose) process.stderr.write(`  ${dir}  (${entries.length} entries)\n`)
+
     for (const entry of entries) {
-      const full = join(dir, entry.name)
       if (entry.name.startsWith('.') || entry.name === '@eaDir') continue
-      if (entry.isDirectory()) stack.push(full)
-      else if (entry.isFile()) {
+      const full = join(dir, entry.name)
+      const kind = await kindOf(full, entry)
+      if (kind === 'dir') stack.push(full)
+      else if (kind === 'file') {
         if (allFiles || MEDIA_EXTENSIONS.has(extname(entry.name).toLowerCase())) found.push(full)
       }
     }
@@ -241,19 +287,35 @@ const started = Date.now()
 process.stderr.write(`ffprobe: ${FFPROBE}\nscanning…\n`)
 
 const files = []
+const perRoot = []
 for (const root of roots) {
   const absolute = resolve(root)
+  const before = files.length
   try {
     const info = await stat(absolute)
     if (info.isDirectory()) files.push(...(await collect(absolute)))
     else files.push(absolute)
-  } catch {
-    console.error(`cannot read ${absolute}`)
+  } catch (error) {
+    console.error(`cannot read ${absolute}: ${error.message}`)
+    console.error('  (quote the path if it contains spaces, and drop any trailing slash or backslash)')
   }
+  perRoot.push({ root: absolute, files: files.length - before })
 }
 
-process.stderr.write(`${files.length} media files found\n`)
-if (files.length === 0) process.exit(1)
+// Say what each root contributed: a root that returns nothing is the signal
+// that the path is wrong or the folder holds no media, not that the walk failed.
+for (const entry of perRoot) {
+  process.stderr.write(`  ${entry.root}  →  ${entry.files} media file${entry.files === 1 ? '' : 's'}\n`)
+}
+process.stderr.write(`${files.length} media files found in ${foldersVisited} folder${foldersVisited === 1 ? '' : 's'}\n`)
+if (unreadable.length > 0) {
+  process.stderr.write(`${unreadable.length} folder${unreadable.length === 1 ? '' : 's'} could not be read (listed at the end)\n`)
+}
+if (files.length === 0) {
+  console.error('\nNothing to probe. Re-run with --verbose to see which folders were walked,')
+  console.error('or with --all-files if your media uses an extension outside the known set.')
+  process.exit(1)
+}
 
 let cursor = 0
 async function worker() {
@@ -292,6 +354,7 @@ console.log('')
 console.log(`generated    ${new Date().toISOString()}`)
 console.log(`host         ${platform()}-${arch()}`)
 console.log(`roots        ${roots.join(', ')}`)
+console.log(`folders      ${foldersVisited} walked, ${unreadable.length} unreadable`)
 console.log(`files        ${files.length} probed, ${errors.length} failed`)
 console.log(`elapsed      ${((Date.now() - started) / 1000).toFixed(1)}s`)
 console.log('')
@@ -331,12 +394,22 @@ if (errors.length > 0) {
   console.log('')
 }
 
+if (unreadable.length > 0) {
+  console.log(`## Folders that could not be read (${unreadable.length})`)
+  for (const entry of unreadable.slice(0, 40)) console.log(`  ${entry.path}\n      ${entry.error}`)
+  if (unreadable.length > 40) console.log(`  … and ${unreadable.length - 40} more`)
+  console.log('')
+}
+
 const payload = {
   generated: new Date().toISOString(),
   host: `${platform()}-${arch()}`,
   roots,
   fileCount: files.length,
+  folderCount: foldersVisited,
+  perRoot,
   errorCount: errors.length,
+  unreadableFolders: unreadable.slice(0, 200),
   notes,
   tallies: Object.fromEntries(Object.entries(tally).map(([key, map]) => [key, Object.fromEntries(sorted(map))])),
   errors: errors.slice(0, 200)

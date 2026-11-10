@@ -125,10 +125,18 @@ tags, levels, channel layouts, subtitle formats, cover art, interlacing, HDR and
 Dolby Vision. The summary prints to stdout and the full detail is written to
 `plexfixer-survey.json`.
 
+Symlinked folders are followed (libraries are often assembled out of them) and
+each folder is visited once, so a link pointing back up the tree neither loops
+nor double-counts. The run reports how many files each root contributed and how
+many folders it walked — a root showing `0 media files` is a wrong path, not a
+walk that stopped early. Folders it could not read are listed rather than
+skipped in silence.
+
 It uses PlexFixer's bundled ffprobe when it can find one, otherwise ffprobe from
 `PATH`; set `FFPROBE=/path/to/ffprobe` to choose explicitly. Useful flags:
-`--json <file>` to change the output path, `--jobs N` for probe concurrency, and
-`--all-files` to probe every extension rather than the known media ones.
+`--json <file>` to change the output path, `--jobs N` for probe concurrency,
+`--all-files` to probe every extension rather than the known media ones, and
+`--verbose` to print every folder as it is walked.
 
 ## Building installers
 
