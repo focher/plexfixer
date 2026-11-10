@@ -61,6 +61,22 @@ export function resolveOutputPath(
   }
 }
 
+/**
+ * Point an ffmpeg command's output at a scratch file, leaving its input alone.
+ *
+ * The output is the command's last argument. A repair that writes back over
+ * its own source carries that same path as its input too, so only the last
+ * occurrence may be rewritten: replacing every match pointed ffmpeg's input at
+ * a temporary file that does not exist yet, and failed every in-place repair
+ * that kept the container.
+ */
+export function redirectOutput(args: string[], outputPath: string, temporaryPath: string): string[] {
+  const redirected = [...args]
+  const index = redirected.lastIndexOf(outputPath)
+  if (index >= 0) redirected[index] = temporaryPath
+  return redirected
+}
+
 /** A scratch path beside the destination, so the final rename stays on one volume. */
 export function temporaryPathFor(outputPath: string): string {
   const dir = dirname(outputPath)

@@ -8,7 +8,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
-import { BACKUP_DIRECTORY, promoteOutput, resolveOutputPath } from '../src/main/jobs/output.js'
+import {
+  BACKUP_DIRECTORY,
+  promoteOutput,
+  redirectOutput,
+  resolveOutputPath
+} from '../src/main/jobs/output.js'
 
 let dir: string
 
@@ -108,5 +113,35 @@ describe('resolveOutputPath — extensions', () => {
   it('still changes the extension when the container really changes', () => {
     expect(resolveOutputPath('/m/Episode.mkv', 'mp4', settings())).toBe('/m/Episode.mp4')
     expect(resolveOutputPath('/m/Episode.m4v', 'mkv', settings())).toBe('/m/Episode.mkv')
+  })
+})
+
+describe('redirectOutput', () => {
+  // The repair runs into a scratch file and is promoted over the original
+  // only once it has been re-probed. Redirecting it must not disturb the
+  // input, and when a file is repaired back over itself the two are the
+  // same string.
+  const scratch = '/m/.plexfixer-1-Episode.mp4'
+
+  it('redirects only the output when the input is the same file', () => {
+    const args = ['-i', '/m/Episode.mp4', '-c:v', 'copy', '-y', '/m/Episode.mp4']
+    expect(redirectOutput(args, '/m/Episode.mp4', scratch)).toEqual([
+      '-i',
+      '/m/Episode.mp4',
+      '-c:v',
+      'copy',
+      '-y',
+      scratch
+    ])
+  })
+
+  it('redirects the output when it differs from the input', () => {
+    const args = ['-i', '/m/Episode.mkv', '-y', '/m/Episode.mp4']
+    expect(redirectOutput(args, '/m/Episode.mp4', scratch)).toEqual(['-i', '/m/Episode.mkv', '-y', scratch])
+  })
+
+  it('leaves the arguments alone when the output is not among them', () => {
+    const args = ['-i', '/m/Episode.mkv', '-y', '/m/Other.mp4']
+    expect(redirectOutput(args, '/m/Episode.mp4', scratch)).toEqual(args)
   })
 })

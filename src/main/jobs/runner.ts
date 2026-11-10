@@ -19,7 +19,13 @@ import type {
 import { FfmpegError, runFfmpeg } from '../ffmpeg/run.js'
 import { probeFile } from '../ffmpeg/probe.js'
 import { buildRepairCommand, buildSubtitleExtractCommands } from './command.js'
-import { discardTemporary, promoteOutput, resolveOutputPath, temporaryPathFor } from './output.js'
+import {
+  discardTemporary,
+  promoteOutput,
+  redirectOutput,
+  resolveOutputPath,
+  temporaryPathFor
+} from './output.js'
 import { TaskQueue } from './queue.js'
 
 export interface RunnerBinaries {
@@ -208,7 +214,8 @@ export class RepairRunner {
     const temporaryPath = temporaryPathFor(outputPath)
     // ffmpeg infers the container from the extension, and the temporary name
     // keeps it, so no explicit -f is needed.
-    const finalArgs = args.map((arg) => (arg === outputPath ? temporaryPath : arg))
+    //
+    const finalArgs = redirectOutput(args, outputPath, temporaryPath)
 
     this.update({
       ...current,
