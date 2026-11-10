@@ -327,7 +327,13 @@ describe('buildRepairCommand — embedded cover art', () => {
       ...result,
       plan: {
         ...result.plan,
-        videoTranscode: { codec: 'h264' as const, deinterlace: true, forceYuv420p: true, quality: 'balanced' as const }
+        videoTranscode: {
+          sourceStreamIndex: 0,
+          codec: 'h264' as const,
+          deinterlace: true,
+          forceYuv420p: true,
+          quality: 20
+        }
       }
     }
     const { args } = buildRepairCommand({ result: transcoding, settings, outputPath: OUT })
