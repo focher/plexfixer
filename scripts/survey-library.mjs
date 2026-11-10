@@ -15,7 +15,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { open, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, extname, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -183,6 +183,55 @@ function probe(path) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Faststart
+ * ------------------------------------------------------------------ */
+
+/**
+ * Whether an MP4's `moov` atom precedes `mdat`.
+ *
+ * ffprobe does not report this, and in an all-MP4 library it is usually the
+ * single biggest reason a remote client stalls, so the top-level box chain is
+ * walked directly. Mirrors `hasFaststart` in src/main/ffmpeg/probe.ts.
+ */
+async function hasFaststart(filePath) {
+  let handle
+  try {
+    handle = await open(filePath, 'r')
+    const header = Buffer.alloc(16)
+    let offset = 0
+    const { size } = await handle.stat()
+
+    for (let box = 0; box < 64 && offset + 8 <= size; box++) {
+      const { bytesRead } = await handle.read(header, 0, 16, offset)
+      if (bytesRead < 8) return undefined
+
+      let boxSize = header.readUInt32BE(0)
+      const type = header.toString('latin1', 4, 8)
+      if (!/^[\x20-\x7e]{4}$/.test(type)) return undefined
+
+      let headerSize = 8
+      if (boxSize === 1) {
+        if (bytesRead < 16) return undefined
+        boxSize = header.readUInt32BE(8) * 2 ** 32 + header.readUInt32BE(12)
+        headerSize = 16
+      } else if (boxSize === 0) {
+        return type === 'moov' ? true : type === 'mdat' ? false : undefined
+      }
+
+      if (type === 'moov') return true
+      if (type === 'mdat') return false
+      if (boxSize < headerSize) return undefined
+      offset += boxSize
+    }
+    return undefined
+  } catch {
+    return undefined
+  } finally {
+    await handle?.close()
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Tallies
  * ------------------------------------------------------------------ */
 
@@ -212,12 +261,34 @@ const bump = (map, key) => {
   map.set(String(key), (map.get(String(key)) ?? 0) + 1)
 }
 
-const notes = { dolbyVision: 0, hdr10: 0, interlaced: 0, anamorphic: 0, coverArt: 0, multiVideo: 0 }
+const notes = {
+  dolbyVision: 0,
+  hdr10: 0,
+  interlaced: 0,
+  anamorphic: 0,
+  coverArt: 0,
+  multiVideo: 0,
+  // Per-file counts: these decide how much work a library actually needs,
+  // which stream-level tallies cannot show.
+  faststart: 0,
+  notFaststart: 0,
+  faststartUnknown: 0,
+  hevcNeedingRetag: 0,
+  noAacTrack: 0,
+  noAudioAtAll: 0
+}
 const errors = []
 let filesProbed = 0
 
-function record(path, data) {
+function record(path, data, faststart) {
   const format = data.format ?? {}
+  if (faststart === true) notes.faststart++
+  else if (faststart === false) notes.notFaststart++
+  else notes.faststartUnknown++
+
+  let audioTracks = 0
+  let aacTracks = 0
+  let wrongHevcTag = false
   bump(tally.containers, format.format_name)
   bump(tally.extensions, extname(path).toLowerCase())
 
@@ -237,6 +308,11 @@ function record(path, data) {
           break
         }
         realVideo++
+        // Dolby Vision is signalled either by side data or by the codec tag;
+        // the tag is what Apple clients actually read.
+        const tag = (stream.codec_tag_string ?? '').toLowerCase()
+        if (['dvh1', 'dvhe'].includes(tag)) notes.dolbyVision++
+        if (stream.codec_name === 'hevc' && tag && tag !== 'hvc1') wrongHevcTag = true
         bump(tally.video, stream.codec_name)
         bump(tally.videoProfiles, `${stream.codec_name} / ${stream.profile ?? 'n/a'}`)
         bump(tally.pixFmts, stream.pix_fmt)
@@ -253,11 +329,16 @@ function record(path, data) {
         if (['smpte2084', 'arib-std-b67'].includes(stream.color_transfer)) notes.hdr10++
         if (stream.sample_aspect_ratio && !['1:1', '0:1', ''].includes(stream.sample_aspect_ratio)) notes.anamorphic++
         for (const side of stream.side_data_list ?? []) {
-          if (String(side.side_data_type ?? '').toLowerCase().includes('dolby vision')) notes.dolbyVision++
+          // ffprobe writes "DOVI configuration record", not "Dolby Vision".
+          if (/dovi|dolby vision/i.test(String(side.side_data_type ?? ''))) {
+            if (!['dvh1', 'dvhe'].includes(tag)) notes.dolbyVision++
+          }
         }
         break
       }
       case 'audio':
+        audioTracks++
+        if (stream.codec_name === 'aac') aacTracks++
         bump(tally.audio, stream.codec_name)
         bump(tally.audioProfiles, `${stream.codec_name} / ${stream.profile ?? 'n/a'}`)
         bump(tally.channelLayouts, stream.channel_layout ?? `${stream.channels}ch`)
@@ -277,6 +358,9 @@ function record(path, data) {
     }
   }
   if (realVideo > 1) notes.multiVideo++
+  if (wrongHevcTag) notes.hevcNeedingRetag++
+  if (audioTracks === 0) notes.noAudioAtAll++
+  else if (aacTracks === 0) notes.noAacTrack++
 }
 
 /* ------------------------------------------------------------------ *
@@ -325,7 +409,7 @@ async function worker() {
     const path = files[index]
     const { data, error } = await probe(path)
     if (error) errors.push({ path, error })
-    else record(path, data)
+    else record(path, data, await hasFaststart(path))
     filesProbed++
     if (filesProbed % 25 === 0 || filesProbed === files.length) {
       process.stderr.write(`\r  probed ${filesProbed}/${files.length}`)
@@ -377,6 +461,15 @@ printSection('Subtitle codecs', tally.subtitles)
 printSection('Attachments and cover art', tally.attachments)
 printSection('Data streams', tally.dataCodecs)
 printSection('Track languages', tally.languages)
+
+console.log('## Per-file counts (what a repair run would actually touch)')
+console.log(`  MP4 index already at the front         ${notes.faststart}`)
+console.log(`  MP4 index at the end (needs faststart) ${notes.notFaststart}`)
+console.log(`  index position undetermined            ${notes.faststartUnknown}`)
+console.log(`  HEVC carrying a tag other than hvc1    ${notes.hevcNeedingRetag}`)
+console.log(`  files with no AAC audio track          ${notes.noAacTrack}`)
+console.log(`  files with no audio at all             ${notes.noAudioAtAll}`)
+console.log('')
 
 console.log('## Notable')
 console.log(`  files with Dolby Vision side data   ${notes.dolbyVision}`)
