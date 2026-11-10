@@ -265,9 +265,16 @@ describe.runIf(enabled)('integration: embedded cover art', () => {
 
     const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
     const video = repaired.streams.filter((s) => s.kind === 'video')
-    expect(video).toHaveLength(1)
-    expect(video[0].codec).toBe('hevc')
-    expect((video[0] as { codecTag?: string }).codecTag).toBe('hvc1')
+    // Two video streams again: the real one, retagged, and the poster beside it.
+    expect(video).toHaveLength(2)
+
+    const real = video.find((s) => !s.disposition.attachedPic)!
+    expect(real.codec).toBe('hevc')
+    expect((real as { codecTag?: string }).codecTag).toBe('hvc1')
+
+    const art = video.find((s) => s.disposition.attachedPic)!
+    expect(art.codec).toBe('mjpeg')
+
     expect(repaired.streams.filter((s) => s.kind === 'audio')).toHaveLength(1)
     expect(await hasFaststart(outputPath)).toBe(true)
   }, 180_000)

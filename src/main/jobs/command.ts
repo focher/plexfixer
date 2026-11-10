@@ -173,14 +173,21 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
   const dropped = new Set(plan.trackChanges.filter((c) => c.drop).map((c) => c.streamIndex))
 
   // Embedded artwork is a still-image `video` stream as far as ffprobe is
-  // concerned. It must not be mapped: every per-video option here (-c:v, -vf,
-  // -tag:v, -profile:v) would otherwise apply to the poster as well, and
-  // tagging a JPEG as `hvc1` makes the MP4 muxer refuse to write a header.
-  // The analyzer already ignores these, so keeping them would also mean
-  // muxing a track the plan never reasoned about.
+  // concerned, and the plan never reasons about it. It is kept apart from the
+  // real video tracks because every per-video option (-c:v, -vf, -tag:v,
+  // -profile:v) would otherwise apply to the poster as well — tagging a JPEG
+  // as `hvc1` is what makes the MP4 muxer refuse to write a header. It is
+  // mapped last instead, with its own `copy` codec and `attached_pic`
+  // disposition, so a repair does not quietly strip the artwork.
   const videoTracks = file.streams.filter(
     (s) => s.kind === 'video' && !isCoverArt(s) && !dropped.has(s.index)
   )
+  // Matroska has no attached-picture disposition — the stream survives but
+  // reads as a second video track, which is worse than leaving it out. MKV
+  // cover art belongs in an attachment, which is a separate job.
+  const coverTracks = toMp4
+    ? file.streams.filter((s) => s.kind === 'video' && isCoverArt(s) && !dropped.has(s.index))
+    : []
   const audioTracks = file.streams.filter((s) => s.kind === 'audio' && !dropped.has(s.index))
   const subtitleTracks = file.streams.filter((s) => s.kind === 'subtitle' && !dropped.has(s.index))
   const attachments = file.streams.filter((s) => s.kind === 'attachment')
@@ -213,6 +220,14 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
     keep(stream)
   }
 
+  // Artwork goes last so the real video keeps output ordinal 0, which is what
+  // the codec tag and the filter graph are scoped to.
+  const coverOrdinals: number[] = []
+  for (const stream of coverTracks) {
+    keep(stream)
+    coverOrdinals.push(counters.v - 1)
+  }
+
   // Fonts and other attachments only belong in MKV.
   if (!toMp4) for (const stream of attachments) keep(stream)
 
@@ -238,7 +253,12 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
       // conversion is done in the filter graph rather than left to the encoder.
       filters.push('format=yuv420p')
     }
-    if (filters.length > 0) args.push('-vf', filters.join(','))
+    if (filters.length > 0) {
+      // `-vf` is every video stream; artwork must not be deinterlaced or
+      // scaled, so the graph is scoped to the stream being re-encoded.
+      const primary = mapped.find((entry) => entry.specifier === 'v')
+      args.push(primary ? `-filter:v:${primary.ordinal}` : '-vf', filters.join(','))
+    }
 
     if (spec.codec === 'h264') {
       args.push('-profile:v', 'high')
@@ -253,6 +273,12 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
     }
   } else {
     args.push('-c:v', 'copy')
+  }
+
+  // After the video codec, so a `-c:v <encoder>` above cannot re-encode the
+  // poster, and before anything else that reads video ordinals.
+  for (const ordinal of coverOrdinals) {
+    args.push(`-c:v:${ordinal}`, 'copy', `-disposition:v:${ordinal}`, 'attached_pic')
   }
 
   args.push('-c:a', 'copy')

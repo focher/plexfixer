@@ -272,3 +272,56 @@ describe('analyzeFile — the anime case', () => {
     )
   })
 })
+
+describe('analyzeFile — HEVC codec tags', () => {
+  const hevc = (codecTag: string) =>
+    analyzeFile(
+      mp4([
+        video({ index: 0, codec: 'hevc', codecTag, profile: 'main 10', language: 'eng' }),
+        mainAudio({ index: 1, language: 'eng' })
+      ]),
+      { ...base, allowHevc: true }
+    )
+
+  it('corrects hev1 to hvc1', () => {
+    const result = hevc('hev1')
+    expect(codes(result)).toContain('video-hevc-wrong-tag')
+    expect(result.plan.videoCodecTag).toBe('hvc1')
+  })
+
+  it('leaves hvc1 alone', () => {
+    const result = hevc('hvc1')
+    expect(codes(result)).not.toContain('video-hevc-wrong-tag')
+  })
+
+  it('leaves a Dolby Vision stream on dvh1 rather than presenting it as plain HEVC', () => {
+    const result = hevc('dvh1')
+    expect(codes(result)).not.toContain('video-hevc-wrong-tag')
+    expect(result.plan.videoCodecTag).toBe('dvh1')
+    expect(result.plan.strategy).toBe('none')
+  })
+
+  it('corrects dvhe to dvh1, keeping the Dolby Vision tag family', () => {
+    const result = hevc('dvhe')
+    const finding = result.findings.find((f) => f.code === 'video-hevc-wrong-tag')
+    expect(finding?.title).toContain('dvh1')
+    expect(result.plan.videoCodecTag).toBe('dvh1')
+  })
+})
+
+describe('analyzeFile — DRM', () => {
+  it('reports a FairPlay file as unrepairable instead of planning a remux', () => {
+    const result = analyzeFile(
+      mp4([
+        video({ index: 0, codec: 'hevc', codecTag: 'drmi', language: 'eng' }),
+        mainAudio({ index: 1, language: 'eng' })
+      ]),
+      base
+    )
+    const finding = result.findings.find((f) => f.code === 'drm-protected')
+    expect(finding?.severity).toBe('blocker')
+    expect(finding?.remedy).toBe('manual')
+    expect(result.verdict).toBe('fail')
+    expect(result.plan.unresolved.map((f) => f.code)).toContain('drm-protected')
+  })
+})

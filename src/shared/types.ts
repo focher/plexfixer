@@ -139,6 +139,7 @@ export type Severity = 'blocker' | 'warning' | 'info'
 export type RemedyClass = 'lossless' | 'transcode' | 'manual' | 'none'
 
 export type FindingCode =
+  | 'drm-protected'
   // container
   | 'container-not-mp4'
   | 'mp4-not-faststart'

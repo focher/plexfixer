@@ -95,3 +95,18 @@ describe('promoteOutput — sibling', () => {
     expect(await readFile(finalPath, 'utf8')).toBe('REPAIRED')
   })
 })
+
+describe('resolveOutputPath — extensions', () => {
+  it('keeps .m4v, which is already an MP4 container', () => {
+    expect(resolveOutputPath('/m/Episode.m4v', 'mp4', settings())).toBe('/m/Episode.m4v')
+  })
+
+  it('keeps an upper-case extension as the user spelled it', () => {
+    expect(resolveOutputPath('/m/Episode.M4V', 'mp4', settings())).toBe('/m/Episode.M4V')
+  })
+
+  it('still changes the extension when the container really changes', () => {
+    expect(resolveOutputPath('/m/Episode.mkv', 'mp4', settings())).toBe('/m/Episode.mp4')
+    expect(resolveOutputPath('/m/Episode.m4v', 'mkv', settings())).toBe('/m/Episode.mkv')
+  })
+})

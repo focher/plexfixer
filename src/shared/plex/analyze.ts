@@ -27,6 +27,8 @@ import {
   DOLBY_VISION_SAFE_PROFILES,
   H264_SAFE_PROFILES,
   HEVC_SAFE_PROFILES,
+  isDrmProtected,
+  preferredHevcTag,
   MAX_SAFE_CHANNELS,
   STYLED_SUBTITLE_CODECS,
   audioCodecTier,
@@ -243,18 +245,30 @@ function analyzeVideo(stream: VideoStream, file: MediaFile, settings: AppSetting
     })
   }
 
-  // In MP4, HEVC must carry the `hvc1` codec tag. With `hev1`, Apple clients
-  // refuse the file outright — and this is pure metadata, fixed by a remux.
-  if ((codec === 'hevc' || codec === 'h265') && file.container === 'mp4' && stream.codecTag && stream.codecTag.toLowerCase() !== 'hvc1') {
+  // In MP4, HEVC must carry the `hvc1` codec tag — or `dvh1` when the stream is
+  // Dolby Vision. With the in-band form (`hev1`, `dvhe`) Apple clients refuse
+  // the file outright, and this is pure metadata, fixed by a remux.
+  const wantedTag = preferredHevcTag(stream.codecTag)
+  if (
+    (codec === 'hevc' || codec === 'h265') &&
+    file.container === 'mp4' &&
+    stream.codecTag &&
+    stream.codecTag.toLowerCase() !== wantedTag
+  ) {
     needsTagFix = true
     findings.push({
       code: 'video-hevc-wrong-tag',
       severity: 'blocker',
       remedy: 'lossless',
-      title: `HEVC tagged as "${stream.codecTag}" instead of "hvc1"`,
+      title: `HEVC tagged as "${stream.codecTag}" instead of "${wantedTag}"`,
       detail:
-        'Apple clients (iOS, iPadOS, tvOS, Safari) only accept HEVC in MP4 when the codec tag is hvc1. With ' +
-        'hev1 they refuse to play the file at all. This is a metadata-only fix — no re-encoding needed.',
+        `Apple clients (iOS, iPadOS, tvOS, Safari) only accept HEVC in MP4 when the codec tag is ${wantedTag}. ` +
+        `With ${stream.codecTag} they refuse to play the file at all. This is a metadata-only fix — no ` +
+        're-encoding needed.' +
+        (wantedTag === 'dvh1'
+          ? ' The Dolby Vision tag family is kept, so the stream stays Dolby Vision rather than being '
+            + 'presented as ordinary HEVC.'
+          : ''),
       streamIndexes: [stream.index]
     })
   }
@@ -435,6 +449,26 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
   const primary = resolvePrimaryLanguage(file, settings)
 
   /* --- streams -------------------------------------------------------- */
+
+  // Nothing below matters if the file is encrypted: ffmpeg cannot read a
+  // FairPlay stream at all, so a repair would fail with an error about an
+  // unsupported codec and leave the user guessing.
+  const drmStreams = file.streams.filter(
+    (stream) => stream.kind === 'video' && isDrmProtected(stream.codecTag)
+  )
+  if (drmStreams.length > 0) {
+    findings.push({
+      code: 'drm-protected',
+      severity: 'blocker',
+      remedy: 'manual',
+      title: 'DRM-protected file',
+      detail:
+        'The streams are encrypted (FairPlay), which is how purchased iTunes and Apple TV downloads are ' +
+        'delivered. ffmpeg cannot decode or even copy them, so no repair is possible. Plex will transcode or ' +
+        'refuse the file depending on the client; replacing it with a DRM-free copy is the only fix.',
+      streamIndexes: drmStreams.map((stream) => stream.index)
+    })
+  }
 
   if (video.length === 0) {
     findings.push({
@@ -720,11 +754,16 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
         }
       : undefined
 
-  // An existing hvc1 tag is preserved; an hev1 tag is corrected. When we
-  // re-encode to HEVC and target MP4, the tag must be set explicitly.
+  // An existing hvc1 tag is preserved and an hev1 tag corrected; a Dolby Vision
+  // stream keeps the dvh1 family so the DV signalling survives the remux. When
+  // we re-encode, the output is plain HEVC whatever went in, so it takes hvc1.
   const outputVideoCodec = videoTranscode?.codec ?? video[0]?.codec.toLowerCase()
   const videoCodecTag =
-    targetContainer === 'mp4' && (outputVideoCodec === 'hevc' || outputVideoCodec === 'h265') ? 'hvc1' : undefined
+    targetContainer === 'mp4' && (outputVideoCodec === 'hevc' || outputVideoCodec === 'h265')
+      ? videoTranscode
+        ? 'hvc1'
+        : preferredHevcTag(video[0]?.codecTag)
+      : undefined
 
   const plan: RepairPlan = {
     strategy,

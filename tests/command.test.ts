@@ -177,7 +177,7 @@ describe('buildRepairCommand — video re-encode', () => {
     expect(valueAfter(args, '-b:v')).toBe('0')
     expect(encoderLabel).toContain('NVENC')
     // 10-bit source targeting H.264 must be converted down to 8-bit 4:2:0.
-    expect(valueAfter(args, '-vf')).toContain('format=yuv420p')
+    expect(valueAfter(args, '-filter:v:0')).toContain('format=yuv420p')
     expect(valueAfter(args, '-level:v')).toBe('4.1')
   })
 
@@ -197,7 +197,7 @@ describe('buildRepairCommand — video re-encode', () => {
       { ...DEFAULT_SETTINGS, maxHeight: 1080 }
     )
     const { args } = buildRepairCommand({ result, settings: { ...DEFAULT_SETTINGS, maxHeight: 1080 }, outputPath: OUT })
-    const filters = valueAfter(args, '-vf') ?? ''
+    const filters = valueAfter(args, '-filter:v:0') ?? ''
     expect(filters).toContain('yadif')
     expect(filters).toContain('scale=-2:1080')
   })
@@ -311,10 +311,31 @@ describe('buildRepairCommand — embedded cover art', () => {
       settings
     )
 
-  it('never maps the artwork into the output', () => {
+  it('keeps the artwork, mapped last and marked as an attached picture', () => {
     const result = withArt()
     const { args } = buildRepairCommand({ result, settings, outputPath: OUT })
-    expect(maps(args)).not.toContain('0:2')
+
+    // Last of the video streams, so the real video keeps ordinal 0.
+    expect(maps(args)).toContain('0:2')
+    expect(valueAfter(args, '-c:v:1')).toBe('copy')
+    expect(valueAfter(args, '-disposition:v:1')).toBe('attached_pic')
+  })
+
+  it('does not let a video re-encode touch the artwork', () => {
+    const result = withArt()
+    const transcoding = {
+      ...result,
+      plan: {
+        ...result.plan,
+        videoTranscode: { codec: 'h264' as const, deinterlace: true, forceYuv420p: true, quality: 'balanced' as const }
+      }
+    }
+    const { args } = buildRepairCommand({ result: transcoding, settings, outputPath: OUT })
+
+    // The encoder and the filter graph are both scoped to the real video.
+    expect(args).not.toContain('-vf')
+    expect(valueAfter(args, '-filter:v:0')).toContain('yadif')
+    expect(valueAfter(args, '-c:v:1')).toBe('copy')
   })
 
   it('scopes the HEVC codec tag to the real video stream', () => {

@@ -8,6 +8,25 @@ import type { AppSettings } from '@shared/types.js'
 
 export const BACKUP_DIRECTORY = '.plexfixer-backups'
 
+/**
+ * Extensions that already name the target container.
+ *
+ * `.m4v` is an MP4 file — Apple's name for one with video in it, and what an
+ * iTunes library is full of. Rewriting a repaired `.m4v` to `.mp4` renames
+ * every file in such a library for no gain: Plex has to re-match them, and the
+ * original is left behind under a different name. So an extension that already
+ * fits the target container is kept as it is.
+ */
+const CONTAINER_EXTENSIONS: Record<'mp4' | 'mkv', string[]> = {
+  mp4: ['.mp4', '.m4v'],
+  mkv: ['.mkv']
+}
+
+function extensionFor(sourcePath: string, targetContainer: 'mp4' | 'mkv'): string {
+  const current = extname(sourcePath).toLowerCase()
+  return CONTAINER_EXTENSIONS[targetContainer].includes(current) ? extname(sourcePath) : `.${targetContainer}`
+}
+
 /** The final destination for a repaired file. */
 export function resolveOutputPath(
   sourcePath: string,
@@ -18,7 +37,7 @@ export function resolveOutputPath(
 ): string {
   const dir = dirname(sourcePath)
   const stem = basename(sourcePath, extname(sourcePath))
-  const extension = `.${targetContainer}`
+  const extension = extensionFor(sourcePath, targetContainer)
 
   switch (settings.outputPlacement) {
     case 'in-place':

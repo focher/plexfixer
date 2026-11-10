@@ -67,6 +67,36 @@ export const HEVC_SAFE_PROFILES = new Set(['main', 'main 10'])
  */
 export const DOLBY_VISION_SAFE_PROFILES = new Set([8, 84, 81])
 
+/**
+ * The codec tag HEVC should carry in MP4, given the tag it has now.
+ *
+ * Apple clients accept HEVC in MP4 only when the parameter sets live in the
+ * sample entry, which is what `hvc1` signals; `hev1` means they are in-band
+ * and the file is refused. Dolby Vision uses the same pair one level up:
+ * `dvh1` and `dvhe`. A DV stream retagged to `hvc1` loses its Dolby Vision
+ * signalling entirely — the client decodes it as ordinary HEVC, which for a
+ * profile without an HDR10 base layer means badly skewed colour. So DV keeps
+ * its own family and only the in-band form is corrected.
+ */
+/**
+ * Codec tags that mean the stream is encrypted.
+ *
+ * FairPlay-protected iTunes purchases carry `drmi` on video and `drms` on
+ * audio, and ffprobe cannot name the codec underneath. ffmpeg cannot read
+ * them either: a repair attempt fails with an error about an unsupported
+ * codec, which tells the user nothing about the real cause.
+ */
+export const DRM_CODEC_TAGS = new Set(['drmi', 'drms', 'drma', 'drmv'])
+
+export function isDrmProtected(codecTag: string | undefined): boolean {
+  return codecTag != null && DRM_CODEC_TAGS.has(codecTag.toLowerCase())
+}
+
+export function preferredHevcTag(currentTag: string | undefined): 'hvc1' | 'dvh1' {
+  const tag = currentTag?.toLowerCase()
+  return tag === 'dvh1' || tag === 'dvhe' ? 'dvh1' : 'hvc1'
+}
+
 /** Pixel formats grouped by chroma subsampling. */
 export function chromaFromPixFmt(pixFmt: string | undefined): '4:2:0' | '4:2:2' | '4:4:4' | 'unknown' {
   if (!pixFmt) return 'unknown'
