@@ -9,6 +9,9 @@ import type {
   ScanError
 } from '@shared/types.js'
 import ResultsTable from './components/ResultsTable.js'
+import FilterBar from './components/FilterBar.js'
+import type { ResultFacet } from '@shared/plex/facets.js'
+import { countFacets, filterResults } from '@shared/plex/facets.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { parentDirectory } from './format.js'
@@ -42,6 +45,7 @@ export default function App(): React.JSX.Element {
   const [results, setResults] = useState<AnalysisResult[]>([])
   const [scanErrors, setScanErrors] = useState<ScanError[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; currentPath?: string }>()
   const [jobs, setJobs] = useState<Job[]>([])
@@ -295,6 +299,9 @@ export default function App(): React.JSX.Element {
     return map
   }, [results])
 
+  const facetCounts = useMemo(() => countFacets(results), [results])
+  const visibleResults = useMemo(() => filterResults(results, facets), [results, facets])
+
   const scannedFolders = useMemo(() => {
     const folders = new Set<string>()
     for (const entry of results) folders.add(parentDirectory(entry.file.path))
@@ -464,8 +471,30 @@ export default function App(): React.JSX.Element {
                   </div>
                 ) : null}
 
+                <FilterBar
+                  counts={facetCounts}
+                  active={facets}
+                  total={results.length}
+                  shown={visibleResults.length}
+                  onToggle={(facet) =>
+                    setFacets((previous) => {
+                      const next = new Set(previous)
+                      if (next.has(facet)) next.delete(facet)
+                      else next.add(facet)
+                      return next
+                    })
+                  }
+                  onClear={() => setFacets(new Set())}
+                />
+
+                {visibleResults.length === 0 ? (
+                  <div className="empty">
+                    No file matches the filters you have on. Clear one to see the rest.
+                  </div>
+                ) : null}
+
                 <ResultsTable
-                  results={results}
+                  results={visibleResults}
                   jobs={jobsByPath}
                   selected={selected}
                   overrides={overrides}
@@ -480,9 +509,15 @@ export default function App(): React.JSX.Element {
                     })
                   }
                   onToggleAll={() =>
-                    setSelected((previous) =>
-                      previous.size === results.length ? new Set() : new Set(results.map((r) => r.file.path))
-                    )
+                    setSelected((previous) => {
+                      // Acts on the rows actually on screen: selecting files a
+                      // filter is hiding is not what the header checkbox means.
+                      const visible = visibleResults.map((r) => r.file.path)
+                      const next = new Set(previous)
+                      if (visible.every((path) => next.has(path))) for (const path of visible) next.delete(path)
+                      else for (const path of visible) next.add(path)
+                      return next
+                    })
                   }
                   onSetMode={(path, mode) => void setMode(path, mode)}
                   onRepair={(paths) => void repair(paths)}
