@@ -590,6 +590,56 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
   const actions: PlanAction[] = []
   const trackChanges: TrackPlanChange[] = [...trackResolution.changes]
 
+  // MP4 cannot express "no subtitle track is default". Whatever the
+  // dispositions say, the muxer enables one subtitle track, so clearing the
+  // last remaining default does not switch subtitles off — it hands the flag
+  // to whichever track comes first. On a file whose unwanted default is the
+  // English track, that promotes a language the viewer did not ask for; on one
+  // where it is already first, it changes nothing at all. Either way the
+  // report promised something the file would not come back with.
+  //
+  // Image subtitles are left out of this: clearing their default risks the
+  // same reshuffle, but the alternative is Plex burning them in and forcing a
+  // full transcode, which is worse than the wrong language coming up.
+  if (targetContainer === 'mp4') {
+    const promotes = trackChanges.some((c) => c.kind === 'subtitle' && c.setDefault === true)
+    if (!promotes) {
+      const imageSubtitles = new Set(
+        subtitleStreams(file)
+          .filter((s) => isImageSubtitle(s.codec))
+          .map((s) => s.index)
+      )
+      for (let i = trackChanges.length - 1; i >= 0; i--) {
+        const change = trackChanges[i]
+        if (change.kind !== 'subtitle' || change.setDefault !== false) continue
+        if (imageSubtitles.has(change.streamIndex)) continue
+        // Drop the whole change only if clearing the flag was all it did.
+        if (change.setForced == null && change.setLanguage == null && !change.drop) {
+          trackChanges.splice(i, 1)
+        } else {
+          trackChanges[i] = { ...change, setDefault: undefined }
+        }
+      }
+
+      // Say so, rather than listing a repair that will not happen.
+      for (let i = 0; i < findings.length; i++) {
+        const finding = findings[i]
+        if (finding.code !== 'default-subtitle-unwanted' && finding.code !== 'default-subtitle-language-mismatch') {
+          continue
+        }
+        if (finding.streamIndexes?.some((index) => imageSubtitles.has(index))) continue
+        findings[i] = {
+          ...finding,
+          remedy: 'manual',
+          detail:
+            `${finding.detail} MP4 always leaves one subtitle track enabled, so clearing this flag would ` +
+            'only move it to another language rather than switch subtitles off. Turn subtitles off in the ' +
+            "Plex client's own playback settings instead."
+        }
+      }
+    }
+  }
+
   for (const stream of subtitleVerdict.dropForContainer) {
     trackChanges.push({
       streamIndex: stream.index,
@@ -703,17 +753,21 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
     })
   }
 
-  // Embedded artwork is dropped during any repair: it is a still-image video
-  // stream, so every per-video ffmpeg option would otherwise apply to it too.
-  // Nothing flags it on its own — a poster is not a direct-play problem, and
-  // proposing a rewrite just to strip one would be worse than leaving it.
+  // Embedded artwork survives a repair into MP4: it is carried through as an
+  // attached picture, so there is nothing to report. Matroska has no
+  // attached-picture disposition — the stream would come out as a second
+  // video track, which is worse than leaving it out — so there it really is
+  // dropped, and that is worth saying.
+  //
+  // Nothing flags artwork on its own: a poster is not a direct-play problem,
+  // and proposing a rewrite just to strip one would be worse than leaving it.
   const coverArt = coverArtStreams(file)
-  if (coverArt.length > 0 && strategy !== 'none') {
+  if (coverArt.length > 0 && strategy !== 'none' && targetContainer !== 'mp4') {
     actions.push({
       label: `Drop ${coverArt.length} embedded cover-art track${coverArt.length === 1 ? '' : 's'}`,
       detail:
-        'Plex takes artwork from its own metadata agents, and a still-image video ' +
-        'track confuses client track pickers.'
+        'Matroska cannot mark a still image as cover art, so it would become a ' +
+        'second video track and confuse client track pickers.'
     })
   }
 

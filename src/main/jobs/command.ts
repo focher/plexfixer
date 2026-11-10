@@ -363,6 +363,16 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
   args.push('-map_metadata', '0', '-map_chapters', '0')
   // Remuxing a long file with many streams can overflow the default queue.
   args.push('-max_muxing_queue_size', '4096')
+
+  // Name the muxer rather than letting ffmpeg infer it from the extension.
+  // `.m4v` selects `ipod` — "iPod H.264 MP4" — which has no codec tag for
+  // HEVC and refuses to write the header at all:
+  //
+  //   [ipod] Could not find tag for codec hevc in stream #0
+  //
+  // That is most of a modern library. `.m4v` is an ordinary MP4 container,
+  // so the mp4 muxer is both correct and what the file already was.
+  args.push('-f', toMp4 ? 'mp4' : 'matroska')
   args.push('-y', outputPath)
 
   return { args, encoderLabel }

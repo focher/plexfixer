@@ -326,3 +326,59 @@ describe('analyzeFile — DRM', () => {
     expect(result.plan.unresolved.map((f) => f.code)).toContain('drm-protected')
   })
 })
+
+describe('unwanted default subtitles in MP4', () => {
+  /**
+   * Regression: MP4 cannot express "no subtitle is default". Whatever the
+   * dispositions say, the muxer enables one subtitle track. Clearing the last
+   * remaining default therefore does not switch subtitles off — it hands the
+   * flag to whichever track comes first, promoting a language nobody asked
+   * for. Confirmed against ffmpeg directly: even a lone subtitle track with
+   * its default cleared comes back flagged default.
+   */
+  const english = () => [
+    video({ index: 0, language: 'eng' }),
+    mainAudio({ index: 1, language: 'eng' }),
+    subtitle({ index: 2, codec: 'mov_text', language: 'ara' }),
+    subtitle({ index: 3, codec: 'mov_text', language: 'eng', disposition: flags({ default: true }) })
+  ]
+
+  const subtitleDefaultChanges = (result: ReturnType<typeof analyzeFile>) =>
+    result.plan.trackChanges.filter((c) => c.kind === 'subtitle' && c.setDefault === false)
+
+  it('does not promise a clearing it cannot deliver', () => {
+    const result = analyzeFile(mp4(english()), DEFAULT_SETTINGS)
+    expect(subtitleDefaultChanges(result)).toEqual([])
+
+    const finding = result.findings.find((f) => f.code === 'default-subtitle-unwanted')
+    expect(finding?.remedy).toBe('manual')
+    expect(finding?.detail).toMatch(/one subtitle track enabled/i)
+  })
+
+  it('an info finding does not make the file look blocked', () => {
+    const result = analyzeFile(mp4(english()), DEFAULT_SETTINGS)
+    expect(result.plan.unresolved.every((f) => f.severity === 'info')).toBe(true)
+  })
+
+  it('still clears it for MKV, which can hold no default at all', () => {
+    const settings = { ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
+    const result = analyzeFile(mkv(english()), settings)
+    expect(subtitleDefaultChanges(result).map((c) => c.streamIndex)).toContain(3)
+  })
+
+  it('still clears it when another track is being promoted in its place', () => {
+    // Foreign audio: a subtitle track is meant to come up, so the flag moves
+    // rather than disappearing, and MP4 can represent that perfectly well.
+    const result = analyzeFile(
+      mp4([
+        video({ index: 0, language: 'jpn' }),
+        mainAudio({ index: 1, language: 'jpn' }),
+        subtitle({ index: 2, codec: 'mov_text', language: 'eng' }),
+        subtitle({ index: 3, codec: 'mov_text', language: 'jpn', disposition: flags({ default: true }) })
+      ]),
+      DEFAULT_SETTINGS
+    )
+    expect(result.plan.trackChanges.some((c) => c.kind === 'subtitle' && c.setDefault === true)).toBe(true)
+    expect(subtitleDefaultChanges(result).map((c) => c.streamIndex)).toContain(3)
+  })
+})

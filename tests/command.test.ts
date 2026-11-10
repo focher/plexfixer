@@ -369,8 +369,77 @@ describe('buildRepairCommand — embedded cover art', () => {
     expect(clean.plan.actions).toEqual([])
   })
 
-  it('tells the user the artwork goes away when a repair does run', () => {
+  it('does not claim artwork is dropped when an MP4 repair keeps it', () => {
+    // The plan used to announce "Drop 1 embedded cover-art track" while the
+    // command mapped it straight through, so the report contradicted the
+    // command it printed directly beneath itself.
     const result = withArt()
+    expect(result.plan.actions.some((a) => /cover-art/i.test(a.label))).toBe(false)
+    expect(maps(buildRepairCommand({ result, settings, outputPath: OUT }).args)).toContain('0:2')
+  })
+
+  it('still says so for an MKV target, where the artwork really is dropped', () => {
+    const mkvSettings = { ...settings, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
+    // Two English tracks, neither flagged default, so a repair actually runs.
+    const result = analyzeFile(
+      mkv([
+        video({ codec: 'hevc', codecTag: 'hev1', profile: 'Main 10', language: 'eng' }),
+        audio({ index: 1, codec: 'aac', language: 'eng' }),
+        audio({ index: 2, codec: 'aac', language: 'eng' }),
+        coverArt({ index: 3 })
+      ]),
+      mkvSettings
+    )
+    expect(result.plan.strategy).not.toBe('none')
     expect(result.plan.actions.some((a) => /cover-art/i.test(a.label))).toBe(true)
+    expect(maps(buildRepairCommand({ result, settings: mkvSettings, outputPath: '/out/E.mkv' }).args)).not.toContain('0:3')
+  })
+})
+
+describe('buildRepairCommand — muxer selection', () => {
+  /**
+   * Regression: 0.1.2 started preserving the `.m4v` extension, and ffmpeg
+   * infers the muxer from it. `.m4v` selects `ipod` — "iPod H.264 MP4" —
+   * which carries no codec tag for HEVC and refuses to write a header:
+   *
+   *   [ipod] Could not find tag for codec hevc in stream #0
+   *
+   * Every HEVC .m4v in a library failed to repair. The muxer is named
+   * explicitly now, so the extension cannot decide it.
+   */
+  const settings = { ...DEFAULT_SETTINGS, allowHevc: true }
+
+  const hevcM4v = (): ReturnType<typeof analyzeFile> =>
+    analyzeFile(
+      mp4([
+        video({ codec: 'hevc', codecTag: 'hev1', profile: 'Main 10', language: 'eng' }),
+        mainAudio({ index: 1, codec: 'aac', language: 'eng' })
+      ]),
+      settings
+    )
+
+  it('names the mp4 muxer when the output keeps an .m4v extension', () => {
+    const { args } = buildRepairCommand({
+      result: hevcM4v(),
+      settings,
+      outputPath: '/out/Episode.m4v'
+    })
+    expect(valueAfter(args, '-f')).toBe('mp4')
+    // It has to reach ffmpeg as an output option, before the file itself.
+    expect(args.indexOf('-f')).toBeLessThan(args.length - 1)
+    expect(args.at(-1)).toBe('/out/Episode.m4v')
+  })
+
+  it('names the matroska muxer for an MKV target', () => {
+    const result = analyzeFile(
+      mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]),
+      { ...DEFAULT_SETTINGS, targetContainer: 'mkv', remuxMkvToMp4: false }
+    )
+    const { args } = buildRepairCommand({
+      result,
+      settings: { ...DEFAULT_SETTINGS, targetContainer: 'mkv', remuxMkvToMp4: false },
+      outputPath: '/out/Episode.mkv'
+    })
+    expect(valueAfter(args, '-f')).toBe('matroska')
   })
 })
