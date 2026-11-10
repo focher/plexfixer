@@ -5,7 +5,12 @@
  *
  * Sources, all from the projects' own release artifacts:
  *   - Windows / Linux: BtbN/FFmpeg-Builds, the n8.1 release branch. These are
- *     GPL builds, which is what carries NVENC and libx264.
+ *     GPL builds, which is what carries NVENC and libx264. The *shared* build
+ *     is used rather than the static one: a static ffmpeg and a static ffprobe
+ *     each embed the whole of libav*, so bundling both shipped the same 150 MB
+ *     of codecs twice. Shared, the two executables come to under a megabyte
+ *     between them and the libraries are carried once — 315 MB down to 190 MB
+ *     on Windows, with nothing lost.
  *   - macOS (arm64 + x64): eugeneware/ffmpeg-static, pinned to a release tag.
  *     BtbN does not build for macOS, and evermeet.cx (the long-standing macOS
  *     source) now returns HTTP 410.
@@ -23,6 +28,7 @@ import { basename, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { licenseOf } from './lib/ffmpeg-license.mjs'
 
 const execFileAsync = promisify(execFile)
 const ROOT = new URL('..', import.meta.url).pathname
@@ -31,6 +37,9 @@ const WANTED = ['ffmpeg', 'ffprobe']
 
 /** BtbN's rolling pointer at the n8.1 release branch. */
 const BTBN = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest'
+
+/** Platforms `--all` fetches: the ones `npm run dist` actually builds. */
+const SHIPPED = ['darwin-arm64', 'darwin-x64', 'win32-x64']
 /**
  * Pinned release of the macOS static builds. Note the tag (`b6.1.1`) is the
  * packaging release, not the FFmpeg version — these binaries report 6.0.
@@ -47,13 +56,15 @@ const EUGENEWARE = 'https://github.com/eugeneware/ffmpeg-static/releases/downloa
 const TARGETS = {
   'win32-x64': {
     kind: 'archive',
-    url: `${BTBN}/ffmpeg-n8.1-latest-win64-gpl-8.1.zip`,
-    format: 'zip'
+    url: `${BTBN}/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip`,
+    format: 'zip',
+    libraries: /\.dll$/i
   },
   'linux-x64': {
     kind: 'archive',
-    url: `${BTBN}/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz`,
-    format: 'tar'
+    url: `${BTBN}/ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz`,
+    format: 'tar',
+    libraries: /\.so(\.\d+)*$/
   },
   'darwin-arm64': {
     kind: 'files',
@@ -131,6 +142,50 @@ async function findBinaries(dir, found = new Map()) {
   return found
 }
 
+/**
+ * Shared-library files that have to travel with the executables.
+ *
+ * They sit beside ffmpeg in the archive's `bin` (Windows) or in a sibling
+ * `lib` (Linux). ffplay is not one of ours and is the largest thing in the
+ * archive after avcodec, so it is left behind.
+ */
+async function findLibraries(dir, pattern, found = []) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) await findLibraries(full, pattern, found)
+    else if (entry.isFile() && pattern.test(entry.name) && !entry.name.startsWith('ffplay')) found.push(full)
+  }
+  return found
+}
+
+/**
+ * Refuse a build nobody is allowed to redistribute.
+ *
+ * `--enable-nonfree` produces a binary that may be used but not shipped: it is
+ * the one configure flag that makes an installer undistributable, and it is
+ * invisible unless you go looking. v0.1.1's macOS arm64 build carried it into
+ * a published DMG, which is why this check exists.
+ */
+async function assertDistributable(path, platformKey, allowNonfree) {
+  const license = await licenseOf(path)
+  if (license.redistributable === 'unknown') {
+    console.log('  ! could not read the build configuration from this binary')
+    return
+  }
+  if (license.redistributable) return
+
+  if (allowNonfree) {
+    console.log(`  ! ${basename(path)} is an --enable-nonfree build: usable here, NOT redistributable`)
+    return
+  }
+  throw new Error(
+    `${basename(path)} is built with --enable-nonfree.\n` +
+      '  Such a build may be used but not redistributed, so it must not go into an\n' +
+      '  installer. Pin a different source in TARGETS, build one from source, or pass\n' +
+      `  --allow-nonfree to fetch it anyway for local use on ${platformKey}.`
+  )
+}
+
 /** Cross-device rename fails on some CI runners; fall back to a copy. */
 async function move(from, to) {
   try {
@@ -143,7 +198,7 @@ async function move(from, to) {
   }
 }
 
-async function fetchTarget(platformKey, { force }) {
+async function fetchTarget(platformKey, { force, allowNonfree }) {
   const target = TARGETS[platformKey]
   if (!target) {
     console.log(`\n${platformKey}: no source configured — PlexFixer will use ffmpeg from PATH.`)
@@ -176,6 +231,7 @@ async function fetchTarget(platformKey, { force }) {
         // a truncated binary sitting where the app would try to run it.
         const scratch = join(workDir, exeName(platformKey, name))
         await download(url, scratch, { gzip: target.gzip })
+        await assertDistributable(scratch, platformKey, allowNonfree)
         await move(scratch, finalPaths[name])
         if (!platformKey.startsWith('win32')) await chmod(finalPaths[name], 0o755)
         console.log(`  → ${finalPaths[name]}`)
@@ -195,9 +251,25 @@ async function fetchTarget(platformKey, { force }) {
     if (missing.length > 0) throw new Error(`archive did not contain ${missing.join(' and ')}`)
 
     for (const name of WANTED) {
+      await assertDistributable(found.get(name), platformKey, allowNonfree)
       await move(found.get(name), finalPaths[name])
       if (!platformKey.startsWith('win32')) await chmod(finalPaths[name], 0o755)
       console.log(`  → ${finalPaths[name]}`)
+    }
+
+    if (target.libraries) {
+      // A shared build's executables are useless on their own; the libraries
+      // go into the same folder, which is where the loader looks first.
+      const libraries = await findLibraries(extractDir, target.libraries)
+      if (libraries.length === 0) throw new Error('shared build contained no libraries')
+      let bytes = 0
+      for (const library of libraries) {
+        const destination = join(outputDir, basename(library))
+        bytes += (await stat(library)).size
+        await move(library, destination)
+        if (!platformKey.startsWith('win32')) await chmod(destination, 0o755)
+      }
+      console.log(`  → ${libraries.length} shared libraries (${(bytes / 1048576).toFixed(0)} MB)`)
     }
   } finally {
     await rm(workDir, { recursive: true, force: true })
@@ -206,12 +278,17 @@ async function fetchTarget(platformKey, { force }) {
 
 const args = process.argv.slice(2)
 const force = args.includes('--force')
-const keys = args.includes('--all') ? Object.keys(TARGETS) : [`${process.platform}-${process.arch}`]
+const allowNonfree = args.includes('--allow-nonfree')
+// An explicit platform key wins, so linux-x64 can still be fetched by name
+// even though `--all` no longer includes a platform we do not ship.
+const explicit = args.filter((arg) => !arg.startsWith('--'))
+const keys =
+  explicit.length > 0 ? explicit : args.includes('--all') ? SHIPPED : [`${process.platform}-${process.arch}`]
 
 const failures = []
 for (const key of keys) {
   try {
-    await fetchTarget(key, { force })
+    await fetchTarget(key, { force, allowNonfree })
   } catch (error) {
     failures.push(`${key}: ${error.message}`)
     console.error(`\n${key}: FAILED — ${error.message}`)

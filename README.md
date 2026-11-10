@@ -99,10 +99,19 @@ npm run fetch:ffmpeg
 npm run dev
 ```
 
-PlexFixer needs `ffmpeg` and `ffprobe`. `npm run fetch:ffmpeg` downloads static
-builds into `resources/bin/<platform>-<arch>/`; failing that the app falls back
-to whatever is on `PATH` (Homebrew's `ffmpeg` works), and Settings → FFmpeg lets
-you point at a specific binary. Add `--force` to replace binaries already there.
+PlexFixer needs `ffmpeg` and `ffprobe`. `npm run fetch:ffmpeg` downloads them
+into `resources/bin/<platform>-<arch>/`; failing that the app falls back to
+whatever is on `PATH` (Homebrew's `ffmpeg` works), and Settings → FFmpeg lets
+you point at a specific binary. Add `--force` to replace binaries already
+there, or name a platform (`linux-x64`) to fetch one we do not ship.
+
+Windows and Linux use FFmpeg's *shared* builds, so the folder holds two small
+executables plus the libav* libraries they load from beside them — half the
+size of bundling two static binaries that each embed the whole library.
+
+The fetch refuses a build configured `--enable-nonfree`, which may be used but
+not redistributed; `--allow-nonfree` overrides that for local use, and the
+packaging hook refuses it again if one would be shipped. See [NOTICE.md](NOTICE.md).
 
 You can also launch it with paths to scan:
 
@@ -143,6 +152,9 @@ It uses PlexFixer's bundled ffprobe when it can find one, otherwise ffprobe from
 ```bash
 npm run fetch:ffmpeg -- --all
 ```
+
+`--all` fetches the platforms `npm run dist` builds: macOS arm64, macOS x64 and
+Windows x64.
 
 ```bash
 npm run dist
