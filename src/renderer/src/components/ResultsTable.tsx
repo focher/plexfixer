@@ -53,6 +53,10 @@ export interface ResultsTableProps {
   onSetMode: (path: string, mode: RepairMode | null) => void
   onRepair: (paths: string[]) => void
   onReveal: (path: string) => void
+  /** Re-analyse one file without rebuilding the whole table. */
+  onRefresh: (path: string) => void
+  /** Paths with a refresh in flight. */
+  refreshing: Set<string>
 }
 
 export default function ResultsTable(props: ResultsTableProps): React.JSX.Element {
@@ -93,6 +97,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         const isOverridden = props.overrides[path] != null
         const open = expanded.has(path)
         const reason = summarizeReason(result)
+        const isRefreshing = props.refreshing.has(path)
 
         return (
           <div key={path}>
@@ -110,8 +115,19 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 <button className="expander" onClick={() => toggleExpanded(path)} aria-expanded={open}>
                   {open ? '▾' : '▸'}
                 </button>
-                {result.file.fileName}
-                <span className="dir">{shortenPath(parentDirectory(path), 2)}</span>
+                <span className="name-text">
+                  {result.file.fileName}
+                  <span className="dir">{shortenPath(parentDirectory(path), 2)}</span>
+                </span>
+                <button
+                  className="refresh"
+                  onClick={() => props.onRefresh(path)}
+                  disabled={isRefreshing}
+                  aria-label={`Re-scan ${result.file.fileName}`}
+                  title="Re-scan just this file"
+                >
+                  <span className={isRefreshing ? 'spin' : undefined}>⟳</span>
+                </button>
               </span>
               <span className="reason" title={reason.detail}>
                 <span className="reason-text">{reason.headline}</span>

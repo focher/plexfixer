@@ -109,6 +109,18 @@ export async function promoteOutput(
     } else if (await exists(sourcePath)) {
       await rm(sourcePath, { force: true })
     }
+
+    // A container change means the destination has a different name from the
+    // source, so something unrelated can already be sitting there — e.g.
+    // repairing `Movie.mkv` when a separate `Movie.mp4` exists. Replacing the
+    // original was asked for; destroying its neighbour was not.
+    if (outputPath !== sourcePath && (await exists(outputPath))) {
+      if (settings.keepBackups) {
+        await backupOriginal(outputPath, settings)
+      } else {
+        await rm(outputPath, { force: true })
+      }
+    }
   }
 
   // Never clobber an unrelated file that happens to sit at the destination.

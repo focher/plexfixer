@@ -28,7 +28,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   maxH264Level: 41,
   maxHeight: 2160,
 
-  outputPlacement: 'sibling',
+  // Repairs replace the original; `keepBackups` is what makes that safe —
+  // the original is moved into `.plexfixer-backups/` beside it, not deleted.
+  outputPlacement: 'in-place',
   outputDirectory: '',
   keepBackups: true,
   outputSuffix: '.plexfixed',

@@ -17,6 +17,7 @@ export const IPC = {
   pickDirectory: 'dialog:pick-directory',
   pickBinary: 'dialog:pick-binary',
   scanStart: 'scan:start',
+  rescanFile: 'scan:rescan-file',
   scanCancel: 'scan:cancel',
   jobsEnqueue: 'jobs:enqueue',
   jobsList: 'jobs:list',

@@ -46,9 +46,13 @@ export default function App(): React.JSX.Element {
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; currentPath?: string }>()
   const [jobs, setJobs] = useState<Job[]>([])
   const [dragging, setDragging] = useState(false)
+  const [refreshing, setRefreshing] = useState<Set<string>>(new Set())
 
   const scanIdRef = useRef<string | undefined>(undefined)
   const lastPathsRef = useRef<string[]>([])
+  // Read inside `refreshFile`, which must not re-create itself on every job
+  // update or every row would lose its handler mid-repair.
+  const jobsByPathRef = useRef<Map<string, Job>>(new Map())
 
   /* --- bootstrap ------------------------------------------------------ */
 
@@ -154,6 +158,75 @@ export default function App(): React.JSX.Element {
     }
   }, [results.length])
 
+  /**
+   * Re-analyse a single row in place.
+   *
+   * An in-place repair that changes container renames the file, so when the
+   * original path is gone we follow the finished job to the new one and the row
+   * tracks the repaired file rather than disappearing.
+   */
+  const refreshFile = useCallback(
+    async (path: string) => {
+      setRefreshing((previous) => new Set(previous).add(path))
+      try {
+        let targetPath = path
+        let response = await window.plexfixer.scan.rescanFile(path)
+
+        if (response.missing) {
+          const job = jobsByPathRef.current.get(path)
+          const moved = job?.state === 'done' ? job.outputPath : undefined
+          if (moved && moved !== path) {
+            targetPath = moved
+            response = await window.plexfixer.scan.rescanFile(moved)
+          }
+        }
+
+        if (response.result) {
+          const fresh = response.result
+          setResults((previous) => previous.map((entry) => (entry.file.path === path ? fresh : entry)))
+          if (targetPath !== path) {
+            setSelected((previous) => {
+              if (!previous.has(path)) return previous
+              const next = new Set(previous)
+              next.delete(path)
+              next.add(targetPath)
+              return next
+            })
+          }
+          setScanErrors((previous) => previous.filter((entry) => entry.path !== path))
+          return
+        }
+
+        if (response.missing) {
+          setResults((previous) => previous.filter((entry) => entry.file.path !== path))
+          setSelected((previous) => {
+            const next = new Set(previous)
+            next.delete(path)
+            return next
+          })
+          return
+        }
+
+        if (response.error) {
+          const message = response.error
+          setScanErrors((previous) => [...previous.filter((entry) => entry.path !== path), { path, message }])
+        }
+      } finally {
+        setRefreshing((previous) => {
+          const next = new Set(previous)
+          next.delete(path)
+          return next
+        })
+      }
+    },
+    []
+  )
+
+  /** Re-scan everything the table was built from, keeping the same inputs. */
+  const refreshAll = useCallback(async () => {
+    if (lastPathsRef.current.length > 0) await startScan(lastPathsRef.current)
+  }, [startScan])
+
   const setMode = useCallback(async (path: string, mode: RepairMode | null) => {
     setOverrides(await window.plexfixer.overrides.set(path, mode))
   }, [])
@@ -191,6 +264,10 @@ export default function App(): React.JSX.Element {
     return map
   }, [jobs])
 
+  useEffect(() => {
+    jobsByPathRef.current = jobsByPath
+  }, [jobsByPath])
+
   const counts = useMemo(() => {
     const result = { ok: 0, warn: 0, fail: 0, fixable: 0 }
     for (const entry of results) {
@@ -211,6 +288,12 @@ export default function App(): React.JSX.Element {
     (path: string) => resolveModeFor(path, overrides, settings?.defaultMode ?? 'safe-remux'),
     [overrides, settings?.defaultMode]
   )
+
+  const resultsByPath = useMemo(() => {
+    const map = new Map<string, AnalysisResult>()
+    for (const entry of results) map.set(entry.file.path, entry)
+    return map
+  }, [results])
 
   const scannedFolders = useMemo(() => {
     const folders = new Set<string>()
@@ -275,7 +358,16 @@ export default function App(): React.JSX.Element {
             {scanning ? (
               <button onClick={() => void cancelScan()}>Cancel scan</button>
             ) : (
-              <button onClick={() => void choosePaths()}>Choose files or folder…</button>
+              <>
+                <button
+                  onClick={() => void refreshAll()}
+                  disabled={lastPathsRef.current.length === 0}
+                  title="Re-scan everything in the list"
+                >
+                  Refresh all
+                </button>
+                <button onClick={() => void choosePaths()}>Choose files or folder…</button>
+              </>
             )}
           </>
         ) : null}
@@ -395,6 +487,8 @@ export default function App(): React.JSX.Element {
                   onSetMode={(path, mode) => void setMode(path, mode)}
                   onRepair={(paths) => void repair(paths)}
                   onReveal={(path) => void window.plexfixer.shell.reveal(path)}
+                  onRefresh={(path) => void refreshFile(path)}
+                  refreshing={refreshing}
                 />
               </>
             ) : null}
@@ -404,6 +498,8 @@ export default function App(): React.JSX.Element {
         {tab === 'jobs' ? (
           <JobsPanel
             jobs={jobs}
+            resultsByPath={resultsByPath}
+            environment={environment}
             onCancel={(id) => void window.plexfixer.jobs.cancel(id)}
             onCancelAll={() => void window.plexfixer.jobs.cancelAll()}
             onClear={() => {

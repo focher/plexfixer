@@ -341,7 +341,31 @@ button.more:hover {
   z-index: 1;
 }
 
+/*
+ * Grid items default to `min-width: auto`, which means a cell refuses to shrink
+ * below its content's intrinsic width. The mode <select> ("Inherit (Force
+ * transcode)") is wider than its track, so without this it pushed out of its
+ * cell and covered the status badge in the Action column next to it.
+ */
+.row > * {
+  min-width: 0;
+}
+
+.row select {
+  width: 100%;
+  min-width: 0;
+}
+
 .row .name {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.row .name .name-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -353,6 +377,48 @@ button.more:hover {
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Per-row re-scan: visible on hover or focus, so it is not constant noise. */
+button.refresh {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  margin-left: 2px;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.row:hover button.refresh,
+button.refresh:focus-visible,
+button.refresh:disabled {
+  opacity: 1;
+}
+
+button.refresh:hover:not(:disabled) {
+  color: var(--text);
+  background: none;
+}
+
+button.refresh .spin {
+  display: inline-block;
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.refresh .spin {
+    animation: none;
+  }
 }
 
 .badge {
@@ -587,6 +653,77 @@ button.more:hover {
 
 .job:last-child {
   border-bottom: none;
+}
+
+.job > * {
+  min-width: 0;
+}
+
+.job-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.job-actions button {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+/* ---------- job log ---------- */
+
+.joblog {
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px 12px;
+}
+
+.joblog-entry {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 8px;
+  padding: 3px 0;
+  align-items: baseline;
+}
+
+.joblog-entry > .body {
+  min-width: 0;
+}
+
+.joblog-entry .at {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.joblog-entry .step {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.joblog-entry.warn .step {
+  color: var(--warn);
+}
+
+.joblog-entry.error .step {
+  color: var(--fail);
+}
+
+.joblog-entry .detail {
+  margin: 4px 0 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  max-height: 320px;
 }
 
 .progress {

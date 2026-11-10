@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { access } from 'node:fs/promises'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type {
   AnalysisResult,
@@ -14,6 +15,7 @@ import type {
   ModeOverrides,
   RepairMode,
   ScanCompleteEvent,
+  RescanResult,
   ScanError,
   ScanProgressEvent
 } from '@shared/types.js'
@@ -139,6 +141,37 @@ export function registerIpcHandlers(): void {
     void runScan(scanId, paths, controller.signal).finally(() => activeScans.delete(scanId))
 
     return scanId
+  })
+
+  /**
+   * Re-analyse one file without disturbing the rest of the table.
+   *
+   * A full rescan throws away every row and every selection, which is the wrong
+   * tool for "did my repair actually fix this one?".
+   */
+  ipcMain.handle(IPC.rescanFile, async (_event, filePath: string): Promise<RescanResult> => {
+    const settings = await getSettings()
+    const environment = await resolveEnvironment(settings)
+    if (!environment.ready || !environment.ffprobePath) {
+      return { error: environment.problem ?? 'ffprobe is not available' }
+    }
+    try {
+      await access(filePath)
+    } catch {
+      // An in-place repair that changed container renames the file, so the path
+      // the row was built from no longer exists. Say so rather than erroring.
+      resultsByPath.delete(filePath)
+      return { missing: true }
+    }
+    try {
+      const probed = await probeFile(filePath, { ffprobePath: environment.ffprobePath })
+      const result = analyzeFile(probed, settings)
+      resultsByPath.set(filePath, result)
+      scanRootByPath.set(filePath, scanRootByPath.get(filePath))
+      return { result }
+    } catch (error) {
+      return { error: error instanceof ProbeError ? error.message : error instanceof Error ? error.message : String(error) }
+    }
   })
 
   ipcMain.handle(IPC.scanCancel, async (_event, scanId: string): Promise<boolean> => {

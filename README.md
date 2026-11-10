@@ -110,6 +110,26 @@ You can also launch it with paths to scan:
 npm run dev -- "/Volumes/Media/Movies"
 ```
 
+## Surveying a library
+
+Before trimming the bundled ffmpeg down to only what is needed, find out what a
+real library actually contains:
+
+```
+node scripts/survey-library.mjs "/Volumes/Media/Movies" "/Volumes/Media/TV"
+```
+
+It walks the folders recursively, probes every media file, and tallies
+containers, video and audio codecs with their profiles, pixel formats, codec
+tags, levels, channel layouts, subtitle formats, cover art, interlacing, HDR and
+Dolby Vision. The summary prints to stdout and the full detail is written to
+`plexfixer-survey.json`.
+
+It uses PlexFixer's bundled ffprobe when it can find one, otherwise ffprobe from
+`PATH`; set `FFPROBE=/path/to/ffprobe` to choose explicitly. Useful flags:
+`--json <file>` to change the output path, `--jobs N` for probe concurrency, and
+`--all-files` to probe every extension rather than the known media ones.
+
 ## Building installers
 
 ```bash

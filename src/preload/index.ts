@@ -13,6 +13,7 @@ import type {
   Job,
   ModeOverrides,
   RepairMode,
+  RescanResult,
   ScanCompleteEvent,
   ScanProgressEvent
 } from '@shared/types.js'
@@ -43,6 +44,7 @@ const api = {
   },
   scan: {
     start: (paths: string[], scanId: string): Promise<string> => ipcRenderer.invoke(IPC.scanStart, paths, scanId),
+    rescanFile: (path: string): Promise<RescanResult> => ipcRenderer.invoke(IPC.rescanFile, path),
     cancel: (scanId: string): Promise<boolean> => ipcRenderer.invoke(IPC.scanCancel, scanId),
     onProgress: (listener: (event: ScanProgressEvent) => void): Unsubscribe => {
       const handler = (_event: unknown, payload: ScanProgressEvent): void => listener(payload)

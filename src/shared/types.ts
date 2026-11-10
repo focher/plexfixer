@@ -409,6 +409,18 @@ export interface JobProgress {
   fps?: number
 }
 
+export type JobLogLevel = 'info' | 'warn' | 'error'
+
+export interface JobLogEntry {
+  /** Epoch milliseconds, so the UI can show elapsed time per step. */
+  at: number
+  level: JobLogLevel
+  /** One step, e.g. "Promoted output" or "ffmpeg exited with code 1". */
+  text: string
+  /** Multi-line payload shown indented under the step (a command, stderr). */
+  detail?: string
+}
+
 export interface Job {
   id: string
   sourcePath: string
@@ -422,6 +434,8 @@ export interface Job {
   message?: string
   startedAt?: number
   finishedAt?: number
+  /** Ordered record of what the repair actually did, for sharing in a report. */
+  log: JobLogEntry[]
 }
 
 /* ------------------------------------------------------------------ *
@@ -438,6 +452,16 @@ export interface ScanProgressEvent {
   processed: number
   total: number
   currentPath?: string
+}
+
+/** Re-analysis of one file, for the per-row refresh button. */
+export interface RescanResult {
+  /** The analysis, when the file could be read. */
+  result?: AnalysisResult
+  /** Set when the file is gone — e.g. an in-place repair renamed it. */
+  missing?: boolean
+  /** Set when the file is present but could not be probed. */
+  error?: string
 }
 
 export interface ScanCompleteEvent {
