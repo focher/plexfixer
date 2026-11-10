@@ -165,7 +165,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
           <span className="muted">Rewrap to MP4 when the streams allow it</span>
         </Field>
 
-        <Field label="HEVC / H.265" inline hint="Leave off if any client is a browser or an older streaming box.">
+        <Field label="HEVC / H.265" inline hint="Turn this off if any client is a browser or a streaming box older than about 2017.">
           <input
             type="checkbox"
             checked={settings.allowHevc}

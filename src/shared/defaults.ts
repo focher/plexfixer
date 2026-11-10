@@ -24,7 +24,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   extractTextSubtitles: true,
   dropImageSubtitlesOnMp4: true,
   ensureAacStereo: true,
-  allowHevc: false,
+  // On by default: HEVC direct plays on every current Apple device, Chromecast
+  // with Google TV, the Nvidia Shield and most smart TVs sold in the last few
+  // years, and a modern library is mostly HEVC — treating it as incompatible
+  // proposes re-encoding the bulk of a library to fix a problem its clients do
+  // not have. Turn it off for a fleet that includes browsers or an older
+  // streaming box.
+  allowHevc: true,
   maxH264Level: 41,
   maxHeight: 2160,
 

@@ -221,7 +221,8 @@ command will run before anything touches the disk.
 
 - Compatibility tiers are judgement calls about a *typical* client fleet, not a
   Plex-published matrix. Settings exist for the two that most often differ:
-  whether HEVC counts as compatible, and the H.264 level ceiling.
+  whether HEVC counts as compatible (on by default), and the H.264 level
+  ceiling.
 - Dolby Vision profile 5 and 7 are reported, not repaired — converting them
   correctly needs tooling beyond ffmpeg.
 - The bundled ffmpeg binaries are **GPL** builds (that is what carries NVENC and

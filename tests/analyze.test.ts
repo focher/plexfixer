@@ -107,10 +107,11 @@ describe('analyzeFile — video', () => {
     expect(codes(result)).not.toContain('video-level-too-high')
   })
 
-  it('treats HEVC as limited by default and compatible when allowed', () => {
+  it('treats HEVC as compatible by default and limited when the setting is off', () => {
     const streams = [video({ language: 'eng', codec: 'hevc', profile: 'Main 10' }), audio({ index: 1 })]
-    expect(codes(analyzeFile(mkv(streams), base))).toContain('video-codec-limited')
-    expect(codes(analyzeFile(mkv(streams), { ...base, allowHevc: true }))).not.toContain('video-codec-limited')
+    expect(DEFAULT_SETTINGS.allowHevc).toBe(true)
+    expect(codes(analyzeFile(mkv(streams), base))).not.toContain('video-codec-limited')
+    expect(codes(analyzeFile(mkv(streams), { ...base, allowHevc: false }))).toContain('video-codec-limited')
   })
 
   it('flags HEVC in MP4 carrying the hev1 tag as a metadata-only blocker', () => {
