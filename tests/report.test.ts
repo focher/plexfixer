@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
-import { buildJobReport } from '@shared/report.js'
+import { buildFileReport, buildJobReport } from '@shared/report.js'
 import type { Job } from '@shared/types.js'
-import { mainAudio, mkv, video } from './fixtures.js'
+import { mainAudio, mkv, mp4, video } from './fixtures.js'
 
 const result = analyzeFile(
   mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'spa' })]),
@@ -102,5 +102,47 @@ describe('buildJobReport', () => {
     expect(text).toContain('# PlexFixer repair report')
     expect(text).toContain('Done in 3.0s')
     expect(text).not.toContain('## Findings')
+  })
+})
+
+describe('buildFileReport', () => {
+  it('explains a file that passed, which is the hard case', () => {
+    // A clean file tells you nothing on its own: whether it should have been
+    // flagged depends on the settings, so the report has to carry them.
+    const clean = analyzeFile(mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]), {
+      ...DEFAULT_SETTINGS,
+      allowHevc: true,
+      maxH264Level: 41
+    })
+    expect(clean.verdict).toBe('ok')
+
+    const text = buildFileReport({ result: clean, settings: { ...DEFAULT_SETTINGS, allowHevc: true } })
+
+    expect(text).toContain('verdict    ok')
+    // The tracks it looked at, so "nothing found" can be checked rather than trusted.
+    expect(text).toContain('Streams:')
+    expect(text).toContain('video')
+    expect(text).toContain('audio')
+    // And the settings behind the verdict.
+    expect(text).toContain('HEVC compatible   true')
+    expect(text).toContain('target container  mp4')
+    expect(text).toContain('(none)')
+  })
+
+  it('lists the findings and the mode for a file that did not pass', () => {
+    const text = buildFileReport({
+      result,
+      settings: DEFAULT_SETTINGS,
+      mode: 'report',
+      modeSource: 'set on /Media/Anime'
+    })
+    expect(text).toContain('mode       report (set on /Media/Anime)')
+    expect(text).toContain('# PlexFixer file report')
+    expect(result.findings.length).toBeGreaterThan(0)
+    for (const finding of result.findings) expect(text).toContain(finding.title)
+  })
+
+  it('works with no settings or environment to hand', () => {
+    expect(() => buildFileReport({ result })).not.toThrow()
   })
 })

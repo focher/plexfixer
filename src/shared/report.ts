@@ -7,7 +7,15 @@
  * Paths are included verbatim because a report without them is unactionable.
  */
 
-import type { AnalysisResult, EnvironmentInfo, Job, JobLogEntry, MediaFile } from './types.js'
+import type {
+  AnalysisResult,
+  AppSettings,
+  EnvironmentInfo,
+  Job,
+  JobLogEntry,
+  MediaFile,
+  RepairMode
+} from './types.js'
 
 export interface ReportContext {
   job: Job
@@ -62,6 +70,124 @@ function describeFile(file: MediaFile): string {
   return lines.join('\n')
 }
 
+/** The environment block, shared by both reports. */
+function describeEnvironment(environment: EnvironmentInfo): string[] {
+  const out = [
+    `ffmpeg     ${environment.ffmpegPath ?? 'not found'} (${environment.ffmpegSource ?? 'unknown'})`,
+    `ffprobe    ${environment.ffprobePath ?? 'not found'} (${environment.ffprobeSource ?? 'unknown'})`
+  ]
+  if (environment.ffmpegVersion) out.push(`version    ${environment.ffmpegVersion}`)
+  const caps = environment.capabilities
+  if (caps) {
+    // The four booleans are the verdict after a real test encode; `available`
+    // is only what ffmpeg claims to have built in, which is often more.
+    const usable = (['nvenc', 'qsv', 'amf', 'videotoolbox'] as const).filter((name) => caps[name])
+    out.push(`hw encode  ${usable.length > 0 ? usable.join(', ') : 'none — software only'}`)
+    if (caps.available.length > 0) out.push(`ffmpeg has ${caps.available.join(', ')}`)
+  }
+  return out
+}
+
+/** The file, its findings and its plan — the part both reports share. */
+function describeAnalysis(result: AnalysisResult): string[] {
+  const out: string[] = []
+
+  out.push(section('Source file'))
+  out.push(describeFile(result.file))
+
+  out.push(section('Findings'))
+  if (result.findings.length === 0) {
+    out.push('(none)')
+  } else {
+    for (const finding of result.findings) {
+      out.push(`[${finding.severity}] ${finding.title}  (${finding.code}, remedy: ${finding.remedy})`)
+      out.push(`    ${finding.detail}`)
+    }
+  }
+
+  out.push(section('Plan'))
+  out.push(`target container  ${result.plan.targetContainer}`)
+  out.push(`cost              ${result.plan.costNote}`)
+  if (result.plan.actions.length === 0) out.push('(no actions)')
+  for (const action of result.plan.actions) out.push(`• ${action.label} — ${action.detail}`)
+
+  return out
+}
+
+/**
+ * The settings that shaped the verdict.
+ *
+ * Only the ones that decide whether a file passes. A report saying a file is
+ * clean is not much use without them: "HEVC is fine" and "MKV is the target"
+ * are settings, not facts about the file.
+ */
+function describeSettings(settings: AppSettings): string[] {
+  return [
+    `target container  ${settings.targetContainer}`,
+    `remux MKV to MP4  ${settings.remuxMkvToMp4}`,
+    `HEVC compatible   ${settings.allowHevc}`,
+    `max H.264 level   ${settings.maxH264Level}`,
+    `max height        ${settings.maxHeight}`,
+    `ensure AAC       ${settings.ensureAacStereo}`,
+    `audio language    ${settings.preferredAudioLanguage} (untagged treated as ${settings.assumeUndefinedIs})`,
+    `subtitle language ${settings.preferredSubtitleLanguage}`,
+    `extensions        ${settings.mediaExtensions.join(', ')}`
+  ]
+}
+
+export interface FileReportContext {
+  result: AnalysisResult
+  environment?: EnvironmentInfo
+  settings?: AppSettings
+  /** The mode this file would repair in, and where that came from. */
+  mode?: RepairMode
+  modeSource?: string
+  appVersion?: string
+  platform?: string
+}
+
+/**
+ * A diagnostic report for one scanned file, repaired or not.
+ *
+ * The job report only exists once something has been written. This is the one
+ * to reach for when the question is why a file was judged the way it was —
+ * above all when it passed and the expectation was that it would not.
+ */
+export function buildFileReport(context: FileReportContext): string {
+  const { result, environment, settings } = context
+  const out: string[] = []
+
+  out.push('# PlexFixer file report')
+  out.push('')
+  out.push(`generated  ${new Date().toISOString()}`)
+  if (context.appVersion) out.push(`version    ${context.appVersion}`)
+  if (context.platform) out.push(`platform   ${context.platform}`)
+  out.push(`verdict    ${result.verdict}`)
+  out.push(`strategy   ${result.plan.strategy}`)
+  if (context.mode) out.push(`mode       ${context.mode}${context.modeSource ? ` (${context.modeSource})` : ''}`)
+  if (result.scannedAt) out.push(`scanned    ${new Date(result.scannedAt).toISOString()}`)
+  out.push(`language   ${result.primaryLanguage} (${result.primaryLanguageSource})`)
+
+  if (environment) {
+    out.push(section('Environment'))
+    out.push(...describeEnvironment(environment))
+  }
+
+  if (settings) {
+    out.push(section('Settings that decide this'))
+    out.push(...describeSettings(settings))
+  }
+
+  out.push(...describeAnalysis(result))
+
+  if (result.plan.unresolved.length > 0) {
+    out.push(section('Nothing in the plan addresses these'))
+    for (const finding of result.plan.unresolved) out.push(`[${finding.severity}] ${finding.title} (${finding.code})`)
+  }
+
+  return out.join('\n')
+}
+
 export function buildJobReport(context: ReportContext): string {
   const { job, result, environment } = context
   const out: string[] = []
@@ -78,39 +204,10 @@ export function buildJobReport(context: ReportContext): string {
 
   if (environment) {
     out.push(section('Environment'))
-    out.push(`ffmpeg     ${environment.ffmpegPath ?? 'not found'} (${environment.ffmpegSource ?? 'unknown'})`)
-    out.push(`ffprobe    ${environment.ffprobePath ?? 'not found'} (${environment.ffprobeSource ?? 'unknown'})`)
-    if (environment.ffmpegVersion) out.push(`version    ${environment.ffmpegVersion}`)
-    const caps = environment.capabilities
-    if (caps) {
-      // The four booleans are the verdict after a real test encode; `available`
-      // is only what ffmpeg claims to have built in, which is often more.
-      const usable = (['nvenc', 'qsv', 'amf', 'videotoolbox'] as const).filter((name) => caps[name])
-      out.push(`hw encode  ${usable.length > 0 ? usable.join(', ') : 'none — software only'}`)
-      if (caps.available.length > 0) out.push(`ffmpeg has ${caps.available.join(', ')}`)
-    }
+    out.push(...describeEnvironment(environment))
   }
 
-  if (result) {
-    out.push(section('Source file'))
-    out.push(describeFile(result.file))
-
-    out.push(section('Findings'))
-    if (result.findings.length === 0) {
-      out.push('(none)')
-    } else {
-      for (const finding of result.findings) {
-        out.push(`[${finding.severity}] ${finding.title}  (${finding.code}, remedy: ${finding.remedy})`)
-        out.push(`    ${finding.detail}`)
-      }
-    }
-
-    out.push(section('Plan'))
-    out.push(`target container  ${result.plan.targetContainer}`)
-    out.push(`cost              ${result.plan.costNote}`)
-    if (result.plan.actions.length === 0) out.push('(no actions)')
-    for (const action of result.plan.actions) out.push(`• ${action.label} — ${action.detail}`)
-  }
+  if (result) out.push(...describeAnalysis(result))
 
   if (job.command) {
     out.push(section('Command'))

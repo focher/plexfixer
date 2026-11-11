@@ -1,4 +1,6 @@
-import type { AnalysisResult, Job, ModeOverrides, RepairMode } from '@shared/types.js'
+import { useCallback, useState } from 'react'
+import type { AnalysisResult, AppSettings, EnvironmentInfo, Job, ModeOverrides, RepairMode } from '@shared/types.js'
+import { buildFileReport } from '@shared/report.js'
 import { languageName } from '@shared/languages.js'
 import { MODE_LABEL, findOverrideKey, resolveMode, type ResolvedMode } from '@shared/mode.js'
 import StreamTable from './StreamTable.js'
@@ -61,7 +63,9 @@ export default function FileDetail({
   mode,
   defaultMode,
   overrides,
-  onSetMode
+  onSetMode,
+  settings,
+  environment
 }: {
   result: AnalysisResult
   job?: Job
@@ -71,8 +75,35 @@ export default function FileDetail({
   defaultMode: RepairMode
   overrides: ModeOverrides
   onSetMode: (path: string, mode: RepairMode | null) => void
+  /** Included in the diagnostic report, since both shape the verdict. */
+  settings?: AppSettings
+  environment?: EnvironmentInfo
 }): React.JSX.Element {
   const { file, plan, findings } = result
+  const [copied, setCopied] = useState(false)
+
+  const copyReport = useCallback(async () => {
+    const text = buildFileReport({
+      result,
+      settings,
+      environment,
+      mode: mode.mode,
+      modeSource: mode.source === 'default' ? 'the default' : `set on ${mode.from}`,
+      platform: navigator.userAgent.includes('Mac')
+        ? 'macOS'
+        : navigator.userAgent.includes('Win')
+          ? 'Windows'
+          : 'Linux'
+    })
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    } catch {
+      // Clipboard can be refused; the detail pane is still on screen.
+      setCopied(false)
+    }
+  }, [result, settings, environment, mode])
 
   const folder = parentDirectory(file.path)
   const fileKey = findOverrideKey(file.path, overrides)
@@ -88,6 +119,13 @@ export default function FileDetail({
         <code>{file.path}</code>{' '}
         <button className="ghost" onClick={() => onReveal(file.path)}>
           Reveal
+        </button>{' '}
+        <button
+          className="ghost"
+          onClick={() => void copyReport()}
+          title="Copy everything PlexFixer knows about this file — its tracks, what it decided and the settings behind that"
+        >
+          {copied ? 'Copied ✓' : 'Copy report'}
         </button>
       </div>
       <div className="muted" style={{ marginTop: 4 }}>

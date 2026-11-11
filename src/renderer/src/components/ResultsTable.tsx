@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AnalysisResult, Job, ModeOverrides, RepairMode } from '@shared/types.js'
+import type { AnalysisResult, AppSettings, EnvironmentInfo, Job, ModeOverrides, RepairMode } from '@shared/types.js'
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { summarizeReason } from '@shared/plex/reason.js'
 import { fileStatus, type FileStatus } from '@shared/plex/facets.js'
@@ -51,6 +51,9 @@ export interface ResultsTableProps {
   overrides: ModeOverrides
   defaultMode: RepairMode
   onSetMode: (path: string, mode: RepairMode | null) => void
+  /** Passed through to each row's report button. */
+  settings?: AppSettings
+  environment?: EnvironmentInfo
   onReveal: (path: string) => void
   /** Right-click on a row. */
   onContextMenu: (path: string) => void
@@ -247,6 +250,8 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 defaultMode={props.defaultMode}
                 overrides={props.overrides}
                 onSetMode={props.onSetMode}
+                settings={props.settings}
+                environment={props.environment}
               />
             ) : null}
           </div>

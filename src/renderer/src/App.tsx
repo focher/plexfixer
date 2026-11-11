@@ -748,6 +748,8 @@ export default function App(): React.JSX.Element {
                   }
                   overrides={overrides}
                   defaultMode={settings.defaultMode}
+                  settings={settings}
+                  environment={environment}
                   onSetMode={(path, mode) => void setMode(path, mode)}
                   onRepair={(paths, mode) => void repair(paths, mode)}
                   onReveal={(path) => void window.plexfixer.shell.reveal(path)}
