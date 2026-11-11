@@ -963,3 +963,67 @@ button.expander:hover:not(:disabled) {
   color: var(--accent-text);
   opacity: 0.75;
 }
+
+/* ---------- repair mode: per-file and per-folder overrides ---------- */
+
+/* The two pickers in a row's detail pane. */
+.mode-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.mode-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 280px;
+}
+
+.mode-picker-label {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  font-weight: 600;
+  /* The label itself must not wrap when the path beside it is long. */
+  white-space: nowrap;
+}
+
+/* The path alongside the label: long, so it truncates rather than wraps. */
+.mode-picker-label .mono {
+  font-weight: 400;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* A picker carrying a setting of its own, rather than inheriting one. */
+.mode-picker select.overridden {
+  border-color: var(--accent);
+}
+
+/* The list in Settings. */
+.overrides {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.override-row {
+  display: grid;
+  grid-template-columns: 1fr 150px auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.override-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}

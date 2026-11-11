@@ -13,6 +13,7 @@ import type {
   AppSettings,
   Job,
   MediaFile,
+  ModeOverrides,
   RepairMode,
   RepairRequest,
   ScanCompleteEvent,
@@ -24,7 +25,8 @@ import { analyzeFile } from '@shared/plex/analyze.js'
 import { IPC } from '@shared/ipc.js'
 import { probeFile, ProbeError } from './ffmpeg/probe.js'
 import { collectMediaFiles } from './scan/walk.js'
-import { getSettings, resetSettings, updateSettings } from './settings.js'
+import { getModeOverrides, getSettings, resetSettings, setModeOverride, updateSettings } from './settings.js'
+import { repairModeFor } from '@shared/mode.js'
 import { invalidateEnvironment, resolveEnvironment, type Environment } from './environment.js'
 import { RepairRunner } from './jobs/runner.js'
 import { scanRootFor } from './jobs/output.js'
@@ -75,6 +77,13 @@ export function registerIpcHandlers(): void {
     invalidateEnvironment()
     return resetSettings()
   })
+
+  ipcMain.handle(IPC.overridesGet, async (): Promise<ModeOverrides> => getModeOverrides())
+
+  ipcMain.handle(
+    IPC.overridesSet,
+    async (_event, path: string, mode: RepairMode | null): Promise<ModeOverrides> => setModeOverride(path, mode)
+  )
 
   /* --- environment ----------------------------------------------------- */
 
@@ -170,10 +179,19 @@ export function registerIpcHandlers(): void {
 
   /* --- jobs -------------------------------------------------------------- */
 
-  ipcMain.handle(IPC.jobsEnqueue, async (_event, requests: RepairRequest[], mode: RepairMode): Promise<Job[]> => {
+  // `mode` forces one mode on the whole batch, for the explicit "Force
+  // transcode selected" style buttons. Left out, each file gets the mode its
+  // own override — or its folder's, or the global default — resolves to.
+  //
+  // Report-only is the exception an explicit mode cannot override: a file, or a
+  // folder, set to report-only is never written to, however the repair was
+  // started. The job is still queued, so the Jobs tab says it was skipped
+  // rather than the click doing nothing.
+  ipcMain.handle(IPC.jobsEnqueue, async (_event, requests: RepairRequest[], mode?: RepairMode): Promise<Job[]> => {
     const settings = await getSettings()
     const environment = await resolveEnvironment(settings)
     const activeRunner = await ensureRunner(settings, environment)
+    const overrides = await getModeOverrides()
 
     const jobs: Job[] = []
     for (const request of requests) {
@@ -186,7 +204,7 @@ export function registerIpcHandlers(): void {
         activeRunner.enqueue({
           result,
           settings,
-          mode,
+          mode: repairModeFor(file.path, overrides, settings.defaultMode, mode),
           caps: environment.capabilities,
           scanRoot: request.scanRoot
         })

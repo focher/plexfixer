@@ -1,7 +1,50 @@
-import type { AnalysisResult, Job } from '@shared/types.js'
+import type { AnalysisResult, Job, ModeOverrides, RepairMode } from '@shared/types.js'
 import { languageName } from '@shared/languages.js'
+import { MODE_LABEL, findOverrideKey, resolveMode, type ResolvedMode } from '@shared/mode.js'
 import StreamTable from './StreamTable.js'
-import { formatBitrate, formatBytes, formatDuration } from '../format.js'
+import { formatBitrate, formatBytes, formatDuration, parentDirectory, shortenPath } from '../format.js'
+
+/** One mode picker. `inherited` is what "Inherit" would give. */
+function ModePicker({
+  label,
+  hint,
+  current,
+  inherited,
+  onChange
+}: {
+  label: string
+  hint?: string
+  /** The override set on this exact path, or undefined when it inherits. */
+  current?: RepairMode
+  inherited: RepairMode
+  onChange: (mode: RepairMode | null) => void
+}): React.JSX.Element {
+  return (
+    <label className="mode-picker">
+      <span className="mode-picker-label">
+        {label}
+        {hint ? (
+          <span className="muted mono" title={hint}>
+            {shortenPath(hint, 2)}
+          </span>
+        ) : null}
+      </span>
+      <select
+        value={current ?? 'inherit'}
+        className={current ? 'overridden' : undefined}
+        onChange={(event) => {
+          const value = event.target.value as RepairMode | 'inherit'
+          onChange(value === 'inherit' ? null : value)
+        }}
+      >
+        <option value="inherit">Inherit ({MODE_LABEL[inherited]})</option>
+        <option value="report">Report only — never write</option>
+        <option value="safe-remux">Safe remux — lossless fixes only</option>
+        <option value="force-transcode">Force transcode — re-encode when needed</option>
+      </select>
+    </label>
+  )
+}
 
 const SOURCE_LABEL: Record<AnalysisResult['primaryLanguageSource'], string> = {
   'video-stream-tag': 'from the video track’s language tag',
@@ -14,13 +57,29 @@ const SOURCE_LABEL: Record<AnalysisResult['primaryLanguageSource'], string> = {
 export default function FileDetail({
   result,
   job,
-  onReveal
+  onReveal,
+  mode,
+  defaultMode,
+  overrides,
+  onSetMode
 }: {
   result: AnalysisResult
   job?: Job
   onReveal: (path: string) => void
+  /** The mode this file repairs in, and where that came from. */
+  mode: ResolvedMode
+  defaultMode: RepairMode
+  overrides: ModeOverrides
+  onSetMode: (path: string, mode: RepairMode | null) => void
 }): React.JSX.Element {
   const { file, plan, findings } = result
+
+  const folder = parentDirectory(file.path)
+  const fileKey = findOverrideKey(file.path, overrides)
+  const folderKey = findOverrideKey(folder, overrides)
+  // What this file would fall back to with no setting of its own: the nearest
+  // folder above it with an override, or the global default.
+  const inherited = resolveMode(folder, overrides, defaultMode)
 
   return (
     <div className="detail">
@@ -46,6 +105,37 @@ export default function FileDetail({
           {file.sidecarSubtitles.length === 1 ? '' : 's'} alongside this file
         </div>
       ) : null}
+
+      <h4>Repair mode</h4>
+      <div className="muted">
+        Repairs in <strong>{MODE_LABEL[mode.mode]}</strong>
+        {mode.source === 'file'
+          ? ' — set on this file.'
+          : mode.source === 'folder'
+            ? (
+                <>
+                  {' — inherited from '}
+                  <span title={mode.from}>{shortenPath(mode.from ?? '', 2)}</span>.
+                </>
+              )
+            : ' — the default, since nothing above it is set.'}
+      </div>
+      <div className="mode-pickers">
+        <ModePicker
+          label="This file"
+          hint={file.fileName}
+          current={fileKey ? overrides[fileKey] : undefined}
+          inherited={inherited.mode}
+          onChange={(next) => onSetMode(fileKey ?? file.path, next)}
+        />
+        <ModePicker
+          label="This folder"
+          hint={folder}
+          current={folderKey ? overrides[folderKey] : undefined}
+          inherited={resolveMode(parentDirectory(folder), overrides, defaultMode).mode}
+          onChange={(next) => onSetMode(folderKey ?? folder, next)}
+        />
+      </div>
 
       <h4>Tracks</h4>
       <StreamTable result={result} />

@@ -11,6 +11,7 @@ import type {
   AppSettings,
   EnvironmentInfo,
   Job,
+  ModeOverrides,
   RepairMode,
   RepairRequest,
   RescanResult,
@@ -26,6 +27,12 @@ const api = {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsGet),
     update: (patch: Partial<AppSettings>): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsUpdate, patch),
     reset: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsReset)
+  },
+  overrides: {
+    get: (): Promise<ModeOverrides> => ipcRenderer.invoke(IPC.overridesGet),
+    /** `null` clears the override on that path. */
+    set: (path: string, mode: RepairMode | null): Promise<ModeOverrides> =>
+      ipcRenderer.invoke(IPC.overridesSet, path, mode)
   },
   environment: {
     get: (): Promise<EnvironmentInfo> => ipcRenderer.invoke(IPC.envGet),
@@ -53,7 +60,8 @@ const api = {
     }
   },
   jobs: {
-    enqueue: (requests: RepairRequest[], mode: RepairMode): Promise<Job[]> =>
+    /** Leave `mode` out to use each file's own resolved mode. */
+    enqueue: (requests: RepairRequest[], mode?: RepairMode): Promise<Job[]> =>
       ipcRenderer.invoke(IPC.jobsEnqueue, requests, mode),
     list: (): Promise<Job[]> => ipcRenderer.invoke(IPC.jobsList),
     cancel: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.jobsCancel, id),

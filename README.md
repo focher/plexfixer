@@ -60,8 +60,32 @@ Nothing is written until you ask, per file or for the selection:
 
 | Action | Behaviour |
 | --- | --- |
+| **Repair** | Use the file's own mode — see *Repair modes* below. |
 | **Safe remux** | Apply every fix that is a stream copy. Skips files needing a re-encode. |
 | **Force transcode** | Also re-encode the video, with GPU acceleration where available. |
+
+### Repair modes
+
+Every file has a mode, which is what **Repair** does to it:
+
+| Mode | Behaviour |
+| --- | --- |
+| **Report only** | Never write. The file is analysed and flagged, and a repair is recorded as skipped. |
+| **Safe remux** | The default: every fix that is a stream copy. |
+| **Force transcode** | Also re-encode the video where a remux cannot fix it. |
+
+The mode comes from the most specific setting that covers the file: its own, then
+the nearest folder above it with one of its own, then the global default in
+Settings. So the whole `Anime` folder can be set to force-transcode while one
+episode inside it stays on report-only.
+
+Set a folder, or a single file, from the row's details in the library; Settings →
+*Repair modes* lists every override, and adds folders that are not in
+the library yet. A row whose mode is not the default says so next to its
+*details* link.
+
+**Safe remux** and **Force transcode** are one-off actions and ignore the mode —
+except report-only, which is never written to by either.
 
 A repair uses the stored scan only if the file on disk has not changed since
 (same size and modification time); otherwise it probes the file again first.

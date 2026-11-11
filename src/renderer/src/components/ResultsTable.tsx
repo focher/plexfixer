@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react'
-import type { AnalysisResult, Job, RepairMode } from '@shared/types.js'
+import type { AnalysisResult, Job, ModeOverrides, RepairMode } from '@shared/types.js'
+import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { summarizeReason } from '@shared/plex/reason.js'
 import { fileStatus, type FileStatus } from '@shared/plex/facets.js'
 import FileDetail from './FileDetail.js'
 import { formatAgo, parentDirectory, shortenPath } from '../format.js'
 import { BoltIcon, RefreshIcon, WrenchIcon } from './icons.js'
+
+/** How an overridden mode shows in the row. */
+const MODE_TONE: Record<RepairMode, string> = {
+  report: 'neutral',
+  'safe-remux': 'info',
+  'force-transcode': 'warn'
+}
 
 /** The status column: what happens next for the file. */
 const STATUS_BADGE: Record<FileStatus, { label: string; tone: string; hint: string }> = {
@@ -37,7 +45,12 @@ export interface ResultsTableProps {
   selected: Set<string>
   onToggleSelect: (path: string) => void
   onToggleAll: () => void
-  onRepair: (paths: string[], mode: RepairMode) => void
+  /** Leave `mode` out to repair in the file's own mode. */
+  onRepair: (paths: string[], mode?: RepairMode) => void
+  /** Per-file and per-folder mode overrides, and the fallback they resolve against. */
+  overrides: ModeOverrides
+  defaultMode: RepairMode
+  onSetMode: (path: string, mode: RepairMode | null) => void
   onReveal: (path: string) => void
   /** Right-click on a row. */
   onContextMenu: (path: string) => void
@@ -94,6 +107,8 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         const isRefreshing = props.refreshing.has(path)
         const status = STATUS_BADGE[fileStatus(result)]
         const plan = PLAN_BADGE[result.plan.strategy]
+        const mode = resolveMode(path, props.overrides, props.defaultMode)
+        const reportOnly = mode.mode === 'report'
 
         return (
           <div key={path}>
@@ -137,6 +152,18 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                   <button className="more" onClick={() => toggleExpanded(path)} aria-expanded={open}>
                     {open ? 'hide' : reason.others > 0 ? `+${reason.others} more` : 'details'}
                   </button>
+                  {mode.source !== 'default' ? (
+                    <span
+                      className={`badge ${MODE_TONE[mode.mode]}`}
+                      title={
+                        mode.source === 'file'
+                          ? `This file is set to ${MODE_LABEL[mode.mode]}`
+                          : `Inherited from ${mode.from} — ${MODE_LABEL[mode.mode]}`
+                      }
+                    >
+                      {MODE_LABEL[mode.mode].toLowerCase()}
+                    </span>
+                  ) : null}
                 </span>
               </span>
               <span className="plan">
@@ -178,14 +205,16 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                     <button
                       className="icon-button"
                       onClick={() => props.onRepair([path], 'safe-remux')}
-                      disabled={nothingToDo || result.plan.requiresTranscode}
+                      disabled={nothingToDo || result.plan.requiresTranscode || reportOnly}
                       aria-label={`Safe remux ${result.file.fileName}`}
                       title={
                         nothingToDo
                           ? 'Already Plex-ready'
-                          : result.plan.requiresTranscode
-                            ? 'Needs a re-encode — use Force transcode'
-                            : 'Safe remux — apply the lossless fixes'
+                          : reportOnly
+                            ? 'This file is in report-only mode — change it in the details'
+                            : result.plan.requiresTranscode
+                              ? 'Needs a re-encode — use Force transcode'
+                              : 'Safe remux — apply the lossless fixes'
                       }
                     >
                       <WrenchIcon />
@@ -193,12 +222,14 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                     <button
                       className="icon-button"
                       onClick={() => props.onRepair([path], 'force-transcode')}
-                      disabled={nothingToDo}
+                      disabled={nothingToDo || reportOnly}
                       aria-label={`Force transcode ${result.file.fileName}`}
                       title={
                         nothingToDo
                           ? 'Already Plex-ready'
-                          : 'Force transcode — fix everything, re-encoding video if needed'
+                          : reportOnly
+                            ? 'This file is in report-only mode — change it in the details'
+                            : 'Force transcode — fix everything, re-encoding video if needed'
                       }
                     >
                       <BoltIcon />
@@ -207,7 +238,17 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 )}
               </span>
             </div>
-            {open ? <FileDetail result={result} job={job} onReveal={props.onReveal} /> : null}
+            {open ? (
+              <FileDetail
+                result={result}
+                job={job}
+                onReveal={props.onReveal}
+                mode={mode}
+                defaultMode={props.defaultMode}
+                overrides={props.overrides}
+                onSetMode={props.onSetMode}
+              />
+            ) : null}
           </div>
         )
       })}

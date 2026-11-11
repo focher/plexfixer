@@ -4,9 +4,11 @@ import type {
   AppSettings,
   EnvironmentInfo,
   Job,
+  ModeOverrides,
   RepairMode,
   ScanError
 } from '@shared/types.js'
+import { repairModeFor, resolveMode } from '@shared/mode.js'
 import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
@@ -86,6 +88,8 @@ function refreshRoots(entries: Iterable<LibraryEntry>): string[] {
 export default function App(): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('library')
   const [settings, setSettings] = useState<AppSettings>()
+  // Per-file and per-folder mode overrides, kept in the main process.
+  const [overrides, setOverrides] = useState<ModeOverrides>({})
   const [environment, setEnvironment] = useState<EnvironmentInfo>()
   // Every file ever scanned, by path; mirrored to IndexedDB.
   const [library, setLibrary] = useState<Map<string, LibraryEntry>>(new Map())
@@ -106,6 +110,11 @@ export default function App(): React.JSX.Element {
   // Read by the scan-complete listener, registered once.
   const libraryRef = useRef(library)
   libraryRef.current = library
+  // Read inside `repair`, which is created once so the rows keep their handler.
+  const overridesRef = useRef(overrides)
+  overridesRef.current = overrides
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
   // Read inside `refreshFile`, which must not re-create itself on every job
   // update or every row would lose its handler mid-repair.
   const jobsByPathRef = useRef<Map<string, Job>>(new Map())
@@ -114,8 +123,9 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     void (async () => {
-      const [loadedSettings, entries] = await Promise.all([
+      const [loadedSettings, loadedOverrides, entries] = await Promise.all([
         window.plexfixer.settings.get(),
+        window.plexfixer.overrides.get(),
         loadLibrary().catch((error: unknown) => {
           console.error('Could not open the library database', error)
           return [] as LibraryEntry[]
@@ -123,6 +133,7 @@ export default function App(): React.JSX.Element {
       ])
       console.info(`Loaded ${entries.length} file${entries.length === 1 ? '' : 's'} from the library`)
       setSettings(loadedSettings)
+      setOverrides(loadedOverrides)
       // Merged rather than replaced: a scan started from the command line may
       // already have streamed fresher entries in while the database opened.
       setLibrary((previous) => {
@@ -237,6 +248,11 @@ export default function App(): React.JSX.Element {
     setScanProgress(undefined)
   }, [])
 
+  /** Set, or with `null` clear, the override on one file or folder. */
+  const setMode = useCallback(async (path: string, mode: RepairMode | null) => {
+    setOverrides(await window.plexfixer.overrides.set(path, mode))
+  }, [])
+
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
     // Verdicts are recomputed from the stored probes against the new settings
     // (see `results`), so nothing needs re-scanning.
@@ -347,27 +363,42 @@ export default function App(): React.JSX.Element {
    * Queue repairs. The stored probe goes along with each path; the main process
    * re-probes any file that has changed on disk since it was scanned.
    *
+   * `mode` forces one mode on the whole batch. Left out, each file uses its own
+   * mode — its override, its folder's, or the global default — which is what
+   * the per-folder settings are for.
+   *
    * A force transcode of more than one file asks first: it re-encodes video,
    * which takes hours across a library and is not undone by a click.
    */
-  const repair = useCallback(async (paths: string[], mode: RepairMode) => {
-    const requests = paths.flatMap((path) => {
-      const entry = libraryRef.current.get(path)
-      return entry ? [{ file: entry.file, scanRoot: entry.scanRoot }] : []
-    })
-    if (requests.length === 0) return
-    if (
-      mode === 'force-transcode' &&
-      requests.length > 1 &&
-      !window.confirm(
-        `Force transcode ${requests.length} files? Files that need it will have their video re-encoded.`
-      )
-    ) {
-      return
-    }
-    await window.plexfixer.jobs.enqueue(requests, mode)
-    setTab('jobs')
-  }, [])
+  const repair = useCallback(
+    async (paths: string[], mode?: RepairMode) => {
+      const requests = paths.flatMap((path) => {
+        const entry = libraryRef.current.get(path)
+        return entry ? [{ file: entry.file, scanRoot: entry.scanRoot }] : []
+      })
+      if (requests.length === 0) return
+      // Files set to report-only are not written to even by an explicit force
+      // transcode, so they are not part of what the confirmation is about.
+      const transcoding = requests.filter(
+        (request) =>
+          repairModeFor(
+            request.file.path,
+            overridesRef.current,
+            settingsRef.current?.defaultMode ?? 'safe-remux',
+            mode
+          ) === 'force-transcode'
+      ).length
+      if (
+        transcoding > 1 &&
+        !window.confirm(`Force transcode ${transcoding} files? Files that need it will have their video re-encoded.`)
+      ) {
+        return
+      }
+      await window.plexfixer.jobs.enqueue(requests, mode)
+      setTab('jobs')
+    },
+    []
+  )
 
   /* --- drag and drop ---------------------------------------------------- */
 
@@ -405,6 +436,9 @@ export default function App(): React.JSX.Element {
   }, [library, settings])
 
   const counts = useMemo(() => countStatuses(results), [results])
+
+  // The folders the library was built from, for the folder-level suggestion.
+  const libraryRoots = useMemo(() => refreshRoots(library.values()), [library])
 
   const needsTranscode = useMemo(
     () => results.filter((entry) => fileStatus(entry) === 'reencode').map((entry) => entry.file.path),
@@ -479,6 +513,13 @@ export default function App(): React.JSX.Element {
             {results.length > 0 ? (
               <>
                 <span className="muted nowrap">{selectedPaths.length} selected</span>
+                <button
+                  disabled={selectedPaths.length === 0}
+                  onClick={() => void repair(selectedPaths)}
+                  title="Repair each file in its own mode — its override, its folder's, or the default"
+                >
+                  Repair selected
+                </button>
                 <button
                   disabled={selectedPaths.length === 0}
                   onClick={() => void repair(selectedPaths, 'safe-remux')}
@@ -605,6 +646,15 @@ export default function App(): React.JSX.Element {
                       <button onClick={() => void repair(needsTranscode, 'force-transcode')}>
                         Force transcode {needsTranscode.length === 1 ? 'it' : 'these'} now
                       </button>
+                      {libraryRoots.length === 1 &&
+                      resolveMode(libraryRoots[0], overrides, settings.defaultMode).mode !== 'force-transcode' ? (
+                        <button
+                          onClick={() => void setMode(libraryRoots[0], 'force-transcode')}
+                          title={`Everything under ${libraryRoots[0]} repairs in force-transcode mode from now on`}
+                        >
+                          Set this folder to Force transcode
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -696,6 +746,9 @@ export default function App(): React.JSX.Element {
                       return next
                     })
                   }
+                  overrides={overrides}
+                  defaultMode={settings.defaultMode}
+                  onSetMode={(path, mode) => void setMode(path, mode)}
                   onRepair={(paths, mode) => void repair(paths, mode)}
                   onReveal={(path) => void window.plexfixer.shell.reveal(path)}
                   onContextMenu={(path) => void window.plexfixer.shell.fileMenu(path)}
@@ -728,6 +781,14 @@ export default function App(): React.JSX.Element {
           <SettingsPanel
             settings={settings}
             environment={environment}
+            overrides={overrides}
+            onSetMode={(path, mode) => void setMode(path, mode)}
+            onAddFolderOverride={() => {
+              void (async () => {
+                const directory = await window.plexfixer.dialog.pickDirectory()
+                if (directory) await setMode(directory, settings.defaultMode)
+              })()
+            }}
             onChange={(patch) => void updateSettings(patch)}
             onReset={() => {
               void (async () => {

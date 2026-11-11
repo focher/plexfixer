@@ -316,7 +316,7 @@ export interface ScanError {
  * Settings
  * ------------------------------------------------------------------ */
 
-/** What a repair is allowed to do; chosen per repair. */
+/** What a repair is allowed to do: per file, per folder, or globally. */
 export type RepairMode =
   /** Analyse only; never write. */
   | 'report'
@@ -334,6 +334,9 @@ export type OutputPlacement =
   | 'output-dir'
 
 export interface AppSettings {
+  /** Mode for files with no override of their own, and no overridden folder above them. */
+  defaultMode: RepairMode
+
   /** Preferred language for the default audio track (ISO 639-2/B). */
   preferredAudioLanguage: string
   /** Preferred language for subtitles. */
@@ -394,6 +397,14 @@ export interface AppSettings {
   /** Recurse into subfolders when a folder is scanned. */
   recursive: boolean
 }
+
+/**
+ * Mode overrides keyed by absolute path.
+ *
+ * A key may be a file or a folder; `resolveMode` in `shared/mode.ts` picks the
+ * most specific one that covers a given file.
+ */
+export type ModeOverrides = Record<string, RepairMode>
 
 /* ------------------------------------------------------------------ *
  * Jobs

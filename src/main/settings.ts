@@ -1,5 +1,5 @@
 /**
- * Persisted application settings.
+ * Persisted application settings and per-path mode overrides.
  *
  * Stored as JSON in Electron's `userData` directory. Writes are atomic
  * (write-then-rename) so a crash mid-save cannot leave a truncated file that
@@ -9,13 +9,13 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { AppSettings } from '@shared/types.js'
+import type { AppSettings, ModeOverrides, RepairMode } from '@shared/types.js'
 import { DEFAULT_SETTINGS, withDefaults } from '@shared/defaults.js'
 
-// Earlier versions also stored per-path `modeOverrides`; that key is ignored
-// on load and dropped on the next write.
 interface StoredState {
   settings: Partial<AppSettings>
+  /** Keyed by absolute path; a key may be a file or a folder. */
+  modeOverrides: ModeOverrides
 }
 
 let cache: StoredState | undefined
@@ -29,10 +29,13 @@ async function load(): Promise<StoredState> {
   try {
     const raw = await readFile(filePath(), 'utf8')
     const parsed = JSON.parse(raw) as Partial<StoredState>
-    cache = { settings: parsed.settings ?? {} }
+    cache = {
+      settings: parsed.settings ?? {},
+      modeOverrides: parsed.modeOverrides ?? {}
+    }
   } catch {
     // Missing or corrupt file: start from defaults rather than failing to boot.
-    cache = { settings: {} }
+    cache = { settings: {}, modeOverrides: {} }
   }
   return cache
 }
@@ -58,6 +61,22 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
 }
 
 export async function resetSettings(): Promise<AppSettings> {
-  await persist({ settings: {} })
+  // Overrides are kept: resetting the preferences is not a request to forget
+  // which folders were deliberately set to something else.
+  await persist({ settings: {}, modeOverrides: (await load()).modeOverrides })
   return { ...DEFAULT_SETTINGS }
+}
+
+export async function getModeOverrides(): Promise<ModeOverrides> {
+  return { ...(await load()).modeOverrides }
+}
+
+/** Set, or with `null` clear, the override on one path. */
+export async function setModeOverride(path: string, mode: RepairMode | null): Promise<ModeOverrides> {
+  const state = await load()
+  const overrides = { ...state.modeOverrides }
+  if (mode === null) delete overrides[path]
+  else overrides[path] = mode
+  await persist({ ...state, modeOverrides: overrides })
+  return overrides
 }

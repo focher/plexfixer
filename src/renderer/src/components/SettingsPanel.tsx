@@ -1,5 +1,7 @@
-import type { AppSettings, EnvironmentInfo } from '@shared/types.js'
+import type { AppSettings, EnvironmentInfo, ModeOverrides, RepairMode } from '@shared/types.js'
 import { languageOptions } from '@shared/languages.js'
+import { MODE_LABEL, resolveMode } from '@shared/mode.js'
+import { shortenPath } from '../format.js'
 
 interface FieldProps {
   label: string
@@ -41,6 +43,11 @@ function LanguageSelect({
 export interface SettingsPanelProps {
   settings: AppSettings
   environment?: EnvironmentInfo
+  /** Per-file and per-folder mode overrides. */
+  overrides: ModeOverrides
+  onSetMode: (path: string, mode: RepairMode | null) => void
+  /** Pick a folder and give it an override of its own. */
+  onAddFolderOverride: () => void
   onChange: (patch: Partial<AppSettings>) => void
   onReset: () => void
   onPickDirectory: () => void
@@ -51,6 +58,17 @@ export interface SettingsPanelProps {
 export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Element {
   const { settings, environment } = props
   const set = props.onChange
+
+  // Longest paths last would put a nested folder above its parent; sorting by
+  // path keeps a folder and the entries inside it together.
+  const overrideKeys = Object.keys(props.overrides).sort((a, b) => a.localeCompare(b))
+
+  /** What a path would fall back to if its own override were removed. */
+  const inheritedFor = (path: string): RepairMode => {
+    const rest = { ...props.overrides }
+    delete rest[path]
+    return resolveMode(path, rest, settings.defaultMode).mode
+  }
 
   const encoderOptions: { value: AppSettings['hardwareEncoder']; label: string; available: boolean }[] = [
     { value: 'auto', label: 'Automatic', available: true },
@@ -126,6 +144,61 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
           />
           <span className="muted">Never mark a commentary or audio-description track as default</span>
         </Field>
+      </section>
+
+      <section>
+        <h3>Repair modes</h3>
+        <p className="section-hint">
+          What a repair is allowed to do. A folder listed below sets the mode for everything under it, and a file or a
+          nested folder with its own entry wins over it — which is what lets a whole folder force-transcode while one
+          episode inside it stays report-only. Individual files are easier to set from the library: open a row’s
+          details.
+        </p>
+
+        <Field label="Default mode" hint="Used by any file with no setting of its own, and no overridden folder above it.">
+          <select value={settings.defaultMode} onChange={(event) => set({ defaultMode: event.target.value as RepairMode })}>
+            <option value="report">Report only — never write</option>
+            <option value="safe-remux">Safe remux — lossless fixes, flag the rest</option>
+            <option value="force-transcode">Force transcode — re-encode when needed</option>
+          </select>
+        </Field>
+
+
+        {overrideKeys.length === 0 ? (
+          <div className="muted" style={{ marginBottom: 12 }}>
+            Nothing is overridden — every file repairs in <strong>{MODE_LABEL[settings.defaultMode]}</strong>.
+          </div>
+        ) : (
+          <div className="overrides">
+            {overrideKeys.map((path) => (
+              <div className="override-row" key={path}>
+                <code className="override-path" title={path}>
+                  {shortenPath(path, 3)}
+                </code>
+                <select
+                  value={props.overrides[path]}
+                  onChange={(event) => props.onSetMode(path, event.target.value as RepairMode)}
+                >
+                  <option value="report">Report only</option>
+                  <option value="safe-remux">Safe remux</option>
+                  <option value="force-transcode">Force transcode</option>
+                </select>
+                <button
+                  className="ghost"
+                  onClick={() => props.onSetMode(path, null)}
+                  title={`Remove this override — ${path} goes back to ${MODE_LABEL[inheritedFor(path)]}`}
+                  aria-label={`Remove the override on ${path}`}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ marginTop: 12 }}>
+          <button onClick={props.onAddFolderOverride}>Add folder…</button>
+        </div>
       </section>
 
       <section>

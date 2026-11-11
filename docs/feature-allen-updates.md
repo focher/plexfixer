@@ -53,7 +53,7 @@ The filters narrow the list in this order:
 ## Repairs
 
 - Choose **Safe remux** or **Force transcode** each time you repair, for one file or for the selection.
-- The global *Default mode* setting and the per-folder mode overrides have been **removed**. The repair you pick is the repair you get.
+- **Repair selected** instead uses each file's own mode — see *Repair modes* in the README. (This branch removed modes; they were put back afterwards.)
 - If a file has changed on disk since it was scanned, the app examines it again before repairing, so it never works from out-of-date information.
 
 ## Launching with a folder
