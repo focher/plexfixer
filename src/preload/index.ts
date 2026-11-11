@@ -11,8 +11,8 @@ import type {
   AppSettings,
   EnvironmentInfo,
   Job,
-  ModeOverrides,
   RepairMode,
+  RepairRequest,
   RescanResult,
   ScanCompleteEvent,
   ScanProgressEvent
@@ -26,11 +26,6 @@ const api = {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsGet),
     update: (patch: Partial<AppSettings>): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsUpdate, patch),
     reset: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsReset)
-  },
-  overrides: {
-    get: (): Promise<ModeOverrides> => ipcRenderer.invoke(IPC.overridesGet),
-    set: (path: string, mode: RepairMode | null): Promise<ModeOverrides> =>
-      ipcRenderer.invoke(IPC.overridesSet, path, mode)
   },
   environment: {
     get: (): Promise<EnvironmentInfo> => ipcRenderer.invoke(IPC.envGet),
@@ -58,7 +53,8 @@ const api = {
     }
   },
   jobs: {
-    enqueue: (paths: string[], mode?: RepairMode): Promise<Job[]> => ipcRenderer.invoke(IPC.jobsEnqueue, paths, mode),
+    enqueue: (requests: RepairRequest[], mode: RepairMode): Promise<Job[]> =>
+      ipcRenderer.invoke(IPC.jobsEnqueue, requests, mode),
     list: (): Promise<Job[]> => ipcRenderer.invoke(IPC.jobsList),
     cancel: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.jobsCancel, id),
     cancelAll: (): Promise<void> => ipcRenderer.invoke(IPC.jobsCancelAll),

@@ -42,9 +42,13 @@ export function filterExistingPaths(candidates: string[]): string[] {
  * `[electron, appDir, ...paths]`, so the app directory itself is skipped.
  */
 export function pathsFromArgv(argv: string[]): string[] {
-  const rest = argv.slice(app.isPackaged ? 1 : 2)
   const appPath = app.getAppPath()
-  return filterExistingPaths(rest).filter((path) => path !== appPath)
+  return filterExistingPaths(userArgs(argv)).filter((path) => path !== appPath)
+}
+
+/** argv without the executable (and, running from source, the app directory). */
+export function userArgs(argv: string[]): string[] {
+  return argv.slice(app.isPackaged ? 1 : 2)
 }
 
 export function queuePaths(paths: string[]): void {

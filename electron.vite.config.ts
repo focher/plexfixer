@@ -21,6 +21,10 @@ export default defineConfig({
     resolve: {
       alias: { '@shared': shared, '@renderer': resolve('src/renderer/src') }
     },
+    // The scanned library lives in IndexedDB, which is per origin: if the dev
+    // server drifted to another port when 5173 was busy, the library would look
+    // empty. Fail loudly instead.
+    server: { port: 5173, strictPort: true },
     build: { rollupOptions: { input: { index: resolve('src/renderer/index.html') } } }
   }
 })

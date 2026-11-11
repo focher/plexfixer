@@ -135,17 +135,6 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
           older streaming boxes.
         </p>
 
-        <Field label="Default mode" hint="Applies to files and folders with no override of their own.">
-          <select
-            value={settings.defaultMode}
-            onChange={(event) => set({ defaultMode: event.target.value as AppSettings['defaultMode'] })}
-          >
-            <option value="report">Report only — never write</option>
-            <option value="safe-remux">Safe remux — lossless fixes, flag the rest</option>
-            <option value="force-transcode">Force transcode — re-encode when needed</option>
-          </select>
-        </Field>
-
         <Field label="Target container">
           <select
             value={settings.targetContainer}

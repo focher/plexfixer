@@ -50,17 +50,21 @@ commentary track — carries the default flag.
 
 ## What it does about it
 
-Each file or folder has a **mode**:
+**Scan** a folder and every file in it is probed and kept in the app's
+library, which persists between launches. Scanning only reads. Re-scanning a
+folder updates its files and drops the ones that are gone; changing a setting
+re-evaluates the whole library without re-probing anything. A search box
+narrows the list by any part of the path.
 
-| Mode | Behaviour |
+Nothing is written until you ask, per file or for the selection:
+
+| Action | Behaviour |
 | --- | --- |
-| **Report only** | Analyse and explain. Never writes. |
-| **Safe remux** (default) | Apply every fix that is a stream copy. Flag anything needing a re-encode. |
+| **Safe remux** | Apply every fix that is a stream copy. Skips files needing a re-encode. |
 | **Force transcode** | Also re-encode the video, with GPU acceleration where available. |
 
-The mode is set globally in Settings and can be overridden **per folder or per
-file** — set the whole `Anime` folder to Force transcode, leave one episode on
-Report only.
+A repair uses the stored scan only if the file on disk has not changed since
+(same size and modification time); otherwise it probes the file again first.
 
 A "safe remux" never re-encodes video or discards audio. It rewraps the
 container, moves the MP4 index to the front, fixes codec tags, corrects language
@@ -115,11 +119,13 @@ packaging hook refuses it again if one would be shipped — or if a binary's
 configure line cannot be read at all, since an unverified licence is not a
 licence. See [NOTICE.md](NOTICE.md).
 
-You can also launch it with paths to scan:
+You can also launch it scanning a folder:
 
 ```bash
-npm run dev -- "/Volumes/Media/Movies"
+npm run dev --volume "/Volumes/Media/Movies"
 ```
+
+`--volume` can be repeated, and a bare path works too.
 
 ## Surveying a library
 

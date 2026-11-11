@@ -4,7 +4,6 @@ import type {
   AppSettings,
   EnvironmentInfo,
   Job,
-  ModeOverrides,
   RepairMode,
   ScanError
 } from '@shared/types.js'
@@ -14,35 +13,56 @@ import type { ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, filterResults } from '@shared/plex/facets.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
-import { parentDirectory } from './format.js'
+import { analyzeFile } from '@shared/plex/analyze.js'
+import {
+  entryFromResult,
+  isWithin,
+  loadLibrary,
+  matchesSearch,
+  stalePaths,
+  writeLibrary,
+  type LibraryEntry
+} from './library.js'
 
 type Tab = 'library' | 'jobs' | 'settings'
 
 /**
- * Resolve the effective mode for a path: an override on the file wins, then the
- * nearest ancestor folder with an override, then the global default. Mirrors
- * `resolveMode` in the main process so the UI shows what will actually happen.
+ * Analysis per stored entry, recomputed only when the entry or the settings
+ * object changes. Re-analysing a few thousand files on every row refresh would
+ * be noticeable; a settings change re-analyses everything, which is the point.
  */
-function resolveModeFor(path: string, overrides: ModeOverrides, fallback: RepairMode): RepairMode {
-  const direct = overrides[path]
-  if (direct) return direct
-  let best: { length: number; mode: RepairMode } | undefined
-  for (const [key, mode] of Object.entries(overrides)) {
-    if (key === path) continue
-    if (path.startsWith(`${key}/`) || path.startsWith(`${key}\\`)) {
-      if (!best || key.length > best.length) best = { length: key.length, mode }
-    }
+const analysisCache = new WeakMap<LibraryEntry, { settings: AppSettings; result: AnalysisResult }>()
+
+function analyzeEntry(entry: LibraryEntry, settings: AppSettings): AnalysisResult {
+  const cached = analysisCache.get(entry)
+  if (cached && cached.settings === settings) return cached.result
+  const result: AnalysisResult = {
+    ...analyzeFile(entry.file, settings),
+    scannedAt: entry.scannedAt,
+    scanRoot: entry.scanRoot
   }
-  return best?.mode ?? fallback
+  analysisCache.set(entry, { settings, result })
+  return result
+}
+
+/** The folders to re-scan for "Refresh all": every scan root, minus any inside another. */
+function refreshRoots(entries: Iterable<LibraryEntry>): string[] {
+  const roots = new Set<string>()
+  for (const entry of entries) roots.add(entry.scanRoot ?? entry.path)
+  const sorted = [...roots].sort((a, b) => a.length - b.length)
+  const kept: string[] = []
+  for (const root of sorted) if (!kept.some((outer) => isWithin(root, outer))) kept.push(root)
+  return kept
 }
 
 export default function App(): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('library')
   const [settings, setSettings] = useState<AppSettings>()
   const [environment, setEnvironment] = useState<EnvironmentInfo>()
-  const [overrides, setOverrides] = useState<ModeOverrides>({})
-
-  const [results, setResults] = useState<AnalysisResult[]>([])
+  // Every file ever scanned, by path; mirrored to IndexedDB.
+  const [library, setLibrary] = useState<Map<string, LibraryEntry>>(new Map())
+  const [libraryLoaded, setLibraryLoaded] = useState(false)
+  const [query, setQuery] = useState('')
   const [scanErrors, setScanErrors] = useState<ScanError[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
@@ -53,7 +73,9 @@ export default function App(): React.JSX.Element {
   const [refreshing, setRefreshing] = useState<Set<string>>(new Set())
 
   const scanIdRef = useRef<string | undefined>(undefined)
-  const lastPathsRef = useRef<string[]>([])
+  // Read by the scan-complete listener, registered once.
+  const libraryRef = useRef(library)
+  libraryRef.current = library
   // Read inside `refreshFile`, which must not re-create itself on every job
   // update or every row would lose its handler mid-repair.
   const jobsByPathRef = useRef<Map<string, Job>>(new Map())
@@ -62,12 +84,16 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     void (async () => {
-      const [loadedSettings, loadedOverrides] = await Promise.all([
+      const [loadedSettings, entries] = await Promise.all([
         window.plexfixer.settings.get(),
-        window.plexfixer.overrides.get()
+        loadLibrary().catch((error: unknown) => {
+          console.error('Could not open the library database', error)
+          return [] as LibraryEntry[]
+        })
       ])
       setSettings(loadedSettings)
-      setOverrides(loadedOverrides)
+      setLibrary(new Map(entries.map((entry) => [entry.path, entry])))
+      setLibraryLoaded(true)
       // Capability detection runs test encodes, so it lands after the UI.
       setEnvironment(await window.plexfixer.environment.get())
     })()
@@ -80,9 +106,23 @@ export default function App(): React.JSX.Element {
     })
     const offComplete = window.plexfixer.scan.onComplete((event) => {
       if (event.scanId !== scanIdRef.current) return
-      setResults(event.results)
+      // Merge into the library: scanned files are added or replaced, and files
+      // a completed scan no longer finds under its folders are dropped.
+      const put = event.results.map((result) => entryFromResult(result))
+      const remove = stalePaths(libraryRef.current.keys(), event.inputPaths, event.foundPaths, event.cancelled)
+      setLibrary((previous) => {
+        const next = new Map(previous)
+        for (const path of remove) next.delete(path)
+        for (const entry of put) next.set(entry.path, entry)
+        return next
+      })
+      void writeLibrary(put, remove).catch((error: unknown) => console.error('Could not save the scan', error))
+      setSelected((previous) => {
+        const next = new Set(previous)
+        for (const path of remove) next.delete(path)
+        return next
+      })
       setScanErrors(event.errors)
-      setSelected(new Set(event.results.filter((r) => r.plan.strategy !== 'none').map((r) => r.file.path)))
       setScanning(false)
       setScanProgress(undefined)
     })
@@ -106,13 +146,11 @@ export default function App(): React.JSX.Element {
 
   const startScan = useCallback(async (paths: string[]) => {
     if (paths.length === 0) return
-    lastPathsRef.current = paths
     // The id is generated here and recorded synchronously, so events for this
     // scan are never discarded because the await had not resolved yet.
     const scanId = crypto.randomUUID()
     scanIdRef.current = scanId
     setScanning(true)
-    setResults([])
     setScanErrors([])
     setScanProgress({ processed: 0, total: 0 })
     setTab('library')
@@ -141,26 +179,13 @@ export default function App(): React.JSX.Element {
   }, [])
 
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
-    const next = await window.plexfixer.settings.update(patch)
-    setSettings(next)
-    // Compatibility verdicts depend on settings, so a change invalidates the
-    // current results; re-run against the same inputs rather than showing stale
-    // findings.
-    if (lastPathsRef.current.length > 0 && results.length > 0) {
-      const affectsAnalysis = Object.keys(patch).some(
-        (key) => !['concurrency', 'outputPlacement', 'outputDirectory', 'keepBackups', 'outputSuffix'].includes(key)
-      )
-      if (affectsAnalysis) {
-        const scanId = crypto.randomUUID()
-        scanIdRef.current = scanId
-        setScanning(true)
-        await window.plexfixer.scan.start(lastPathsRef.current, scanId)
-      }
-    }
+    // Verdicts are recomputed from the stored probes against the new settings
+    // (see `results`), so nothing needs re-scanning.
+    setSettings(await window.plexfixer.settings.update(patch))
     if ('ffmpegPath' in patch || 'ffprobePath' in patch) {
       setEnvironment(await window.plexfixer.environment.refresh())
     }
-  }, [results.length])
+  }, [])
 
   /**
    * Re-analyse a single row in place.
@@ -186,8 +211,15 @@ export default function App(): React.JSX.Element {
         }
 
         if (response.result) {
-          const fresh = response.result
-          setResults((previous) => previous.map((entry) => (entry.file.path === path ? fresh : entry)))
+          const entry = entryFromResult(response.result, libraryRef.current.get(path)?.scanRoot)
+          const remove = targetPath !== path ? [path] : []
+          setLibrary((previous) => {
+            const next = new Map(previous)
+            for (const gone of remove) next.delete(gone)
+            next.set(entry.path, entry)
+            return next
+          })
+          void writeLibrary([entry], remove).catch((error: unknown) => console.error('Could not save the scan', error))
           if (targetPath !== path) {
             setSelected((previous) => {
               if (!previous.has(path)) return previous
@@ -202,7 +234,12 @@ export default function App(): React.JSX.Element {
         }
 
         if (response.missing) {
-          setResults((previous) => previous.filter((entry) => entry.file.path !== path))
+          setLibrary((previous) => {
+            const next = new Map(previous)
+            next.delete(path)
+            return next
+          })
+          void writeLibrary([], [path]).catch((error: unknown) => console.error('Could not save the scan', error))
           setSelected((previous) => {
             const next = new Set(previous)
             next.delete(path)
@@ -226,22 +263,34 @@ export default function App(): React.JSX.Element {
     []
   )
 
-  /** Re-scan everything the table was built from, keeping the same inputs. */
+  /** Re-scan every folder in the library. */
   const refreshAll = useCallback(async () => {
-    if (lastPathsRef.current.length > 0) await startScan(lastPathsRef.current)
+    await startScan(refreshRoots(libraryRef.current.values()))
   }, [startScan])
 
-  const setMode = useCallback(async (path: string, mode: RepairMode | null) => {
-    setOverrides(await window.plexfixer.overrides.set(path, mode))
-  }, [])
-
   /**
-   * Queue repairs. Passing a mode overrides the per-file/per-folder setting for
-   * this run only — that is what the "Force transcode it now" action does,
-   * without permanently changing the file's mode.
+   * Queue repairs. The stored probe goes along with each path; the main process
+   * re-probes any file that has changed on disk since it was scanned.
+   *
+   * A force transcode of more than one file asks first: it re-encodes video,
+   * which takes hours across a library and is not undone by a click.
    */
-  const repair = useCallback(async (paths: string[], mode?: RepairMode) => {
-    await window.plexfixer.jobs.enqueue(paths, mode)
+  const repair = useCallback(async (paths: string[], mode: RepairMode) => {
+    const requests = paths.flatMap((path) => {
+      const entry = libraryRef.current.get(path)
+      return entry ? [{ file: entry.file, scanRoot: entry.scanRoot }] : []
+    })
+    if (requests.length === 0) return
+    if (
+      mode === 'force-transcode' &&
+      requests.length > 1 &&
+      !window.confirm(
+        `Force transcode ${requests.length} files? Files that need it will have their video re-encoded.`
+      )
+    ) {
+      return
+    }
+    await window.plexfixer.jobs.enqueue(requests, mode)
     setTab('jobs')
   }, [])
 
@@ -272,6 +321,14 @@ export default function App(): React.JSX.Element {
     jobsByPathRef.current = jobsByPath
   }, [jobsByPath])
 
+  // Sorted by path so the table is stable across scans and restarts.
+  const results = useMemo(() => {
+    if (!settings) return []
+    return [...library.values()]
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .map((entry) => analyzeEntry(entry, settings))
+  }, [library, settings])
+
   const counts = useMemo(() => {
     const result = { ok: 0, warn: 0, fail: 0, fixable: 0 }
     for (const entry of results) {
@@ -288,27 +345,21 @@ export default function App(): React.JSX.Element {
     [results]
   )
 
-  const resolveMode = useCallback(
-    (path: string) => resolveModeFor(path, overrides, settings?.defaultMode ?? 'safe-remux'),
-    [overrides, settings?.defaultMode]
-  )
-
   const resultsByPath = useMemo(() => {
     const map = new Map<string, AnalysisResult>()
     for (const entry of results) map.set(entry.file.path, entry)
     return map
   }, [results])
 
-  const facetCounts = useMemo(() => countFacets(results), [results])
-  const visibleResults = useMemo(() => filterResults(results, facets), [results, facets])
+  // The search narrows first, so the chips count what the search left.
+  const searched = useMemo(
+    () => (query.trim() ? results.filter((entry) => matchesSearch(entry.file.path, query)) : results),
+    [results, query]
+  )
+  const facetCounts = useMemo(() => countFacets(searched), [searched])
+  const visibleResults = useMemo(() => filterResults(searched, facets), [searched, facets])
 
-  const scannedFolders = useMemo(() => {
-    const folders = new Set<string>()
-    for (const entry of results) folders.add(parentDirectory(entry.file.path))
-    return [...folders].sort()
-  }, [results])
-
-  if (!settings) {
+  if (!settings || !libraryLoaded) {
     return (
       <div className="app">
         <div className="titlebar">PlexFixer</div>
@@ -319,7 +370,7 @@ export default function App(): React.JSX.Element {
     )
   }
 
-  const selectedPaths = [...selected]
+  const selectedPaths = [...selected].filter((path) => library.has(path))
 
   return (
     <div
@@ -354,11 +405,18 @@ export default function App(): React.JSX.Element {
               <>
                 <span className="muted nowrap">{selectedPaths.length} selected</span>
                 <button
-                  className="primary"
                   disabled={selectedPaths.length === 0}
-                  onClick={() => void repair(selectedPaths)}
+                  onClick={() => void repair(selectedPaths, 'safe-remux')}
+                  title="Apply the lossless fixes; files that need a re-encode are skipped"
                 >
-                  Repair selected
+                  Safe remux selected
+                </button>
+                <button
+                  disabled={selectedPaths.length === 0}
+                  onClick={() => void repair(selectedPaths, 'force-transcode')}
+                  title="Fix everything, re-encoding video where a remux cannot"
+                >
+                  Force transcode selected
                 </button>
               </>
             ) : null}
@@ -368,12 +426,14 @@ export default function App(): React.JSX.Element {
               <>
                 <button
                   onClick={() => void refreshAll()}
-                  disabled={lastPathsRef.current.length === 0}
-                  title="Re-scan everything in the list"
+                  disabled={library.size === 0}
+                  title="Re-scan every folder in the library"
                 >
                   Refresh all
                 </button>
-                <button onClick={() => void choosePaths()}>Choose files or folder…</button>
+                <button className="primary" onClick={() => void choosePaths()}>
+                  Scan…
+                </button>
               </>
             )}
           </>
@@ -420,7 +480,7 @@ export default function App(): React.JSX.Element {
                   can without re-encoding.
                 </p>
                 <button className="primary" onClick={() => void choosePaths()}>
-                  Choose files or folder…
+                  Scan…
                 </button>
               </div>
             ) : null}
@@ -456,20 +516,31 @@ export default function App(): React.JSX.Element {
                       {needsTranscode.length} file{needsTranscode.length === 1 ? '' : 's'} cannot be fixed by a remux
                       alone.
                     </strong>{' '}
-                    A safe remux will skip {needsTranscode.length === 1 ? 'it' : 'them'}. Set the file — or its folder —
-                    to Force transcode to re-encode the video.
+                    A safe remux will skip {needsTranscode.length === 1 ? 'it' : 'them'}; Force transcode re-encodes the
+                    video.
                     <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <button onClick={() => void repair(needsTranscode, 'force-transcode')}>
                         Force transcode {needsTranscode.length === 1 ? 'it' : 'these'} now
                       </button>
-                      {scannedFolders.length === 1 ? (
-                        <button onClick={() => void setMode(scannedFolders[0], 'force-transcode')}>
-                          Set this folder to Force transcode
-                        </button>
-                      ) : null}
                     </div>
                   </div>
                 ) : null}
+
+                <div className="searchbar">
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search files and folders"
+                    aria-label="Search files and folders"
+                    spellCheck={false}
+                  />
+                  {query.trim() && facets.size === 0 ? (
+                    <span className="muted nowrap">
+                      {visibleResults.length} of {results.length}
+                    </span>
+                  ) : null}
+                </div>
 
                 <FilterBar
                   counts={facetCounts}
@@ -489,7 +560,9 @@ export default function App(): React.JSX.Element {
 
                 {visibleResults.length === 0 ? (
                   <div className="empty">
-                    No file matches the filters you have on. Clear one to see the rest.
+                    {query.trim() && searched.length === 0
+                      ? `No file matches “${query.trim()}”.`
+                      : 'No file matches the filters you have on. Clear one to see the rest.'}
                   </div>
                 ) : null}
 
@@ -497,9 +570,6 @@ export default function App(): React.JSX.Element {
                   results={visibleResults}
                   jobs={jobsByPath}
                   selected={selected}
-                  overrides={overrides}
-                  defaultMode={settings.defaultMode}
-                  resolveMode={resolveMode}
                   onToggleSelect={(path) =>
                     setSelected((previous) => {
                       const next = new Set(previous)
@@ -519,8 +589,7 @@ export default function App(): React.JSX.Element {
                       return next
                     })
                   }
-                  onSetMode={(path, mode) => void setMode(path, mode)}
-                  onRepair={(paths) => void repair(paths)}
+                  onRepair={(paths, mode) => void repair(paths, mode)}
                   onReveal={(path) => void window.plexfixer.shell.reveal(path)}
                   onRefresh={(path) => void refreshFile(path)}
                   refreshing={refreshing}

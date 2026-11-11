@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import type { AnalysisResult, Job, ModeOverrides, RepairMode } from '@shared/types.js'
+import { useEffect, useState } from 'react'
+import type { AnalysisResult, Job, RepairMode } from '@shared/types.js'
 import { summarizeReason, type ReasonTone } from '@shared/plex/reason.js'
 import FileDetail from './FileDetail.js'
-import { parentDirectory, shortenPath } from '../format.js'
+import { formatAgo, parentDirectory, shortenPath } from '../format.js'
+import { BoltIcon, RefreshIcon, WrenchIcon } from './icons.js'
 
 const VERDICT_LABEL: Record<AnalysisResult['verdict'], string> = {
   ok: 'ready',
@@ -16,12 +17,6 @@ const STRATEGY_LABEL: Record<AnalysisResult['plan']['strategy'], string> = {
   remux: 'Remux (stream copy)',
   'transcode-audio': 'Remux + add AAC',
   'transcode-video': 'Re-encode video'
-}
-
-const MODE_LABEL: Record<RepairMode, string> = {
-  report: 'Report only',
-  'safe-remux': 'Safe remux',
-  'force-transcode': 'Force transcode'
 }
 
 /** Badge colour for the outcome note under each reason. */
@@ -45,13 +40,9 @@ export interface ResultsTableProps {
   results: AnalysisResult[]
   jobs: Map<string, Job>
   selected: Set<string>
-  overrides: ModeOverrides
-  defaultMode: RepairMode
-  resolveMode: (path: string) => RepairMode
   onToggleSelect: (path: string) => void
   onToggleAll: () => void
-  onSetMode: (path: string, mode: RepairMode | null) => void
-  onRepair: (paths: string[]) => void
+  onRepair: (paths: string[], mode: RepairMode) => void
   onReveal: (path: string) => void
   /** Re-analyse one file without rebuilding the whole table. */
   onRefresh: (path: string) => void
@@ -61,6 +52,12 @@ export interface ResultsTableProps {
 
 export default function ResultsTable(props: ResultsTableProps): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  // Ticks so the "Scanned" column ages without the parent re-rendering.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
 
   const toggleExpanded = (path: string): void => {
     setExpanded((previous) => {
@@ -86,15 +83,15 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         <span>File</span>
         <span>Why</span>
         <span>Plan</span>
-        <span>Mode</span>
+        <span>Scanned</span>
         <span>Action</span>
       </div>
 
       {props.results.map((result) => {
         const path = result.file.path
         const job = props.jobs.get(path)
-        const mode = props.resolveMode(path)
-        const isOverridden = props.overrides[path] != null
+        const jobActive = job?.state === 'queued' || job?.state === 'running'
+        const nothingToDo = result.plan.strategy === 'none'
         const open = expanded.has(path)
         const reason = summarizeReason(result)
         const isRefreshing = props.refreshing.has(path)
@@ -119,15 +116,6 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                   {result.file.fileName}
                   <span className="dir">{shortenPath(parentDirectory(path), 2)}</span>
                 </span>
-                <button
-                  className="refresh"
-                  onClick={() => props.onRefresh(path)}
-                  disabled={isRefreshing}
-                  aria-label={`Re-scan ${result.file.fileName}`}
-                  title="Re-scan just this file"
-                >
-                  <span className={isRefreshing ? 'spin' : undefined}>⟳</span>
-                </button>
               </span>
               <span className="reason" title={reason.detail}>
                 <span className="reason-text">{reason.headline}</span>
@@ -140,50 +128,68 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                   ) : null}
                 </span>
               </span>
-              <span className="muted nowrap" style={{ fontSize: 12 }}>
-                {STRATEGY_LABEL[result.plan.strategy]}
-              </span>
-              <span>
-                <select
-                  value={mode}
-                  onChange={(event) => {
-                    const value = event.target.value as RepairMode | 'inherit'
-                    props.onSetMode(path, value === 'inherit' ? null : value)
-                  }}
-                  style={isOverridden ? { borderColor: 'var(--accent)' } : undefined}
-                  title={
-                    isOverridden
-                      ? 'Overridden for this file'
-                      : 'Inherited from the folder or the global default'
-                  }
-                >
-                  <option value="inherit">Inherit ({MODE_LABEL[props.defaultMode]})</option>
-                  <option value="report">{MODE_LABEL.report}</option>
-                  <option value="safe-remux">{MODE_LABEL['safe-remux']}</option>
-                  <option value="force-transcode">{MODE_LABEL['force-transcode']}</option>
-                </select>
-              </span>
-              <span className="nowrap">
-                {job ? (
+              <span className="plan">
+                <span className="muted nowrap" style={{ fontSize: 12 }}>
+                  {STRATEGY_LABEL[result.plan.strategy]}
+                </span>
+                {job && !jobActive ? (
                   <span className={`badge ${JOB_TONE[job.state]}`} title={job.message}>
-                    {job.state === 'running'
-                      ? `${Math.round(job.progress.fraction * 100)}%`
-                      : job.state}
+                    {job.state}
+                  </span>
+                ) : null}
+              </span>
+              <span
+                className="muted nowrap"
+                style={{ fontSize: 12 }}
+                title={result.scannedAt ? new Date(result.scannedAt).toLocaleString() : undefined}
+              >
+                {formatAgo(result.scannedAt, now)}
+              </span>
+              <span className="actions">
+                <button
+                  className="icon-button"
+                  onClick={() => props.onRefresh(path)}
+                  disabled={isRefreshing}
+                  aria-label={`Re-scan ${result.file.fileName}`}
+                  title="Re-scan this file"
+                >
+                  <RefreshIcon className={isRefreshing ? 'spin' : undefined} />
+                </button>
+                {jobActive && job ? (
+                  <span className={`badge ${JOB_TONE[job.state]}`} title={job.message}>
+                    {job.state === 'running' ? `${Math.round(job.progress.fraction * 100)}%` : job.state}
                   </span>
                 ) : (
-                  <button
-                    onClick={() => props.onRepair([path])}
-                    disabled={result.plan.strategy === 'none' || mode === 'report'}
-                    title={
-                      result.plan.strategy === 'none'
-                        ? 'Already Plex-ready'
-                        : mode === 'report'
-                          ? 'This file is in report-only mode'
-                          : 'Apply the repair plan'
-                    }
-                  >
-                    Repair
-                  </button>
+                  <>
+                    <button
+                      className="icon-button"
+                      onClick={() => props.onRepair([path], 'safe-remux')}
+                      disabled={nothingToDo || result.plan.requiresTranscode}
+                      aria-label={`Safe remux ${result.file.fileName}`}
+                      title={
+                        nothingToDo
+                          ? 'Already Plex-ready'
+                          : result.plan.requiresTranscode
+                            ? 'Needs a re-encode — use Force transcode'
+                            : 'Safe remux — apply the lossless fixes'
+                      }
+                    >
+                      <WrenchIcon />
+                    </button>
+                    <button
+                      className="icon-button"
+                      onClick={() => props.onRepair([path], 'force-transcode')}
+                      disabled={nothingToDo}
+                      aria-label={`Force transcode ${result.file.fileName}`}
+                      title={
+                        nothingToDo
+                          ? 'Already Plex-ready'
+                          : 'Force transcode — fix everything, re-encoding video if needed'
+                      }
+                    >
+                      <BoltIcon />
+                    </button>
+                  </>
                 )}
               </span>
             </div>

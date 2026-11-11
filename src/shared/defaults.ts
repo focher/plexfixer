@@ -9,8 +9,6 @@ import type { AppSettings } from './types.js'
  * buffering.
  */
 export const DEFAULT_SETTINGS: AppSettings = {
-  defaultMode: 'safe-remux',
-
   preferredAudioLanguage: 'eng',
   preferredSubtitleLanguage: 'eng',
   fallbackAudioLanguages: ['eng'],

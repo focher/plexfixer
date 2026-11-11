@@ -14,7 +14,6 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "baseUrl": ".",
-    "paths": { "@shared/*": ["src/shared/*"], "@renderer/*": ["src/renderer/src/*"] }
+    "paths": { "@shared/*": ["./src/shared/*"], "@renderer/*": ["./src/renderer/src/*"] }
   }
 }

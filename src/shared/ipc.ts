@@ -9,8 +9,6 @@ export const IPC = {
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   settingsReset: 'settings:reset',
-  overridesGet: 'overrides:get',
-  overridesSet: 'overrides:set',
   envGet: 'env:get',
   envRefresh: 'env:refresh',
   pickPaths: 'dialog:pick-paths',

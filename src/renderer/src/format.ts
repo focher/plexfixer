@@ -41,3 +41,5 @@ export function parentDirectory(path: string): string {
   const index = path.lastIndexOf(separator)
   return index > 0 ? path.slice(0, index) : path
 }
+
+export { formatAgo } from '@shared/time.js'

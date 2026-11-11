@@ -102,6 +102,8 @@ export interface MediaFile {
   /** Lowercased extension without the dot. */
   extension: string
   sizeBytes: number
+  /** File modification time when probed; a stored scan is stale once it differs. */
+  modifiedMs?: number
   container: ContainerFormat
   /** Raw ffprobe `format_name`, e.g. "matroska,webm" or "mov,mp4,m4a,3gp,3g2,mj2". */
   formatName: string
@@ -299,6 +301,10 @@ export interface AnalysisResult {
   primaryLanguage: string
   /** How `primaryLanguage` was determined, for display. */
   primaryLanguageSource: 'video-stream-tag' | 'preferred-setting' | 'majority-audio' | 'first-audio' | 'fallback'
+  /** When the file was probed (ms since epoch); set by the scanner, not by analysis. */
+  scannedAt?: number
+  /** The folder this file was found under, for mirroring into an output directory. */
+  scanRoot?: string
 }
 
 export interface ScanError {
@@ -310,7 +316,7 @@ export interface ScanError {
  * Settings
  * ------------------------------------------------------------------ */
 
-/** Per-file / per-folder operating mode. */
+/** What a repair is allowed to do; chosen per repair. */
 export type RepairMode =
   /** Analyse only; never write. */
   | 'report'
@@ -328,9 +334,6 @@ export type OutputPlacement =
   | 'output-dir'
 
 export interface AppSettings {
-  /** Default mode for new scans; overridable per folder and per file. */
-  defaultMode: RepairMode
-
   /** Preferred language for the default audio track (ISO 639-2/B). */
   preferredAudioLanguage: string
   /** Preferred language for subtitles. */
@@ -391,9 +394,6 @@ export interface AppSettings {
   /** Recurse into subfolders when a folder is scanned. */
   recursive: boolean
 }
-
-/** Mode overrides keyed by absolute path (file or folder). */
-export type ModeOverrides = Record<string, RepairMode>
 
 /* ------------------------------------------------------------------ *
  * Jobs
@@ -469,8 +469,24 @@ export interface RescanResult {
 
 export interface ScanCompleteEvent {
   scanId: string
+  /** The paths the scan was started with. */
+  inputPaths: string[]
   results: AnalysisResult[]
   errors: ScanError[]
+  /** Every media file the walk found, probed or not. */
+  foundPaths: string[]
+  /** True when the scan was cancelled part-way: files not reached say nothing. */
+  cancelled: boolean
+}
+
+/**
+ * A file the renderer wants repaired. The library holds the scan, which may be
+ * from an earlier session; the main process uses it only if the file on disk
+ * still matches, and re-probes otherwise.
+ */
+export interface RepairRequest {
+  file: MediaFile
+  scanRoot?: string
 }
 
 /** What the main process found when it looked for the ffmpeg toolchain. */

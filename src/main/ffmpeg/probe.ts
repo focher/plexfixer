@@ -365,13 +365,15 @@ export async function probeFile(filePath: string, options: ProbeOptions): Promis
   const formatName = raw.format?.format_name ?? ''
   const container = containerOf(formatName, extension)
 
-  const sizeBytes = toNumber(raw.format?.size) ?? (await stat(filePath).then((s) => s.size, () => 0))
+  const info = await stat(filePath).catch(() => undefined)
+  const sizeBytes = toNumber(raw.format?.size) ?? info?.size ?? 0
 
   return {
     path: filePath,
     fileName: basename(filePath),
     extension,
     sizeBytes,
+    modifiedMs: info?.mtimeMs,
     container,
     formatName,
     durationSeconds: toNumber(raw.format?.duration),

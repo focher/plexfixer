@@ -2,7 +2,8 @@ import { join } from 'node:path'
 import { BrowserWindow, app, shell } from 'electron'
 import { registerIpcHandlers } from './ipc.js'
 import { IPC } from '@shared/ipc.js'
-import { filterExistingPaths, onPaths, pathsFromArgv, queuePaths } from './openPaths.js'
+import { parseLaunchArgs } from '@shared/launch.js'
+import { filterExistingPaths, onPaths, pathsFromArgv, queuePaths, userArgs } from './openPaths.js'
 
 const isDevelopment = !app.isPackaged
 
@@ -74,6 +75,13 @@ if (!gotLock) {
     event.preventDefault()
     queuePaths(filterExistingPaths([path]))
   })
+
+  // `--volume <path>` (or a bare path) opens the app scanning that folder.
+  const launch = parseLaunchArgs(userArgs(process.argv))
+  for (const problem of launch.problems) console.error(`plexfixer: ${problem}`)
+  for (const volume of launch.volumes) {
+    if (filterExistingPaths([volume]).length === 0) console.error(`plexfixer: --volume ${volume} does not exist`)
+  }
 
   void app.whenReady().then(() => {
     registerIpcHandlers()

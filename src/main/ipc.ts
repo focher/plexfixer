@@ -6,14 +6,15 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { access } from 'node:fs/promises'
+import { access, stat } from 'node:fs/promises'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type {
   AnalysisResult,
   AppSettings,
   Job,
-  ModeOverrides,
+  MediaFile,
   RepairMode,
+  RepairRequest,
   ScanCompleteEvent,
   RescanResult,
   ScanError,
@@ -23,12 +24,11 @@ import { analyzeFile } from '@shared/plex/analyze.js'
 import { IPC } from '@shared/ipc.js'
 import { probeFile, ProbeError } from './ffmpeg/probe.js'
 import { collectMediaFiles } from './scan/walk.js'
-import { getModeOverrides, getSettings, resetSettings, resolveMode, setModeOverride, updateSettings } from './settings.js'
+import { getSettings, resetSettings, updateSettings } from './settings.js'
 import { invalidateEnvironment, resolveEnvironment, type Environment } from './environment.js'
 import { RepairRunner } from './jobs/runner.js'
 import { scanRootFor } from './jobs/output.js'
 import { takeQueuedPaths } from './openPaths.js'
-
 
 interface ActiveScan {
   controller: AbortController
@@ -37,9 +37,6 @@ interface ActiveScan {
 
 const activeScans = new Map<string, ActiveScan>()
 let runner: RepairRunner | undefined
-/** Latest analysis per path, so a repair can be queued without re-scanning. */
-const resultsByPath = new Map<string, AnalysisResult>()
-const scanRootByPath = new Map<string, string | undefined>()
 
 function send(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -78,13 +75,6 @@ export function registerIpcHandlers(): void {
     invalidateEnvironment()
     return resetSettings()
   })
-
-  ipcMain.handle(IPC.overridesGet, async (): Promise<ModeOverrides> => getModeOverrides())
-
-  ipcMain.handle(
-    IPC.overridesSet,
-    async (_event, path: string, mode: RepairMode | null): Promise<ModeOverrides> => setModeOverride(path, mode)
-  )
 
   /* --- environment ----------------------------------------------------- */
 
@@ -160,15 +150,12 @@ export function registerIpcHandlers(): void {
     } catch {
       // An in-place repair that changed container renames the file, so the path
       // the row was built from no longer exists. Say so rather than erroring.
-      resultsByPath.delete(filePath)
       return { missing: true }
     }
     try {
       const probed = await probeFile(filePath, { ffprobePath: environment.ffprobePath })
-      const result = analyzeFile(probed, settings)
-      resultsByPath.set(filePath, result)
-      scanRootByPath.set(filePath, scanRootByPath.get(filePath))
-      return { result }
+      // The renderer keeps the row's scan root; it is not known here.
+      return { result: { ...analyzeFile(probed, settings), scannedAt: Date.now() } }
     } catch (error) {
       return { error: error instanceof ProbeError ? error.message : error instanceof Error ? error.message : String(error) }
     }
@@ -183,24 +170,25 @@ export function registerIpcHandlers(): void {
 
   /* --- jobs -------------------------------------------------------------- */
 
-  ipcMain.handle(IPC.jobsEnqueue, async (_event, paths: string[], modeOverride?: RepairMode): Promise<Job[]> => {
+  ipcMain.handle(IPC.jobsEnqueue, async (_event, requests: RepairRequest[], mode: RepairMode): Promise<Job[]> => {
     const settings = await getSettings()
     const environment = await resolveEnvironment(settings)
     const activeRunner = await ensureRunner(settings, environment)
-    const overrides = await getModeOverrides()
 
     const jobs: Job[] = []
-    for (const path of paths) {
-      const result = resultsByPath.get(path)
-      if (!result) continue
-      const mode = modeOverride ?? resolveMode(path, overrides, settings.defaultMode)
+    for (const request of requests) {
+      const file = await currentProbe(request.file, environment)
+      if (!file) continue
+      // Analysed now, with today's settings, so the plan matches what the
+      // table shows rather than whatever was true when the file was scanned.
+      const result = analyzeFile(file, settings)
       jobs.push(
         activeRunner.enqueue({
           result,
           settings,
           mode,
           caps: environment.capabilities,
-          scanRoot: scanRootByPath.get(path)
+          scanRoot: request.scanRoot
         })
       )
     }
@@ -229,6 +217,27 @@ export function registerIpcHandlers(): void {
  * Scan implementation
  * ------------------------------------------------------------------ */
 
+/**
+ * The probe to repair from: the library's stored one when the file on disk is
+ * still the file that was scanned (same size and modification time), a fresh
+ * probe when it has changed, or nothing when it is gone or unreadable.
+ *
+ * A repair planned from a stale probe could map streams that no longer exist,
+ * and the library may hold scans from weeks ago.
+ */
+async function currentProbe(stored: MediaFile, environment: Environment): Promise<MediaFile | undefined> {
+  if (!stored || typeof stored.path !== 'string') return undefined
+  const info = await stat(stored.path).catch(() => undefined)
+  if (!info?.isFile()) return undefined
+  if (stored.modifiedMs != null && info.mtimeMs === stored.modifiedMs && info.size === stored.sizeBytes) return stored
+  if (!environment.ffprobePath) return undefined
+  try {
+    return await probeFile(stored.path, { ffprobePath: environment.ffprobePath })
+  } catch {
+    return undefined
+  }
+}
+
 async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal): Promise<void> {
   const settings = await getSettings()
   const environment = await resolveEnvironment(settings)
@@ -236,8 +245,12 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
   if (!environment.ready || !environment.ffprobePath) {
     send(IPC.scanComplete, {
       scanId,
+      inputPaths,
       results: [],
-      errors: [{ path: inputPaths[0] ?? '', message: environment.problem ?? 'FFmpeg is not available.' }]
+      errors: [{ path: inputPaths[0] ?? '', message: environment.problem ?? 'FFmpeg is not available.' }],
+      foundPaths: [],
+      // Nothing was looked at, so nothing in the library should be dropped.
+      cancelled: true
     } satisfies ScanCompleteEvent)
     return
   }
@@ -265,10 +278,11 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
       const filePath = files[index]
       try {
         const probed = await probeFile(filePath, { ffprobePath: environment.ffprobePath! })
-        const result = analyzeFile(probed, settings)
-        results.push(result)
-        resultsByPath.set(filePath, result)
-        scanRootByPath.set(filePath, await scanRootFor(inputPaths, filePath))
+        results.push({
+          ...analyzeFile(probed, settings),
+          scannedAt: Date.now(),
+          scanRoot: await scanRootFor(inputPaths, filePath)
+        })
       } catch (error) {
         errors.push({
           path: filePath,
@@ -289,5 +303,12 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
   await Promise.all(Array.from({ length: parallelism }, worker))
 
   results.sort((a, b) => a.file.path.localeCompare(b.file.path))
-  send(IPC.scanComplete, { scanId, results, errors } satisfies ScanCompleteEvent)
+  send(IPC.scanComplete, {
+    scanId,
+    inputPaths,
+    results,
+    errors,
+    foundPaths: files,
+    cancelled: signal.aborted
+  } satisfies ScanCompleteEvent)
 }

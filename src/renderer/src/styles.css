@@ -260,7 +260,7 @@ code {
 
 .row {
   display: grid;
-  grid-template-columns: 28px 66px 1fr 1.25fr 128px 124px 104px;
+  grid-template-columns: 28px 66px 1fr 1.25fr 128px 76px 100px;
   gap: 10px;
   align-items: center;
   padding: 9px 12px;
@@ -271,7 +271,7 @@ code {
 /* The window can go down to 940px, where seven columns stop fitting. */
 @media (max-width: 1120px) {
   .row {
-    grid-template-columns: 24px 60px 1fr 1.1fr 104px 112px 92px;
+    grid-template-columns: 24px 60px 1fr 1.1fr 104px 68px 100px;
     gap: 8px;
   }
 }
@@ -351,11 +351,6 @@ button.more:hover {
   min-width: 0;
 }
 
-.row select {
-  width: 100%;
-  min-width: 0;
-}
-
 .row .name {
   display: flex;
   align-items: center;
@@ -379,33 +374,61 @@ button.more:hover {
   text-overflow: ellipsis;
 }
 
-/* Per-row re-scan: visible on hover or focus, so it is not constant noise. */
-button.refresh {
-  background: none;
-  border: none;
-  padding: 0 2px;
-  margin-left: 2px;
-  color: var(--text-faint);
-  font-size: 14px;
-  line-height: 1;
+/* ---------- search ---------- */
+
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.searchbar input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 480px;
+  padding: 7px 10px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+
+.searchbar input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---------- per-row actions ---------- */
+
+.row .plan {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.row .actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+button.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   flex: 0 0 auto;
-  opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease;
+  color: var(--text-dim);
 }
 
-.row:hover button.refresh,
-button.refresh:focus-visible,
-button.refresh:disabled {
-  opacity: 1;
-}
-
-button.refresh:hover:not(:disabled) {
+button.icon-button:hover:not(:disabled) {
   color: var(--text);
-  background: none;
 }
 
-button.refresh .spin {
-  display: inline-block;
+.icon-button .spin {
   animation: spin 900ms linear infinite;
 }
 
@@ -416,7 +439,7 @@ button.refresh .spin {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  button.refresh .spin {
+  .icon-button .spin {
     animation: none;
   }
 }
