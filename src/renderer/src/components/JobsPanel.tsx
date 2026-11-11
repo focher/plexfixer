@@ -48,6 +48,7 @@ export default function JobsPanel({
   onCancel,
   onCancelAll,
   onClear,
+  onClearAll,
   onReveal
 }: {
   jobs: Job[]
@@ -56,6 +57,8 @@ export default function JobsPanel({
   onCancel: (id: string) => void
   onCancelAll: () => void
   onClear: () => void
+  /** Stop everything and empty the list. */
+  onClearAll: () => void
   onReveal: (path: string) => void
 }): React.JSX.Element {
   const active = jobs.filter((job) => job.state === 'queued' || job.state === 'running')
@@ -118,8 +121,21 @@ export default function JobsPanel({
         <button onClick={onCancelAll} disabled={active.length === 0}>
           Cancel all
         </button>
-        <button onClick={onClear} disabled={active.length === jobs.length}>
+        <button onClick={onClear} disabled={finished.length === 0}>
           Clear finished
+        </button>
+        <button
+          onClick={() => {
+            // Only worth asking when it would stop work that is under way;
+            // emptying a list of finished jobs costs nothing.
+            if (active.length > 0 && !window.confirm(`Stop ${active.length} running or queued repair${active.length === 1 ? '' : 's'} and empty the list?`)) {
+              return
+            }
+            onClearAll()
+          }}
+          title="Stop anything still running and remove every job from the list"
+        >
+          Clear all
         </button>
       </div>
 

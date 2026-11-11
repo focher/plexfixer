@@ -28,7 +28,7 @@ import {
   temporaryPathFor
 } from './output.js'
 import { TaskQueue } from './queue.js'
-import { inPlaceVerdict } from '@shared/plex/inplace.js'
+import { REFUSAL_REASON, inPlaceVerdict } from '@shared/plex/inplace.js'
 import { applyPatches, packLanguage, readMp4Tracks, revertPatches, type BytePatch } from './mp4-patch.js'
 
 export interface RunnerBinaries {
@@ -90,15 +90,44 @@ export class RepairRunner {
 
   clearFinished(): void {
     for (const [id, job] of this.jobs) {
-      if (job.state === 'done' || job.state === 'failed' || job.state === 'cancelled' || job.state === 'skipped') {
-        this.jobs.delete(id)
-      }
+      if (isFinished(job.state)) this.jobs.delete(id)
     }
+  }
+
+  /**
+   * Empty the queue: stop whatever is running and forget every job.
+   *
+   * A running job does not stop the instant it is abandoned — ffmpeg has to be
+   * killed and the work unwound — and it reports its own cancellation after
+   * that. It cannot reappear in the list, because every path that updates a job
+   * looks it up first and gives up when it is no longer there.
+   */
+  clearAll(): void {
+    this.jobs.clear()
+    this.queue.cancelAll()
   }
 
   private update(job: Job): void {
     this.jobs.set(job.id, job)
     this.onUpdate(job)
+  }
+
+  /**
+   * Note why this repair is copying the file rather than editing it in place.
+   *
+   * Without this the only visible difference is the time it takes, which is the
+   * complaint rather than the explanation.
+   */
+  private slowPath(id: string, because: string): void {
+    this.log(
+      id,
+      'info',
+      'Rewriting the file rather than editing it in place',
+      `This repair copies every byte because ${because}.\n\n` +
+        'Editing in place is reserved for changes that fit in fixed-width header ' +
+        'fields — language tags and default flags — on an MP4 that is being ' +
+        'written back over itself.'
+    )
   }
 
   /**
@@ -215,25 +244,42 @@ export class RepairRunner {
    */
   private async tryInPlace(id: string, options: EnqueueOptions, outputPath: string): Promise<boolean> {
     const { result, settings } = options
-    if (settings.outputPlacement !== 'in-place' || outputPath !== result.file.path) return false
+    if (settings.outputPlacement !== 'in-place' || outputPath !== result.file.path) {
+      this.slowPath(id, 'the repaired file is being written somewhere else, not over the original')
+      return false
+    }
 
     const verdict = inPlaceVerdict(result)
-    if (!verdict.changes) return false
+    if (!verdict.changes) {
+      if (verdict.refusal && verdict.refusal !== 'nothing-to-do') {
+        this.slowPath(id, REFUSAL_REASON[verdict.refusal])
+      }
+      return false
+    }
 
     const tracks = await readMp4Tracks(result.file.path)
-    if (!tracks) return false
+    if (!tracks) {
+      this.slowPath(id, 'the MP4 header could not be read well enough to edit it safely')
+      return false
+    }
 
     const patches: BytePatch[] = []
     for (const change of verdict.changes) {
       const track = tracks[change.streamIndex]
       // The nth trak is ffprobe's nth stream for an MP4. If the file does not
       // line up with what was probed, do nothing clever.
-      if (!track || track.index !== change.streamIndex) return false
+      if (!track || track.index !== change.streamIndex) {
+        this.slowPath(id, 'the file on disk no longer lines up with what was scanned')
+        return false
+      }
 
       if (change.setLanguage != null) {
         const packed = packLanguage(change.setLanguage)
         const currentPacked = packLanguage(track.language)
-        if (packed == null || currentPacked == null) return false
+        if (packed == null || currentPacked == null) {
+          this.slowPath(id, `a language tag ("${track.language}" or "${change.setLanguage}") is not three letters`)
+          return false
+        }
         if (packed !== currentPacked) {
           const expected = Buffer.alloc(2)
           expected.writeUInt16BE(currentPacked)
@@ -254,7 +300,10 @@ export class RepairRunner {
         try {
           const buffer = Buffer.alloc(1)
           const { bytesRead } = await handle.read(buffer, 0, 1, track.enabledFlagOffset)
-          if (bytesRead !== 1) return false
+          if (bytesRead !== 1) {
+            this.slowPath(id, 'the track header could not be read')
+            return false
+          }
           currentByte = buffer.readUInt8(0)
         } finally {
           await handle.close()
@@ -358,8 +407,10 @@ export class RepairRunner {
     let loggedMilestone = -1
     let announcedFinalise = false
 
+    // Re-read rather than reusing the snapshot above: `tryInPlace` logs why it
+    // gave up, and spreading the older copy would drop that entry.
     this.update({
-      ...current,
+      ...(this.jobs.get(id) ?? current),
       state: 'running',
       startedAt: Date.now(),
       command: [this.binaries.ffmpegPath, ...finalArgs],
@@ -537,6 +588,11 @@ export class RepairRunner {
 }
 
 const BACKUP_LABEL = '.plexfixer-backups'
+
+/** Whether a job has reached a state it will not move out of. */
+function isFinished(state: Job['state']): boolean {
+  return state === 'done' || state === 'failed' || state === 'cancelled' || state === 'skipped'
+}
 
 /** Bytes written so far, for progress lines when ffmpeg reports no position. */
 function formatBytes(bytes: number): string {

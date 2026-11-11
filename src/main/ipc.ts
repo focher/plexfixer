@@ -221,6 +221,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.jobsClear, async (): Promise<void> => runner?.clearFinished())
 
+  ipcMain.handle(IPC.jobsClearAll, async (): Promise<void> => runner?.clearAll())
+
   /* --- shell -------------------------------------------------------------- */
 
   ipcMain.handle(IPC.revealPath, async (_event, path: string): Promise<void> => {

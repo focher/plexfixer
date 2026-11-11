@@ -23,6 +23,27 @@ export type InPlaceRefusal =
   | 'changes-a-forced-flag'
   | 'nothing-to-do'
 
+/**
+ * Why a repair had to copy the file, in the user's terms.
+ *
+ * A metadata-only change that nevertheless rewrites gigabytes looks like a bug
+ * unless the reason is stated, so every refusal has a sentence here and the
+ * runner puts it in the job log.
+ */
+export const REFUSAL_REASON: Record<InPlaceRefusal, string> = {
+  'not-mp4': 'the file is not an MP4 — only MP4 headers can be edited in place',
+  'container-change': 'the repair changes the container, which means writing a new file',
+  'not-a-remux': 'the repair is not a stream copy',
+  'needs-reencode': 'the video has to be re-encoded',
+  'adds-audio': 'an AAC track is being added, which has to be encoded and written in',
+  'drops-a-track': 'a track is being dropped, which means rewriting the file without it',
+  'extracts-subtitles': 'subtitles are being written out to sidecar files',
+  'moves-the-index': 'the MP4 index is at the end of the file and has to be moved to the front, which rewrites every byte',
+  'changes-the-codec-tag': 'the video codec tag is changing, which is left to ffmpeg',
+  'changes-a-forced-flag': 'a forced-subtitle flag is changing, which makes the header longer',
+  'nothing-to-do': 'there is nothing to change'
+}
+
 export interface InPlaceVerdict {
   /** The changes to write, when the whole plan is expressible. */
   changes?: TrackPlanChange[]

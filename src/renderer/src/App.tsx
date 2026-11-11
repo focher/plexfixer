@@ -214,8 +214,23 @@ export default function App(): React.JSX.Element {
 
   /* --- actions --------------------------------------------------------- */
 
-  const startScan = useCallback(async (paths: string[]) => {
+  /**
+   * Start a scan.
+   *
+   * Asking for a new folder clears the filters first. They belong to the view
+   * the user was just looking at, and leaving a status tile or a chip on means
+   * the files they asked to see arrive into a list that is hiding them — which
+   * reads as the scan having done nothing. Re-scanning what is already in the
+   * library is the opposite case: that is a refresh of the current view, so it
+   * keeps them.
+   */
+  const startScan = useCallback(async (paths: string[], keepFilters = false) => {
     if (paths.length === 0) return
+    if (!keepFilters) {
+      setStatus(undefined)
+      setFacets(new Set())
+      setQuery('')
+    }
     // The id is generated here and recorded synchronously, so events for this
     // scan are never discarded because the await had not resolved yet.
     const scanId = crypto.randomUUID()
@@ -356,7 +371,7 @@ export default function App(): React.JSX.Element {
 
   /** Re-scan every folder in the library. */
   const refreshAll = useCallback(async () => {
-    await startScan(refreshRoots(libraryRef.current.values()))
+    await startScan(refreshRoots(libraryRef.current.values()), true)
   }, [startScan])
 
   /**
@@ -675,20 +690,24 @@ export default function App(): React.JSX.Element {
                   ) : null}
                   <span className="spacer" />
                   <label
-                    className={`toggle${hidePassed ? ' on' : ''}`}
+                    className={`toggle${hidingPassed ? ' on' : ''}`}
                     title={
                       status === 'passed'
-                        ? 'The Passed filter is on, so passed files are showing'
+                        ? 'Turns off the Passed filter and hides passed files'
                         : 'Leave out files that passed every check'
                     }
                   >
                     <input
                       type="checkbox"
-                      checked={hidePassed}
-                      disabled={status === 'passed'}
+                      checked={hidingPassed}
                       onChange={(event) => {
-                        setHidePassed(event.target.checked)
-                        writePref('hidePassed', event.target.checked)
+                        const on = event.target.checked
+                        setHidePassed(on)
+                        writePref('hidePassed', on)
+                        // Hiding passed files while the Passed tile is showing
+                        // only them is a contradiction. The switch is the later
+                        // instruction, so the tile gives way.
+                        if (on && status === 'passed') setStatus(undefined)
                       }}
                     />
                     <span className="switch" aria-hidden="true" />
@@ -774,6 +793,10 @@ export default function App(): React.JSX.Element {
               setJobs((previous) =>
                 previous.filter((job) => job.state === 'queued' || job.state === 'running')
               )
+            }}
+            onClearAll={() => {
+              void window.plexfixer.jobs.clearAll()
+              setJobs([])
             }}
             onReveal={(path) => void window.plexfixer.shell.reveal(path)}
           />
