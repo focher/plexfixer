@@ -11,6 +11,7 @@ import {
   countFacets,
   countStatuses,
   facetsFor,
+  fileStatus,
   filterResults,
   matchesStatus,
   STATUS_ORDER
@@ -130,7 +131,7 @@ describe('filterResults', () => {
   })
 })
 
-describe('status filters', () => {
+describe('fileStatus', () => {
   const clean = analyze(mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]))
   const remux = analyze(mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]))
   const reencode = analyze(
@@ -139,32 +140,28 @@ describe('status filters', () => {
       mainAudio({ index: 1, language: 'eng' })
     ])
   )
-  const all = [clean, remux, reencode]
+  // Dolby Vision profile 5 has no HDR10 base layer: no remux or re-encode fixes it.
+  const manual = analyze(
+    mkv([video({ dolbyVisionProfile: 5, language: 'eng' }), mainAudio({ index: 1, language: 'eng' })])
+  )
+  const all = [clean, remux, reencode, manual]
 
-  it('calls a clean file passed, with no repair to make', () => {
-    expect(matchesStatus(clean, 'passed')).toBe(true)
-    expect(matchesStatus(clean, 'lossless')).toBe(false)
-    expect(matchesStatus(clean, 'reencode')).toBe(false)
+  it('names what happens next for each kind of file', () => {
+    expect(fileStatus(clean)).toBe('passed')
+    expect(fileStatus(remux)).toBe('fixable')
+    expect(fileStatus(reencode)).toBe('reencode')
+    expect(fileStatus(manual)).toBe('manual')
   })
 
-  it('separates a lossless fix from one that needs a re-encode', () => {
-    expect(matchesStatus(remux, 'lossless')).toBe(true)
-    expect(matchesStatus(remux, 'reencode')).toBe(false)
-    expect(matchesStatus(reencode, 'reencode')).toBe(true)
-    expect(matchesStatus(reencode, 'lossless')).toBe(false)
-  })
-
-  it('puts every file in exactly one of passed, warnings and blocked', () => {
+  it('matches the status the file has and no other', () => {
     for (const result of all) {
-      const verdicts = (['passed', 'warnings', 'blocked'] as const).filter((status) => matchesStatus(result, status))
-      expect(verdicts).toHaveLength(1)
+      expect(STATUS_ORDER.filter((status) => matchesStatus(result, status))).toEqual([fileStatus(result)])
     }
   })
 
-  it('counts with the same rule the filter applies', () => {
+  it('counts every file exactly once', () => {
     const counts = countStatuses(all)
-    for (const status of STATUS_ORDER) {
-      expect(counts[status]).toBe(all.filter((result) => matchesStatus(result, status)).length)
-    }
+    expect(counts).toEqual({ passed: 1, fixable: 1, reencode: 1, manual: 1 })
+    expect(Object.values(counts).reduce((sum, n) => sum + n, 0)).toBe(all.length)
   })
 })

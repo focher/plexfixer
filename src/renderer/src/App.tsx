@@ -9,8 +9,8 @@ import type {
 } from '@shared/types.js'
 import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
-import type { ResultFacet, StatusFilter } from '@shared/plex/facets.js'
-import { countFacets, countStatuses, filterResults, matchesStatus } from '@shared/plex/facets.js'
+import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
+import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
@@ -46,12 +46,11 @@ function analyzeEntry(entry: LibraryEntry, settings: AppSettings): AnalysisResul
 }
 
 /** The summary tiles, each also a filter. */
-const STATUS_TILES: { key: StatusFilter; label: string; tone?: string; hint: string }[] = [
+const STATUS_TILES: { key: FileStatus; label: string; tone: string; hint: string }[] = [
   { key: 'passed', label: 'Passed', tone: 'ok', hint: 'Show only files that passed every check' },
-  { key: 'warnings', label: 'Warnings', tone: 'warn', hint: 'Show only files with warnings' },
-  { key: 'blocked', label: 'Blocked', tone: 'fail', hint: 'Show only files that will not direct play as they are' },
-  { key: 'lossless', label: 'Lossless fix', hint: 'Show only files a remux can fix without re-encoding' },
-  { key: 'reencode', label: 'Need re-encode', hint: 'Show only files that need their video re-encoded' }
+  { key: 'fixable', label: 'Fixable', tone: 'info', hint: 'Show only files a lossless remux fixes' },
+  { key: 'reencode', label: 'Re-encode', tone: 'warn', hint: 'Show only files that need their video re-encoded' },
+  { key: 'manual', label: 'Needs you', tone: 'fail', hint: 'Show only files no automatic repair can fix' }
 ]
 
 /**
@@ -95,7 +94,7 @@ export default function App(): React.JSX.Element {
   const [scanErrors, setScanErrors] = useState<ScanError[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
-  const [status, setStatus] = useState<StatusFilter>()
+  const [status, setStatus] = useState<FileStatus>()
   const [hidePassed, setHidePassed] = useState(() => readPref('hidePassed'))
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; currentPath?: string }>()
@@ -408,7 +407,7 @@ export default function App(): React.JSX.Element {
   const counts = useMemo(() => countStatuses(results), [results])
 
   const needsTranscode = useMemo(
-    () => results.filter((entry) => entry.plan.requiresTranscode).map((entry) => entry.file.path),
+    () => results.filter((entry) => fileStatus(entry) === 'reencode').map((entry) => entry.file.path),
     [results]
   )
 
@@ -429,7 +428,7 @@ export default function App(): React.JSX.Element {
   const narrowed = useMemo(() => {
     let rows = searched
     if (status) rows = rows.filter((entry) => matchesStatus(entry, status))
-    if (hidingPassed) rows = rows.filter((entry) => entry.verdict !== 'ok')
+    if (hidingPassed) rows = rows.filter((entry) => fileStatus(entry) !== 'passed')
     return rows
   }, [searched, status, hidingPassed])
   const facetCounts = useMemo(() => countFacets(narrowed), [narrowed])
@@ -579,7 +578,7 @@ export default function App(): React.JSX.Element {
                     return (
                       <button
                         key={tile.key}
-                        className={`stat${tile.tone ? ` ${tile.tone}` : ''}`}
+                        className={`stat ${tile.tone}`}
                         aria-pressed={on}
                         title={on ? 'Show all files again' : tile.hint}
                         onClick={() => setStatus(on ? undefined : tile.key)}

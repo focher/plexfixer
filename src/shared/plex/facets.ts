@@ -30,7 +30,10 @@ export type ResultFacet =
   | 'transcode-video'
   | 'blocked'
 
-/** Display order, loosely cheapest work first. */
+/**
+ * Display order, loosely cheapest work first. `blocked` is left out: the
+ * "Needs you" status tile shows exactly those files.
+ */
 export const FACET_ORDER: ResultFacet[] = [
   'direct-play',
   'remux-only',
@@ -43,8 +46,7 @@ export const FACET_ORDER: ResultFacet[] = [
   'drop-tracks',
   'extract-subtitles',
   'add-aac',
-  'transcode-video',
-  'blocked'
+  'transcode-video'
 ]
 
 export interface FacetDescription {
@@ -149,7 +151,8 @@ export function facetsFor(result: AnalysisResult): Set<ResultFacet> {
 
 /** How many results carry each facet, for the counts on the filter chips. */
 export function countFacets(results: AnalysisResult[]): Record<ResultFacet, number> {
-  const counts = Object.fromEntries(FACET_ORDER.map((facet) => [facet, 0])) as Record<ResultFacet, number>
+  // Every facet, including any not shown as a chip, so each count starts at 0.
+  const counts = Object.fromEntries(Object.keys(FACET_INFO).map((facet) => [facet, 0])) as Record<ResultFacet, number>
   for (const result of results) {
     for (const facet of facetsFor(result)) counts[facet]++
   }
@@ -172,37 +175,43 @@ export function filterResults(results: AnalysisResult[], active: Set<ResultFacet
 }
 
 /* ------------------------------------------------------------------ *
- * Status filters — the summary tiles above the table
+ * File status — the status column and the summary tiles above the table
  * ------------------------------------------------------------------ */
 
 /**
- * The summary tiles, each also a filter. Unlike the facets these are about the
- * verdict and the overall size of the repair, and only one applies at a time.
+ * What happens next for a file, as one word. Every file has exactly one, so the
+ * tiles never overlap and add up to the library.
+ *
+ * - passed:   no blocker or warning; direct plays as it is
+ * - manual:   a blocker or warning that no automatic plan resolves ("Needs you")
+ * - reencode: only a video re-encode fixes it
+ * - fixable:  a lossless remux (perhaps with an added AAC track) fixes it
+ *
+ * The severity of each finding is still in the detail pane; this is about the
+ * decision in front of the user, which is what a table of thousands needs.
  */
-export type StatusFilter = 'passed' | 'warnings' | 'blocked' | 'lossless' | 'reencode'
+export type FileStatus = 'passed' | 'fixable' | 'reencode' | 'manual'
 
-export const STATUS_ORDER: StatusFilter[] = ['passed', 'warnings', 'blocked', 'lossless', 'reencode']
+export const STATUS_ORDER: FileStatus[] = ['passed', 'fixable', 'reencode', 'manual']
 
-export function matchesStatus(result: AnalysisResult, filter: StatusFilter): boolean {
-  switch (filter) {
-    case 'passed':
-      return result.verdict === 'ok'
-    case 'warnings':
-      return result.verdict === 'warn'
-    case 'blocked':
-      return result.verdict !== 'ok' && result.verdict !== 'warn'
-    case 'lossless':
-      return result.plan.strategy !== 'none' && !result.plan.requiresTranscode
-    case 'reencode':
-      return result.plan.requiresTranscode
-  }
+export function fileStatus(result: AnalysisResult): FileStatus {
+  if (result.verdict === 'ok') return 'passed'
+  // Same rule as the "blocked" facet: an unresolved info note is a choice the
+  // plan made on purpose, not something to go and fix.
+  if (result.plan.unresolved.some((finding) => finding.severity !== 'info')) return 'manual'
+  if (result.plan.requiresTranscode) return 'reencode'
+  if (result.plan.strategy !== 'none') return 'fixable'
+  // Something is wrong and nothing will happen about it.
+  return 'manual'
 }
 
-/** Counts for the tiles, from the same predicate the filter uses. */
-export function countStatuses(results: AnalysisResult[]): Record<StatusFilter, number> {
-  const counts = Object.fromEntries(STATUS_ORDER.map((status) => [status, 0])) as Record<StatusFilter, number>
-  for (const result of results) {
-    for (const status of STATUS_ORDER) if (matchesStatus(result, status)) counts[status]++
-  }
+export function matchesStatus(result: AnalysisResult, status: FileStatus): boolean {
+  return fileStatus(result) === status
+}
+
+/** Counts for the tiles, from the same rule the filter uses. */
+export function countStatuses(results: AnalysisResult[]): Record<FileStatus, number> {
+  const counts = Object.fromEntries(STATUS_ORDER.map((status) => [status, 0])) as Record<FileStatus, number>
+  for (const result of results) counts[fileStatus(result)]++
   return counts
 }

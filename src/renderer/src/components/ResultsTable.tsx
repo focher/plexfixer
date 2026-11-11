@@ -1,30 +1,25 @@
 import { useEffect, useState } from 'react'
 import type { AnalysisResult, Job, RepairMode } from '@shared/types.js'
-import { summarizeReason, type ReasonTone } from '@shared/plex/reason.js'
+import { summarizeReason } from '@shared/plex/reason.js'
+import { fileStatus, type FileStatus } from '@shared/plex/facets.js'
 import FileDetail from './FileDetail.js'
 import { formatAgo, parentDirectory, shortenPath } from '../format.js'
 import { BoltIcon, RefreshIcon, WrenchIcon } from './icons.js'
 
-const VERDICT_LABEL: Record<AnalysisResult['verdict'], string> = {
-  ok: 'passed',
-  warn: 'warning',
-  fail: 'blocked',
-  error: 'error'
+/** The status column: what happens next for the file. */
+const STATUS_BADGE: Record<FileStatus, { label: string; tone: string; hint: string }> = {
+  passed: { label: 'passed', tone: 'ok', hint: 'Passed every check — direct plays as it is' },
+  fixable: { label: 'fixable', tone: 'info', hint: 'A lossless remux fixes this file' },
+  reencode: { label: 're-encode', tone: 'warn', hint: 'Only a video re-encode fixes this file' },
+  manual: { label: 'needs you', tone: 'fail', hint: 'No automatic repair fixes this — see the details' }
 }
 
-const STRATEGY_LABEL: Record<AnalysisResult['plan']['strategy'], string> = {
-  none: 'Nothing to do',
-  remux: 'Remux (stream copy)',
-  'transcode-audio': 'Remux + add AAC',
-  'transcode-video': 'Re-encode video'
-}
-
-/** Badge colour for the outcome note under each reason. */
-const REASON_TONE: Record<ReasonTone, string> = {
-  ok: 'ok',
-  fix: 'info',
-  transcode: 'warn',
-  manual: 'fail'
+/** The plan column: the repair, short, with the long form on hover. */
+const PLAN_BADGE: Record<AnalysisResult['plan']['strategy'], { label: string; tone: string; hint: string }> = {
+  none: { label: 'nothing to do', tone: 'ok', hint: 'Nothing to do' },
+  remux: { label: 'remux', tone: 'info', hint: 'Remux' },
+  'transcode-audio': { label: 'remux + AAC', tone: 'info', hint: 'Remux and add an AAC track' },
+  'transcode-video': { label: 're-encode', tone: 'warn', hint: 'Re-encode the video' }
 }
 
 const JOB_TONE: Record<Job['state'], string> = {
@@ -97,6 +92,8 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         const open = expanded.has(path)
         const reason = summarizeReason(result)
         const isRefreshing = props.refreshing.has(path)
+        const status = STATUS_BADGE[fileStatus(result)]
+        const plan = PLAN_BADGE[result.plan.strategy]
 
         return (
           <div key={path}>
@@ -121,7 +118,9 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 aria-label={`Select ${result.file.fileName}`}
               />
               <span>
-                <span className={`badge ${result.verdict}`}>{VERDICT_LABEL[result.verdict]}</span>
+                <span className={`badge ${status.tone}`} title={status.hint}>
+                  {status.label}
+                </span>
               </span>
               <span className="name">
                 <button className="expander" onClick={() => toggleExpanded(path)} aria-expanded={open}>
@@ -135,15 +134,17 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
               <span className="reason" title={reason.detail}>
                 <span className="reason-text">{reason.headline}</span>
                 <span className="reason-note">
-                  <span className={`badge ${REASON_TONE[reason.tone]}`}>{reason.outcome}</span>
                   <button className="more" onClick={() => toggleExpanded(path)} aria-expanded={open}>
                     {open ? 'hide' : reason.others > 0 ? `+${reason.others} more` : 'details'}
                   </button>
                 </span>
               </span>
               <span className="plan">
-                <span className="muted nowrap" style={{ fontSize: 12 }}>
-                  {STRATEGY_LABEL[result.plan.strategy]}
+                <span
+                  className={`badge ${plan.tone}`}
+                  title={result.plan.costNote ? `${plan.hint}. ${result.plan.costNote}` : plan.hint}
+                >
+                  {plan.label}
                 </span>
                 {job && !jobActive ? (
                   <span className={`badge ${JOB_TONE[job.state]}`} title={job.message}>
