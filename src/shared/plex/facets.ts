@@ -170,3 +170,39 @@ export function filterResults(results: AnalysisResult[], active: Set<ResultFacet
     return false
   })
 }
+
+/* ------------------------------------------------------------------ *
+ * Status filters — the summary tiles above the table
+ * ------------------------------------------------------------------ */
+
+/**
+ * The summary tiles, each also a filter. Unlike the facets these are about the
+ * verdict and the overall size of the repair, and only one applies at a time.
+ */
+export type StatusFilter = 'passed' | 'warnings' | 'blocked' | 'lossless' | 'reencode'
+
+export const STATUS_ORDER: StatusFilter[] = ['passed', 'warnings', 'blocked', 'lossless', 'reencode']
+
+export function matchesStatus(result: AnalysisResult, filter: StatusFilter): boolean {
+  switch (filter) {
+    case 'passed':
+      return result.verdict === 'ok'
+    case 'warnings':
+      return result.verdict === 'warn'
+    case 'blocked':
+      return result.verdict !== 'ok' && result.verdict !== 'warn'
+    case 'lossless':
+      return result.plan.strategy !== 'none' && !result.plan.requiresTranscode
+    case 'reencode':
+      return result.plan.requiresTranscode
+  }
+}
+
+/** Counts for the tiles, from the same predicate the filter uses. */
+export function countStatuses(results: AnalysisResult[]): Record<StatusFilter, number> {
+  const counts = Object.fromEntries(STATUS_ORDER.map((status) => [status, 0])) as Record<StatusFilter, number>
+  for (const result of results) {
+    for (const status of STATUS_ORDER) if (matchesStatus(result, status)) counts[status]++
+  }
+  return counts
+}

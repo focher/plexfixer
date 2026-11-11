@@ -455,6 +455,12 @@ export interface ScanProgressEvent {
   processed: number
   total: number
   currentPath?: string
+  /**
+   * The analysis of `currentPath`, when it probed cleanly. Results stream in
+   * here, one per file, so the table fills and the library is saved as the scan
+   * goes rather than all at the end; failures arrive in `ScanCompleteEvent`.
+   */
+  result?: AnalysisResult
 }
 
 /** Re-analysis of one file, for the per-row refresh button. */
@@ -471,7 +477,6 @@ export interface ScanCompleteEvent {
   scanId: string
   /** The paths the scan was started with. */
   inputPaths: string[]
-  results: AnalysisResult[]
   errors: ScanError[]
   /** Every media file the walk found, probed or not. */
   foundPaths: string[]

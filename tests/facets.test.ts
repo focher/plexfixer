@@ -7,7 +7,14 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
-import { countFacets, facetsFor, filterResults } from '@shared/plex/facets.js'
+import {
+  countFacets,
+  countStatuses,
+  facetsFor,
+  filterResults,
+  matchesStatus,
+  STATUS_ORDER
+} from '@shared/plex/facets.js'
 import { audio, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
 const analyze = (file: Parameters<typeof analyzeFile>[0], patch = {}) =>
@@ -120,5 +127,44 @@ describe('filterResults', () => {
     expect(counts['direct-play']).toBe(1)
     expect(counts['remux-only']).toBe(1)
     expect(counts['transcode-video']).toBe(0)
+  })
+})
+
+describe('status filters', () => {
+  const clean = analyze(mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]))
+  const remux = analyze(mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]))
+  const reencode = analyze(
+    mp4([
+      video({ index: 0, codec: 'h264', profile: 'high 10', bitDepth: 10, language: 'eng' }),
+      mainAudio({ index: 1, language: 'eng' })
+    ])
+  )
+  const all = [clean, remux, reencode]
+
+  it('calls a clean file passed, with no repair to make', () => {
+    expect(matchesStatus(clean, 'passed')).toBe(true)
+    expect(matchesStatus(clean, 'lossless')).toBe(false)
+    expect(matchesStatus(clean, 'reencode')).toBe(false)
+  })
+
+  it('separates a lossless fix from one that needs a re-encode', () => {
+    expect(matchesStatus(remux, 'lossless')).toBe(true)
+    expect(matchesStatus(remux, 'reencode')).toBe(false)
+    expect(matchesStatus(reencode, 'reencode')).toBe(true)
+    expect(matchesStatus(reencode, 'lossless')).toBe(false)
+  })
+
+  it('puts every file in exactly one of passed, warnings and blocked', () => {
+    for (const result of all) {
+      const verdicts = (['passed', 'warnings', 'blocked'] as const).filter((status) => matchesStatus(result, status))
+      expect(verdicts).toHaveLength(1)
+    }
+  })
+
+  it('counts with the same rule the filter applies', () => {
+    const counts = countStatuses(all)
+    for (const status of STATUS_ORDER) {
+      expect(counts[status]).toBe(all.filter((result) => matchesStatus(result, status)).length)
+    }
   })
 })

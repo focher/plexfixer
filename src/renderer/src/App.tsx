@@ -9,8 +9,8 @@ import type {
 } from '@shared/types.js'
 import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
-import type { ResultFacet } from '@shared/plex/facets.js'
-import { countFacets, filterResults } from '@shared/plex/facets.js'
+import type { ResultFacet, StatusFilter } from '@shared/plex/facets.js'
+import { countFacets, countStatuses, filterResults, matchesStatus } from '@shared/plex/facets.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
@@ -45,6 +45,35 @@ function analyzeEntry(entry: LibraryEntry, settings: AppSettings): AnalysisResul
   return result
 }
 
+/** The summary tiles, each also a filter. */
+const STATUS_TILES: { key: StatusFilter; label: string; tone?: string; hint: string }[] = [
+  { key: 'passed', label: 'Passed', tone: 'ok', hint: 'Show only files that passed every check' },
+  { key: 'warnings', label: 'Warnings', tone: 'warn', hint: 'Show only files with warnings' },
+  { key: 'blocked', label: 'Blocked', tone: 'fail', hint: 'Show only files that will not direct play as they are' },
+  { key: 'lossless', label: 'Lossless fix', hint: 'Show only files a remux can fix without re-encoding' },
+  { key: 'reencode', label: 'Need re-encode', hint: 'Show only files that need their video re-encoded' }
+]
+
+/**
+ * Per-viewer UI preferences. Storage can be unavailable or cleared, so every
+ * access is guarded and a missing value just means the default.
+ */
+function readPref(key: string): boolean {
+  try {
+    return localStorage.getItem(`plexfixer.${key}`) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writePref(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(`plexfixer.${key}`, String(value))
+  } catch {
+    /* not worth surfacing */
+  }
+}
+
 /** The folders to re-scan for "Refresh all": every scan root, minus any inside another. */
 function refreshRoots(entries: Iterable<LibraryEntry>): string[] {
   const roots = new Set<string>()
@@ -66,6 +95,8 @@ export default function App(): React.JSX.Element {
   const [scanErrors, setScanErrors] = useState<ScanError[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
+  const [status, setStatus] = useState<StatusFilter>()
+  const [hidePassed, setHidePassed] = useState(() => readPref('hidePassed'))
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; currentPath?: string }>()
   const [jobs, setJobs] = useState<Job[]>([])
@@ -91,8 +122,15 @@ export default function App(): React.JSX.Element {
           return [] as LibraryEntry[]
         })
       ])
+      console.info(`Loaded ${entries.length} file${entries.length === 1 ? '' : 's'} from the library`)
       setSettings(loadedSettings)
-      setLibrary(new Map(entries.map((entry) => [entry.path, entry])))
+      // Merged rather than replaced: a scan started from the command line may
+      // already have streamed fresher entries in while the database opened.
+      setLibrary((previous) => {
+        const next = new Map(entries.map((entry) => [entry.path, entry]))
+        for (const [path, entry] of previous) next.set(path, entry)
+        return next
+      })
       setLibraryLoaded(true)
       // Capability detection runs test encodes, so it lands after the UI.
       setEnvironment(await window.plexfixer.environment.get())
@@ -100,16 +138,20 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const offProgress = window.plexfixer.scan.onProgress((event) => {
-      if (event.scanId !== scanIdRef.current) return
-      setScanProgress({ processed: event.processed, total: event.total, currentPath: event.currentPath })
-    })
-    const offComplete = window.plexfixer.scan.onComplete((event) => {
-      if (event.scanId !== scanIdRef.current) return
-      // Merge into the library: scanned files are added or replaced, and files
-      // a completed scan no longer finds under its folders are dropped.
-      const put = event.results.map((result) => entryFromResult(result))
-      const remove = stalePaths(libraryRef.current.keys(), event.inputPaths, event.foundPaths, event.cancelled)
+    // Scanned files stream in one progress event each. They are batched for a
+    // moment before reaching the table and IndexedDB: with several probes in
+    // flight, re-sorting a large library on every file would be wasted work,
+    // and a quarter-second batch still reads as live.
+    let pending: LibraryEntry[] = []
+    let flushTimer: ReturnType<typeof setTimeout> | undefined
+
+    /** Merge the buffered entries, and delete `remove`, in state and in one IDB transaction. */
+    const flush = (remove: string[] = []): void => {
+      clearTimeout(flushTimer)
+      flushTimer = undefined
+      const put = pending
+      pending = []
+      if (put.length === 0 && remove.length === 0) return
       setLibrary((previous) => {
         const next = new Map(previous)
         for (const path of remove) next.delete(path)
@@ -117,6 +159,23 @@ export default function App(): React.JSX.Element {
         return next
       })
       void writeLibrary(put, remove).catch((error: unknown) => console.error('Could not save the scan', error))
+    }
+
+    const offProgress = window.plexfixer.scan.onProgress((event) => {
+      if (event.scanId !== scanIdRef.current) return
+      if (event.result) {
+        pending.push(entryFromResult(event.result))
+        flushTimer ??= setTimeout(() => flush(), 250)
+      }
+      setScanProgress({ processed: event.processed, total: event.total, currentPath: event.currentPath })
+    })
+    const offComplete = window.plexfixer.scan.onComplete((event) => {
+      if (event.scanId !== scanIdRef.current) return
+      // Files a completed scan no longer finds under its folders are dropped.
+      // `libraryRef` may not yet hold the latest streamed entries, but those
+      // were all found by this scan, so they could never be stale anyway.
+      const remove = stalePaths(libraryRef.current.keys(), event.inputPaths, event.foundPaths, event.cancelled)
+      flush(remove)
       setSelected((previous) => {
         const next = new Set(previous)
         for (const path of remove) next.delete(path)
@@ -136,6 +195,7 @@ export default function App(): React.JSX.Element {
       })
     })
     return () => {
+      flush()
       offProgress()
       offComplete()
       offJob()
@@ -263,6 +323,22 @@ export default function App(): React.JSX.Element {
     []
   )
 
+  /**
+   * Re-analyse just the chosen files, a few at a time. Goes through the same
+   * per-row refresh rather than a scan, which would reset each file's scan root
+   * to its own folder and lose the folder it was originally found under.
+   */
+  const refreshSelected = useCallback(
+    async (paths: string[]) => {
+      let cursor = 0
+      const worker = async (): Promise<void> => {
+        while (cursor < paths.length) await refreshFile(paths[cursor++])
+      }
+      await Promise.all(Array.from({ length: Math.min(4, paths.length) }, worker))
+    },
+    [refreshFile]
+  )
+
   /** Re-scan every folder in the library. */
   const refreshAll = useCallback(async () => {
     await startScan(refreshRoots(libraryRef.current.values()))
@@ -329,16 +405,7 @@ export default function App(): React.JSX.Element {
       .map((entry) => analyzeEntry(entry, settings))
   }, [library, settings])
 
-  const counts = useMemo(() => {
-    const result = { ok: 0, warn: 0, fail: 0, fixable: 0 }
-    for (const entry of results) {
-      if (entry.verdict === 'ok') result.ok++
-      else if (entry.verdict === 'warn') result.warn++
-      else result.fail++
-      if (entry.plan.strategy !== 'none' && !entry.plan.requiresTranscode) result.fixable++
-    }
-    return result
-  }, [results])
+  const counts = useMemo(() => countStatuses(results), [results])
 
   const needsTranscode = useMemo(
     () => results.filter((entry) => entry.plan.requiresTranscode).map((entry) => entry.file.path),
@@ -356,8 +423,17 @@ export default function App(): React.JSX.Element {
     () => (query.trim() ? results.filter((entry) => matchesSearch(entry.file.path, query)) : results),
     [results, query]
   )
-  const facetCounts = useMemo(() => countFacets(searched), [searched])
-  const visibleResults = useMemo(() => filterResults(searched, facets), [searched, facets])
+  // Then the status tile, then "Hide passed". Picking the Passed tile is an
+  // explicit ask to see passed files, so it overrides the toggle.
+  const hidingPassed = hidePassed && status !== 'passed'
+  const narrowed = useMemo(() => {
+    let rows = searched
+    if (status) rows = rows.filter((entry) => matchesStatus(entry, status))
+    if (hidingPassed) rows = rows.filter((entry) => entry.verdict !== 'ok')
+    return rows
+  }, [searched, status, hidingPassed])
+  const facetCounts = useMemo(() => countFacets(narrowed), [narrowed])
+  const visibleResults = useMemo(() => filterResults(narrowed, facets), [narrowed, facets])
 
   if (!settings || !libraryLoaded) {
     return (
@@ -424,13 +500,23 @@ export default function App(): React.JSX.Element {
               <button onClick={() => void cancelScan()}>Cancel scan</button>
             ) : (
               <>
-                <button
-                  onClick={() => void refreshAll()}
-                  disabled={library.size === 0}
-                  title="Re-scan every folder in the library"
-                >
-                  Refresh all
-                </button>
+                {selectedPaths.length > 0 ? (
+                  <button
+                    onClick={() => void refreshSelected(selectedPaths)}
+                    disabled={refreshing.size > 0}
+                    title="Re-scan only the selected files"
+                  >
+                    {refreshing.size > 0 ? 'Refreshing…' : 'Refresh selected'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => void refreshAll()}
+                    disabled={library.size === 0}
+                    title="Re-scan every folder in the library"
+                  >
+                    Refresh all
+                  </button>
+                )}
                 <button className="primary" onClick={() => void choosePaths()}>
                   Scan…
                 </button>
@@ -488,26 +574,24 @@ export default function App(): React.JSX.Element {
             {results.length > 0 ? (
               <>
                 <div className="summary">
-                  <div className="stat ok">
-                    <div className="value">{counts.ok}</div>
-                    <div className="label">Ready</div>
-                  </div>
-                  <div className="stat warn">
-                    <div className="value">{counts.warn}</div>
-                    <div className="label">Warnings</div>
-                  </div>
-                  <div className="stat fail">
-                    <div className="value">{counts.fail}</div>
-                    <div className="label">Blocked</div>
-                  </div>
-                  <div className="stat">
-                    <div className="value">{counts.fixable}</div>
-                    <div className="label">Lossless fix</div>
-                  </div>
-                  <div className="stat">
-                    <div className="value">{needsTranscode.length}</div>
-                    <div className="label">Need re-encode</div>
-                  </div>
+                  {STATUS_TILES.map((tile) => {
+                    const on = status === tile.key
+                    return (
+                      <button
+                        key={tile.key}
+                        className={`stat${tile.tone ? ` ${tile.tone}` : ''}`}
+                        aria-pressed={on}
+                        title={on ? 'Show all files again' : tile.hint}
+                        onClick={() => setStatus(on ? undefined : tile.key)}
+                      >
+                        <div className="value">{counts[tile.key]}</div>
+                        <div className="label">
+                          {tile.label}
+                          {on ? <span className="clear-mark"> ×</span> : null}
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
 
                 {needsTranscode.length > 0 ? (
@@ -535,11 +619,33 @@ export default function App(): React.JSX.Element {
                     aria-label="Search files and folders"
                     spellCheck={false}
                   />
-                  {query.trim() && facets.size === 0 ? (
+                  {(query.trim() || status || hidingPassed) && facets.size === 0 ? (
                     <span className="muted nowrap">
                       {visibleResults.length} of {results.length}
                     </span>
                   ) : null}
+                  <span className="spacer" />
+                  <label
+                    className={`toggle${hidePassed ? ' on' : ''}`}
+                    title={
+                      status === 'passed'
+                        ? 'The Passed filter is on, so passed files are showing'
+                        : 'Leave out files that passed every check'
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={hidePassed}
+                      disabled={status === 'passed'}
+                      onChange={(event) => {
+                        setHidePassed(event.target.checked)
+                        writePref('hidePassed', event.target.checked)
+                      }}
+                    />
+                    <span className="switch" aria-hidden="true" />
+                    Hide passed
+                    <span className="count">{counts.passed}</span>
+                  </label>
                 </div>
 
                 <FilterBar
@@ -562,7 +668,9 @@ export default function App(): React.JSX.Element {
                   <div className="empty">
                     {query.trim() && searched.length === 0
                       ? `No file matches “${query.trim()}”.`
-                      : 'No file matches the filters you have on. Clear one to see the rest.'}
+                      : hidingPassed && !status && facets.size === 0
+                        ? 'Every file here passed. Turn off Hide passed to see them.'
+                        : 'No file matches the filters you have on. Clear one to see the rest.'}
                   </div>
                 ) : null}
 
@@ -591,6 +699,7 @@ export default function App(): React.JSX.Element {
                   }
                   onRepair={(paths, mode) => void repair(paths, mode)}
                   onReveal={(path) => void window.plexfixer.shell.reveal(path)}
+                  onContextMenu={(path) => void window.plexfixer.shell.fileMenu(path)}
                   onRefresh={(path) => void refreshFile(path)}
                   refreshing={refreshing}
                 />

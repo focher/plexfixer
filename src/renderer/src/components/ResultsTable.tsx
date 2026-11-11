@@ -6,7 +6,7 @@ import { formatAgo, parentDirectory, shortenPath } from '../format.js'
 import { BoltIcon, RefreshIcon, WrenchIcon } from './icons.js'
 
 const VERDICT_LABEL: Record<AnalysisResult['verdict'], string> = {
-  ok: 'ready',
+  ok: 'passed',
   warn: 'warning',
   fail: 'blocked',
   error: 'error'
@@ -44,6 +44,8 @@ export interface ResultsTableProps {
   onToggleAll: () => void
   onRepair: (paths: string[], mode: RepairMode) => void
   onReveal: (path: string) => void
+  /** Right-click on a row. */
+  onContextMenu: (path: string) => void
   /** Re-analyse one file without rebuilding the whole table. */
   onRefresh: (path: string) => void
   /** Paths with a refresh in flight. */
@@ -98,7 +100,20 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
 
         return (
           <div key={path}>
-            <div className="row">
+            <div
+              className="row"
+              onClick={(event) => {
+                // Controls in the row do their own thing, and a drag to select
+                // a file name should not toggle the row open.
+                if ((event.target as HTMLElement).closest('button, input, select, a, label')) return
+                if (window.getSelection()?.toString()) return
+                toggleExpanded(path)
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                props.onContextMenu(path)
+              }}
+            >
               <input
                 type="checkbox"
                 checked={props.selected.has(path)}
@@ -121,11 +136,9 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 <span className="reason-text">{reason.headline}</span>
                 <span className="reason-note">
                   <span className={`badge ${REASON_TONE[reason.tone]}`}>{reason.outcome}</span>
-                  {reason.others > 0 ? (
-                    <button className="more" onClick={() => toggleExpanded(path)}>
-                      +{reason.others} more
-                    </button>
-                  ) : null}
+                  <button className="more" onClick={() => toggleExpanded(path)} aria-expanded={open}>
+                    {open ? 'hide' : reason.others > 0 ? `+${reason.others} more` : 'details'}
+                  </button>
                 </span>
               </span>
               <span className="plan">

@@ -66,7 +66,9 @@ const api = {
     }
   },
   shell: {
-    reveal: (path: string): Promise<void> => ipcRenderer.invoke(IPC.revealPath, path)
+    reveal: (path: string): Promise<void> => ipcRenderer.invoke(IPC.revealPath, path),
+    /** Pop up the native right-click menu for a file (reveal, copy path). */
+    fileMenu: (path: string): Promise<void> => ipcRenderer.invoke(IPC.fileContextMenu, path)
   },
   app: {
     /** Paths the app was launched with (command line, Finder, Dock drop). */

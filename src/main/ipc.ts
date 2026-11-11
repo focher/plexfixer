@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { access, stat } from 'node:fs/promises'
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, Menu, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
   AnalysisResult,
   AppSettings,
@@ -209,6 +209,22 @@ export function registerIpcHandlers(): void {
     shell.showItemInFolder(path)
   })
 
+  // The right-click menu on a library row. Native rather than drawn in HTML so
+  // it looks and behaves like every other context menu on the platform.
+  ipcMain.handle(IPC.fileContextMenu, async (event, path: string): Promise<void> => {
+    if (typeof path !== 'string' || path.length === 0) return
+    const revealLabel =
+      process.platform === 'darwin'
+        ? 'Reveal in Finder'
+        : process.platform === 'win32'
+          ? 'Show in File Explorer'
+          : 'Show in Folder'
+    Menu.buildFromTemplate([
+      { label: revealLabel, click: () => shell.showItemInFolder(path) },
+      { label: 'Copy Path', click: () => clipboard.writeText(path) }
+    ]).popup({ window: BrowserWindow.fromWebContents(event.sender) ?? undefined })
+  })
+
   // Paths the app was launched with, consumed once by the renderer on startup.
   ipcMain.handle(IPC.initialPaths, async (): Promise<string[]> => takeQueuedPaths())
 }
@@ -246,7 +262,6 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
     send(IPC.scanComplete, {
       scanId,
       inputPaths,
-      results: [],
       errors: [{ path: inputPaths[0] ?? '', message: environment.problem ?? 'FFmpeg is not available.' }],
       foundPaths: [],
       // Nothing was looked at, so nothing in the library should be dropped.
@@ -262,7 +277,6 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
 
   send(IPC.scanProgress, { scanId, processed: 0, total: files.length } satisfies ScanProgressEvent)
 
-  const results: AnalysisResult[] = []
   const errors: ScanError[] = []
 
   // ffprobe is I/O bound and cheap; a small amount of parallelism keeps a
@@ -276,13 +290,14 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
       const index = cursor++
       if (index >= files.length) return
       const filePath = files[index]
+      let result: AnalysisResult | undefined
       try {
         const probed = await probeFile(filePath, { ffprobePath: environment.ffprobePath! })
-        results.push({
+        result = {
           ...analyzeFile(probed, settings),
           scannedAt: Date.now(),
           scanRoot: await scanRootFor(inputPaths, filePath)
-        })
+        }
       } catch (error) {
         errors.push({
           path: filePath,
@@ -294,7 +309,8 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
           scanId,
           processed,
           total: files.length,
-          currentPath: filePath
+          currentPath: filePath,
+          result
         } satisfies ScanProgressEvent)
       }
     }
@@ -302,11 +318,9 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
 
   await Promise.all(Array.from({ length: parallelism }, worker))
 
-  results.sort((a, b) => a.file.path.localeCompare(b.file.path))
   send(IPC.scanComplete, {
     scanId,
     inputPaths,
-    results,
     errors,
     foundPaths: files,
     cancelled: signal.aborted

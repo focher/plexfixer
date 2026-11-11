@@ -23,6 +23,7 @@ export const IPC = {
   jobsCancelAll: 'jobs:cancel-all',
   jobsClear: 'jobs:clear',
   revealPath: 'shell:reveal',
+  fileContextMenu: 'shell:file-context-menu',
   initialPaths: 'app:initial-paths',
   // Events pushed to the renderer
   scanProgress: 'scan:progress',
