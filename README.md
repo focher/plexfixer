@@ -146,10 +146,22 @@ run there, and only the probe output and the progress come back.
 
 PlexFixer shells out to your own `ssh`, so your keys, your `~/.ssh/config`, your
 agent and your `known_hosts` all apply, and the app never sees a credential. It
-also never asks for a password — a prompt on a pipe would simply hang — so
-key-based login has to work on its own (`ssh-copy-id user@host`). Host keys are
-not auto-accepted either: connect once from a terminal so the key is recorded,
-and the connection test says so plainly if you have not.
+never asks for a password — a prompt on a pipe would simply hang — so key-based
+login has to work on its own (`ssh-copy-id user@host`). **Private key** points at
+one key if you would rather not rely on the agent or the default identities;
+with it set, only that key is offered, so a host that refuses it says so at once
+instead of after trying everything else.
+
+The first connection to a host is the question SSH normally asks at a prompt,
+and a batch-mode connection cannot ask it. So the connection test asks instead:
+it fetches the key the host offers, shows you every fingerprint, and writes them
+to `~/.ssh/known_hosts` only when you press **Trust this host** — the same thing
+typing `yes` at an ssh prompt does, with the fingerprint in front of you first.
+
+What it will not do is accept a *changed* key. If there is already an entry for
+that host and the key no longer matches, the test says so and stops: that is
+either a rebuilt machine or something else answering at that address, and only
+you know which. It prints the `ssh-keygen -R` line to run once you are sure.
 
 **Test connection** reports what answered: the platform, both binaries with
 their versions, and every POSIX utility the repair flow shells out to — `ls`,

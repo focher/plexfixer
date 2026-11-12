@@ -46,7 +46,11 @@ const api = {
     /** Test the host in Settings, whether or not remote mode is on yet. */
     check: (): Promise<RemoteCheck> => ipcRenderer.invoke(IPC.remoteCheck),
     /** One directory on the far end; no path means the account's home. */
-    list: (path?: string): Promise<RemoteListing> => ipcRenderer.invoke(IPC.remoteList, path)
+    list: (path?: string): Promise<RemoteListing> => ipcRenderer.invoke(IPC.remoteList, path),
+    /** Record the host's key — the "yes" to SSH's first-connection question — and test again. */
+    trustHost: (): Promise<RemoteCheck> => ipcRenderer.invoke(IPC.remoteTrustHost),
+    /** Pick a private key file; resolves to its path, or undefined if cancelled. */
+    pickKeyFile: (): Promise<string | undefined> => ipcRenderer.invoke(IPC.pickKeyFile)
   },
   dialog: {
     pickPaths: (): Promise<string[]> => ipcRenderer.invoke(IPC.pickPaths),

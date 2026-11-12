@@ -10,6 +10,7 @@
 
 import type { AppSettings, RemoteCheck } from '@shared/types.js'
 import { explainSshFailure, shellQuote, sshRun, type SshTarget } from './ssh.js'
+import { hasKnownHostEntry, offeredFingerprints, resolveTarget } from './hostkey.js'
 
 /**
  * The utilities the remote host calls by name.
@@ -75,32 +76,73 @@ export function parseCheck(host: string, output: string): RemoteCheck {
   return check
 }
 
+/**
+ * Why a host-key failure happened, and whether it is the user's to accept.
+ *
+ * A first connection and a changed key produce nearly the same message from
+ * ssh, and they could not be more different: one is the ordinary first-time
+ * question, the other is the warning the whole mechanism exists to give. The
+ * two are told apart by whether `known_hosts` already has an entry.
+ */
+async function describeHostKeyFailure(target: SshTarget, stderr: string): Promise<Partial<RemoteCheck>> {
+  const changedOutright = stderr.toLowerCase().includes('remote host identification has changed')
+  const resolved = await resolveTarget(target)
+  const known = await hasKnownHostEntry(resolved)
+
+  if (changedOutright || known) {
+    return {
+      hostKeyChanged: true,
+      problem: `The key ${target.host} is offering does not match the one already recorded for it.`,
+      hint:
+        'Either that machine was rebuilt, or something else is answering at that address. PlexFixer will not ' +
+        'accept this for you: once you are sure which it is, remove the old entry with ' +
+        `\`ssh-keygen -R ${resolved.port === 22 ? resolved.hostname : `[${resolved.hostname}]:${resolved.port}`}\` and test again.`
+    }
+  }
+
+  const fingerprints = await offeredFingerprints(target)
+  return {
+    hostKeyUnknown: fingerprints.length > 0,
+    fingerprints,
+    problem: `${target.host} has not been connected to before, so its key is not trusted yet.`,
+    hint:
+      fingerprints.length > 0
+        ? 'Check the fingerprint below against the host, then press Trust this host.'
+        : 'The host did not answer with a key. Check that SSH is running there, and on the port you expect.'
+  }
+}
+
+function failure(target: SshTarget, stderr: string, fallback: string): RemoteCheck {
+  const explained = explainSshFailure(stderr)
+  return {
+    ok: false,
+    host: target.host,
+    missing: [],
+    found: [],
+    problem: explained?.problem ?? stderr.trim().split('\n')[0] ?? fallback,
+    hint: explained?.hint
+  }
+}
+
 export async function checkRemote(target: SshTarget, settings: AppSettings): Promise<RemoteCheck> {
   const script = checkScript(settings.remoteFfmpegPath.trim() || 'ffmpeg', settings.remoteFfprobePath.trim() || 'ffprobe')
+  const isHostKeyProblem = (text: string): boolean => {
+    const lower = text.toLowerCase()
+    return lower.includes('host key verification failed') || lower.includes('remote host identification has changed')
+  }
+
   try {
     const result = await sshRun(target, script, { timeoutMs: 25_000 })
     if (result.code !== 0 && !result.stdout.includes('UTIL')) {
-      const explained = explainSshFailure(result.stderr)
-      return {
-        ok: false,
-        host: target.host,
-        missing: [],
-        found: [],
-        problem: explained?.problem ?? result.stderr.trim().split('\n')[0] ?? `ssh exited with ${result.code}`,
-        hint: explained?.hint
-      }
+      const base = failure(target, result.stderr, `ssh exited with ${result.code}`)
+      return isHostKeyProblem(result.stderr)
+        ? { ...base, ...(await describeHostKeyFailure(target, result.stderr)) }
+        : base
     }
     return parseCheck(target.host, result.stdout)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    const explained = explainSshFailure(message)
-    return {
-      ok: false,
-      host: target.host,
-      missing: [],
-      found: [],
-      problem: explained?.problem ?? message,
-      hint: explained?.hint
-    }
+    const base = failure(target, message, message)
+    return isHostKeyProblem(message) ? { ...base, ...(await describeHostKeyFailure(target, message)) } : base
   }
 }

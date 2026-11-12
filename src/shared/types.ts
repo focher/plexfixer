@@ -403,6 +403,11 @@ export interface AppSettings {
   remoteHost: string
   /** 0 means whatever ssh would use by itself. */
   remotePort: number
+  /**
+   * Private key to authenticate with; blank uses whatever ssh would (your
+   * agent, then the default identities).
+   */
+  remoteKeyPath: string
   /** Remote binaries; blank means look on the remote PATH. */
   remoteFfmpegPath: string
   remoteFfprobePath: string
@@ -641,6 +646,25 @@ export interface RemoteCheck {
   problem?: string
   /** What to do about it, when there is something to do. */
   hint?: string
+  /**
+   * The host is reachable but its key is not in `known_hosts` yet. The
+   * fingerprints below are what it offered; trusting it writes them there.
+   */
+  hostKeyUnknown?: boolean
+  /**
+   * There *is* an entry for this host and it no longer matches. Never
+   * offered as something to accept: this is either a rebuilt machine or
+   * someone else answering at that address, and only the user knows which.
+   */
+  hostKeyChanged?: boolean
+  fingerprints?: HostKeyFingerprint[]
+}
+
+export interface HostKeyFingerprint {
+  /** `ssh-ed25519`, `ssh-rsa`… */
+  type: string
+  /** `SHA256:…`, as `ssh-keygen -l` prints it. */
+  fingerprint: string
 }
 
 /** One entry in the remote file browser. */
