@@ -54,7 +54,8 @@ commentary track — carries the default flag.
 library, which persists between launches. Scanning only reads. Re-scanning a
 folder updates its files and drops the ones that are gone; changing a setting
 re-evaluates the whole library without re-probing anything. A search box
-narrows the list by any part of the path.
+narrows the list by any part of the path. **Clear list** empties the library —
+PlexFixer forgets what it has scanned, and the files themselves are untouched.
 
 Nothing is written until you ask, per file or for the selection:
 

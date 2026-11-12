@@ -59,6 +59,20 @@ export async function loadLibrary(): Promise<LibraryEntry[]> {
   })
 }
 
+/**
+ * Forget every scanned file.
+ *
+ * `clear()` empties the store in one step rather than deleting each key, so a
+ * library of thousands is one transaction either way. Only the record of the
+ * scan goes: nothing here has ever touched the media files themselves.
+ */
+export async function clearLibrary(): Promise<void> {
+  const database = await db()
+  const transaction = database.transaction(STORE, 'readwrite')
+  transaction.objectStore(STORE).clear()
+  await done(transaction)
+}
+
 /** Add or replace entries and delete paths, in one transaction. */
 export async function writeLibrary(put: LibraryEntry[], remove: string[] = []): Promise<void> {
   if (put.length === 0 && remove.length === 0) return

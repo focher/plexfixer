@@ -17,6 +17,7 @@ import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import {
+  clearLibrary as clearStoredLibrary,
   entryFromResult,
   isWithin,
   loadLibrary,
@@ -242,6 +243,26 @@ export default function App(): React.JSX.Element {
     await window.plexfixer.scan.start(paths, scanId)
   }, [])
 
+  /**
+   * Forget every scanned file.
+   *
+   * The filters go with the rows they were narrowing: leaving a status tile or
+   * a chip on an empty library would make the next scan arrive into a list
+   * that is already hiding it. Nothing on disk is touched — this empties
+   * PlexFixer's record of what it has looked at, and a fresh scan rebuilds it.
+   */
+  const clearLibrary = useCallback(async () => {
+    setLibrary(new Map())
+    setSelected(new Set())
+    setStatus(undefined)
+    setFacets(new Set())
+    setQuery('')
+    setScanErrors([])
+    await clearStoredLibrary().catch((error: unknown) =>
+      console.error('Could not clear the library', error)
+    )
+  }, [])
+
   // Scan anything the app was launched with, and anything opened later from
   // Finder or a second launch.
   useEffect(() => {
@@ -301,6 +322,12 @@ export default function App(): React.JSX.Element {
         }
 
         if (response.result) {
+          // A re-probe takes a moment, and nothing stops the list being
+          // cleared meanwhile: Clear list is live during a refresh, which does
+          // not set `scanning`. Writing the row back then would undo the clear
+          // in the table and in IndexedDB, so a file the library no longer
+          // holds is dropped rather than re-added.
+          if (!libraryRef.current.has(path)) return
           const entry = entryFromResult(response.result, libraryRef.current.get(path)?.scanRoot)
           const remove = targetPath !== path ? [path] : []
           setLibrary((previous) => {
@@ -572,6 +599,23 @@ export default function App(): React.JSX.Element {
                     Refresh all
                   </button>
                 )}
+                <button
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `Remove all ${library.size} file${library.size === 1 ? '' : 's'} from the list?\n\n` +
+                          'This clears only what PlexFixer has scanned. Your media files are not touched.'
+                      )
+                    ) {
+                      return
+                    }
+                    void clearLibrary()
+                  }}
+                  disabled={library.size === 0}
+                  title="Forget every scanned file. Your media files are not touched."
+                >
+                  Clear list
+                </button>
                 <button className="primary" onClick={() => void choosePaths()}>
                   Scan…
                 </button>
