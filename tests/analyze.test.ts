@@ -382,3 +382,61 @@ describe('unwanted default subtitles in MP4', () => {
     expect(subtitleDefaultChanges(result).map((c) => c.streamIndex)).toContain(3)
   })
 })
+
+describe('analyzeFile — language tag form per container', () => {
+  const frenchAudio = (raw: string) => mainAudio({ index: 1, language: 'fre', rawLanguage: raw })
+  const englishVideo = video({ language: 'eng', rawLanguage: 'eng' })
+  const languageChanges = (result: ReturnType<typeof analyzeFile>) =>
+    result.plan.trackChanges.filter((c) => c.setLanguage != null)
+
+  it('leaves "fra" alone in an MP4, where it is the correct code', () => {
+    const result = analyzeFile(mp4([englishVideo, frenchAudio('fra')], { faststart: true }), base)
+    expect(codes(result)).not.toContain('language-nonstandard')
+    expect(languageChanges(result)).toEqual([])
+  })
+
+  it('flags "fre" in an MP4 — what earlier repairs wrote — so it can be put right', () => {
+    const result = analyzeFile(mp4([englishVideo, frenchAudio('fre')], { faststart: true }), base)
+    expect(codes(result)).toContain('language-nonstandard')
+    expect(languageChanges(result).map((c) => c.streamIndex)).toEqual([1])
+  })
+
+  it('flags "fra" in a Matroska file, which specifies "fre"', () => {
+    const result = analyzeFile(mkv([englishVideo, frenchAudio('fra')]), base)
+    expect(codes(result)).toContain('language-nonstandard')
+  })
+
+  it('still flags a BCP-47 tag in either container', () => {
+    const tagged = mainAudio({ index: 1, language: 'eng', rawLanguage: 'en-US' })
+    expect(codes(analyzeFile(mp4([englishVideo, tagged], { faststart: true }), base))).toContain('language-nonstandard')
+    expect(codes(analyzeFile(mkv([englishVideo, tagged]), base))).toContain('language-nonstandard')
+  })
+})
+
+describe('analyzeFile — H.264 level above the ceiling', () => {
+  const jackpot = (overrides = {}) =>
+    mp4(
+      [
+        video({ width: 640, height: 480, frameRate: 23.976, level: 42, language: 'eng', ...overrides }),
+        mainAudio({ index: 1, language: 'eng' })
+      ],
+      { faststart: true }
+    )
+
+  it('relabels the level losslessly when the stream fits', () => {
+    const result = analyzeFile(jackpot(), base)
+    const finding = result.findings.find((f) => f.code === 'video-level-too-high')
+    expect(finding?.remedy).toBe('lossless')
+    expect(finding?.detail).toContain('Subler')
+    expect(result.plan.videoLevel).toBe(41)
+    expect(result.plan.strategy).toBe('remux')
+    expect(result.plan.actions.some((a) => a.label.includes('relabel H.264 Level 4.2 as 4.1'))).toBe(true)
+  })
+
+  it('still re-encodes a stream that genuinely needs the higher level', () => {
+    const result = analyzeFile(jackpot({ width: 1920, height: 1080, frameRate: 59.94 }), base)
+    expect(result.findings.find((f) => f.code === 'video-level-too-high')?.remedy).toBe('transcode')
+    expect(result.plan.videoLevel).toBeUndefined()
+    expect(result.plan.strategy).toBe('transcode-video')
+  })
+})

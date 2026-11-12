@@ -279,3 +279,63 @@ describe.runIf(enabled)('integration: embedded cover art', () => {
     expect(await hasFaststart(outputPath)).toBe(true)
   }, 180_000)
 })
+
+describe.runIf(enabled)('integration: language codes', () => {
+  it('writes "fra", not "fre", when a French Matroska track is remuxed into MP4', async () => {
+    const path = await makeFile('french.mkv', [
+      ...SOURCES.slice(0, 8),
+      '-map', '0:v', '-map', '1:a',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-metadata:s:v:0', 'language=eng',
+      '-metadata:s:a:0', 'language=fre',
+      '-disposition:a:0', 'default'
+    ])
+
+    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const result = analyzeFile(file, DEFAULT_SETTINGS)
+    expect(result.plan.targetContainer).toBe('mp4')
+
+    const outputPath = join(workDir, 'french.mp4')
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath })
+    await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 120_000 })
+
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const french = repaired.streams.find((s) => s.kind === 'audio')
+    expect(french?.rawLanguage).toBe('fra')
+
+    // And the repaired MP4 does not ask to be "fixed" back to "fre".
+    const reanalysed = analyzeFile(repaired, DEFAULT_SETTINGS)
+    expect(reanalysed.findings.map((f) => f.code)).not.toContain('language-nonstandard')
+  }, 180_000)
+})
+
+describe.runIf(enabled)('integration: H.264 level relabel', () => {
+  it('relabels a small stream marked Level 4.2 as 4.1 without re-encoding', async () => {
+    const path = await makeFile('level42.mp4', [
+      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=24:duration=2',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
+      '-map', '0:v', '-map', '1:a',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-level', '4.2',
+      '-c:a', 'aac',
+      '-movflags', '+faststart',
+      '-metadata:s:v:0', 'language=eng',
+      '-metadata:s:a:0', 'language=eng',
+      '-disposition:a:0', 'default'
+    ])
+
+    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const result = analyzeFile(file, DEFAULT_SETTINGS)
+    expect(result.plan.videoLevel).toBe(41)
+    expect(result.plan.strategy).toBe('remux')
+
+    const outputPath = join(workDir, 'level41.mp4')
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath })
+    await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 120_000 })
+
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const stream = repaired.streams.find((s) => s.kind === 'video')
+    expect(stream && 'level' in stream ? stream.level : undefined).toBe(41)
+    expect(analyzeFile(repaired, DEFAULT_SETTINGS).findings.map((f) => f.code)).not.toContain('video-level-too-high')
+  }, 180_000)
+})

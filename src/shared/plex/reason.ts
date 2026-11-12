@@ -9,6 +9,7 @@
  */
 
 import type { AnalysisResult, Finding, Severity } from '../types.js'
+import { blockingFindings } from './blocked.js'
 
 const SEVERITY_RANK: Record<Severity, number> = { blocker: 0, warning: 1, info: 2 }
 
@@ -72,11 +73,11 @@ export function summarizeReason(result: AnalysisResult): ReasonSummary {
     }
   }
 
-  // Only an unresolved *blocker or warning* means the user has a decision to
-  // make. Plenty of unresolved findings are info-level notes about a choice the
-  // plan already made on purpose — "the container stays MKV because a lossless
-  // audio track cannot live in MP4" is not a file anyone has to go and fix.
-  const blocking = plan.unresolved.filter((finding) => finding.severity !== 'info')
+  // The same rule as the Status column (see `needsYou`). Info notes are choices
+  // the plan made on purpose — "the container stays MKV because a lossless
+  // audio track cannot live in MP4" — and a warning only a re-encode would
+  // clear is advisory; neither is a file anyone has to go and fix.
+  const blocking = blockingFindings(result)
 
   const tone: ReasonTone =
     blocking.length > 0

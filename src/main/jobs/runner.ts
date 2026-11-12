@@ -33,6 +33,7 @@ import {
 } from './output.js'
 import { TaskQueue } from './queue.js'
 import { REFUSAL_REASON, inPlaceVerdict } from '@shared/plex/inplace.js'
+import { languageForContainer, sameLanguage } from '@shared/languages.js'
 import { applyPatches, packLanguage, readMp4Tracks, revertPatches, type BytePatch } from './mp4-patch.js'
 
 export interface RunnerBinaries {
@@ -353,7 +354,10 @@ export class RepairRunner {
       }
 
       if (change.setLanguage != null) {
-        const packed = packLanguage(change.setLanguage)
+        // The plan holds the canonical ISO 639-2/B code; `mdhd` wants /T
+        // ("fra", not "fre"), which is what MP4 players read.
+        const written = languageForContainer(change.setLanguage, 'mp4')
+        const packed = packLanguage(written)
         const currentPacked = packLanguage(track.language)
         if (packed == null || currentPacked == null) {
           this.slowPath(id, `a language tag ("${track.language}" or "${change.setLanguage}") is not three letters`)
@@ -368,7 +372,7 @@ export class RepairRunner {
             offset: track.languageOffset,
             expected,
             replacement,
-            description: `stream ${change.streamIndex}: language ${track.language} -> ${change.setLanguage}`
+            description: `stream ${change.streamIndex}: language ${track.language} -> ${written}`
           })
         }
       }
@@ -432,7 +436,8 @@ export class RepairRunner {
       const wrong = verdict.changes.filter((change) => {
         const stream = probed.streams.find((s) => s.index === change.streamIndex)
         if (!stream) return true
-        if (change.setLanguage != null && stream.language?.toLowerCase() !== change.setLanguage.toLowerCase()) return true
+        // ffprobe reports the stored /T code; the plan holds /B. Same language.
+        if (change.setLanguage != null && !sameLanguage(stream.language, change.setLanguage)) return true
         if (change.setDefault != null && stream.disposition.default !== change.setDefault) return true
         return false
       })

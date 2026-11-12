@@ -274,6 +274,11 @@ export interface RepairPlan {
   faststart: boolean
   /** Retag the video stream (e.g. HEVC as `hvc1` for Apple clients). */
   videoCodecTag?: string
+  /**
+   * Relabel the H.264 level (e.g. 41) without re-encoding, when the stream's
+   * label is too high but its demands fit. Only set when the video is copied.
+   */
+  videoLevel?: number
   /** Findings this plan does not address. */
   unresolved: Finding[]
   /** True when a safe (lossless) plan cannot fix every blocker. */

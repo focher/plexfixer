@@ -25,13 +25,13 @@ const defaultAudioOnly = () =>
   )
 
 describe('inPlaceVerdict — what it allows', () => {
-  it('allows a language rewrite', () => {
+  it('allows retagging an MP4 that holds the bibliographic code ("fre" for "fra")', () => {
     const result = analyze(
       mp4(
         [
           video({ index: 0, language: 'eng' }),
           mainAudio({ index: 1, language: 'eng' }),
-          subtitle({ index: 2, codec: 'mov_text', language: 'fre', rawLanguage: 'fra' })
+          subtitle({ index: 2, codec: 'mov_text', language: 'fre', rawLanguage: 'fre' })
         ],
         { faststart: true }
       )
@@ -77,7 +77,7 @@ describe('inPlaceVerdict — what it refuses', () => {
         [
           video({ index: 0, language: 'eng' }),
           mainAudio({ index: 1, language: 'eng' }),
-          subtitle({ index: 2, codec: 'mov_text', language: 'fre', rawLanguage: 'fra' })
+          subtitle({ index: 2, codec: 'mov_text', language: 'fre', rawLanguage: 'fre' })
         ],
         { faststart: false }
       )
@@ -106,7 +106,7 @@ describe('inPlaceVerdict — what it refuses', () => {
         [
           video({ index: 0, language: 'eng' }),
           mainAudio({ index: 1, language: 'eng' }),
-          subtitle({ index: 2, codec: 'hdmv_pgs_subtitle', language: 'fre', rawLanguage: 'fra' })
+          subtitle({ index: 2, codec: 'hdmv_pgs_subtitle', language: 'fre', rawLanguage: 'fre' })
         ],
         { faststart: true }
       )
@@ -137,3 +137,17 @@ describe('inPlaceVerdict — what it refuses', () => {
     expect(inPlaceVerdict(result).changes).toBeUndefined()
   })
 })
+
+describe('inPlaceVerdict — level relabels', () => {
+  it('leaves an H.264 level change to ffmpeg', () => {
+    const result = analyze(
+      mp4(
+        [video({ index: 0, width: 640, height: 480, level: 42, language: 'eng' }), mainAudio({ index: 1, language: 'eng' })],
+        { faststart: true }
+      )
+    )
+    expect(result.plan.videoLevel).toBe(41)
+    expect(inPlaceVerdict(result).refusal).toBe('changes-the-level')
+  })
+})
+

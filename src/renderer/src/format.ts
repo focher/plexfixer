@@ -1,17 +1,5 @@
 /** Display helpers shared across the UI. */
 
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '—'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = bytes
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit++
-  }
-  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
-}
-
 export function formatDuration(seconds: number | undefined): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return '—'
   const total = Math.round(seconds)
@@ -43,3 +31,4 @@ export function parentDirectory(path: string): string {
 }
 
 export { formatAgo } from '@shared/time.js'
+export { formatAudioCodec, formatBytes, formatVideoCodec } from '@shared/display.js'

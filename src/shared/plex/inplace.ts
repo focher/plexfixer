@@ -20,6 +20,7 @@ export type InPlaceRefusal =
   | 'extracts-subtitles'
   | 'moves-the-index'
   | 'changes-the-codec-tag'
+  | 'changes-the-level'
   | 'changes-a-forced-flag'
   | 'nothing-to-do'
 
@@ -41,6 +42,7 @@ export const REFUSAL_REASON: Record<InPlaceRefusal, string> = {
   'moves-the-index': 'the MP4 index is at the end of the file and has to be moved to the front, which rewrites every byte',
   'changes-the-codec-tag': 'the video codec tag is changing, which is left to ffmpeg',
   'changes-a-forced-flag': 'a forced-subtitle flag is changing, which makes the header longer',
+  'changes-the-level': 'the H.264 level is being relabelled, which rewrites the stream itself, not just the header',
   'nothing-to-do': 'there is nothing to change'
 }
 
@@ -80,6 +82,10 @@ export function inPlaceVerdict(result: AnalysisResult): InPlaceVerdict {
       return { refusal: 'changes-the-codec-tag' }
     }
   }
+
+  // The level lives in the SPS, which can repeat inside the stream; rewriting
+  // it is ffmpeg's job, with the usual re-probe before anything is replaced.
+  if (plan.videoLevel != null) return { refusal: 'changes-the-level' }
 
   const changes = plan.trackChanges.filter((change) => !change.drop)
   if (changes.length !== plan.trackChanges.length) return { refusal: 'drops-a-track' }
