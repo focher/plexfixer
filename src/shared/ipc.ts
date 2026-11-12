@@ -30,6 +30,8 @@ export const IPC = {
   initialPaths: 'app:initial-paths',
   about: 'app:about',
   saveText: 'app:save-text',
+  remoteCheck: 'remote:check',
+  remoteList: 'remote:list',
   // Events pushed to the renderer
   scanProgress: 'scan:progress',
   scanComplete: 'scan:complete',

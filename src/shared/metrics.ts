@@ -89,7 +89,12 @@ export function diagnoseMetrics(metrics: JobMetrics | undefined): string[] {
   const promote = phase(metrics, 'promote')
   const total = phase(metrics, 'total')
 
-  if (ffmpeg && metrics.mbPerSecond != null && metrics.mbPerSecond > 0) {
+  // Below this, fixed costs — process start, the re-probe, a rename — dominate
+  // the measurement, and "1 MB/s" says something about a 40 KB file that is
+  // true and useless.
+  const bigEnoughToJudge = (metrics.outputBytes ?? 0) >= 64 * 1024 * 1024
+
+  if (bigEnoughToJudge && ffmpeg && metrics.mbPerSecond != null && metrics.mbPerSecond > 0) {
     const rate = Math.round(metrics.mbPerSecond)
     const remote = metrics.source?.kind === 'network' || metrics.output?.kind === 'network'
     if (remote) {
@@ -128,7 +133,7 @@ export function diagnoseMetrics(metrics: JobMetrics | undefined): string[] {
     )
   }
 
-  if (notes.length === 0 && total && ffmpeg && total.ms > 0) {
+  if (notes.length === 0 && bigEnoughToJudge && total && ffmpeg && total.ms > 0) {
     const share = Math.round((ffmpeg.ms / total.ms) * 100)
     if (share >= 80) {
       notes.push(

@@ -16,6 +16,7 @@ import FilterBar from './components/FilterBar.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
 import AboutDialog from './components/AboutDialog.js'
+import RemoteBrowser from './components/RemoteBrowser.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
@@ -110,6 +111,7 @@ export default function App(): React.JSX.Element {
   const [environment, setEnvironment] = useState<EnvironmentInfo>()
   const [about, setAbout] = useState<AboutInfo>()
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [browsingRemote, setBrowsingRemote] = useState(false)
   // Every file ever scanned, by path; mirrored to IndexedDB.
   const [library, setLibrary] = useState<Map<string, LibraryEntry>>(new Map())
   const [libraryLoaded, setLibraryLoaded] = useState(false)
@@ -301,6 +303,13 @@ export default function App(): React.JSX.Element {
   }, [startScan])
 
   const choosePaths = useCallback(async () => {
+    // The native dialog can only see this machine, so remote mode gets its own
+    // browser — picking a local folder while the work runs elsewhere would
+    // scan a path that does not exist there.
+    if (settingsRef.current?.remoteEnabled) {
+      setBrowsingRemote(true)
+      return
+    }
     const paths = await window.plexfixer.dialog.pickPaths()
     await startScan(paths)
   }, [startScan])
@@ -320,7 +329,18 @@ export default function App(): React.JSX.Element {
     // Verdicts are recomputed from the stored probes against the new settings
     // (see `results`), so nothing needs re-scanning.
     setSettings(await window.plexfixer.settings.update(patch))
-    if ('ffmpegPath' in patch || 'ffprobePath' in patch) {
+    // Anything that changes *which* ffmpeg runs, or where, means the
+    // environment on screen is about to be wrong.
+    const binaryKeys = [
+      'ffmpegPath',
+      'ffprobePath',
+      'remoteEnabled',
+      'remoteHost',
+      'remotePort',
+      'remoteFfmpegPath',
+      'remoteFfprobePath'
+    ] as const
+    if (binaryKeys.some((key) => key in patch)) {
       setEnvironment(await window.plexfixer.environment.refresh())
     }
   }, [])
@@ -499,6 +519,17 @@ export default function App(): React.JSX.Element {
       const paths = Array.from(event.dataTransfer.files)
         .map((file) => window.plexfixer.pathForFile(file))
         .filter(Boolean)
+      // A dropped file is a path on this machine; in remote mode that path
+      // means nothing on the far end, and scanning it would fail file by file.
+      if (settingsRef.current?.remoteEnabled) {
+        setScanErrors(
+          paths.slice(0, 5).map((path) => ({
+            path,
+            message: 'Dropped files are on this machine. Remote mode scans the remote host — use Scan… to browse it.'
+          }))
+        )
+        return
+      }
       await startScan(paths)
     },
     [startScan]
@@ -610,6 +641,19 @@ export default function App(): React.JSX.Element {
             Settings
           </button>
         </div>
+
+        {environment?.remote ? (
+          <span
+            className={`badge ${environment.ready ? 'info' : 'fail'}`}
+            title={
+              environment.ready
+                ? `Scans and repairs run on ${environment.remote.host}${environment.remote.platform ? ` (${environment.remote.platform})` : ''}`
+                : (environment.problem ?? 'The remote host is not usable')
+            }
+          >
+            {environment.remote.host}
+          </span>
+        ) : null}
 
         <span className="spacer" />
 
@@ -975,6 +1019,17 @@ export default function App(): React.JSX.Element {
 
       {aboutOpen ? (
         <AboutDialog about={about} environment={environment} onClose={() => setAboutOpen(false)} />
+      ) : null}
+
+      {browsingRemote ? (
+        <RemoteBrowser
+          host={settings.remoteHost || 'the remote host'}
+          onClose={() => setBrowsingRemote(false)}
+          onScan={(path) => {
+            setBrowsingRemote(false)
+            void startScan([path])
+          }}
+        />
       ) : null}
     </div>
   )

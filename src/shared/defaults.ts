@@ -50,6 +50,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ffmpegPath: '',
   ffprobePath: '',
 
+  // Off until a host is set: everything runs on this machine, as it always has.
+  remoteEnabled: false,
+  remoteHost: '',
+  remotePort: 0,
+  remoteFfmpegPath: '',
+  remoteFfprobePath: '',
+
   mediaExtensions: ['mkv', 'm4v', 'mp4'],
   recursive: true
 }

@@ -6,13 +6,16 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { access, stat, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
   AboutInfo,
   AnalysisResult,
   AppSettings,
+  RemoteCheck,
+  RemoteEntry,
+  RemoteListing,
   Job,
   MediaFile,
   ModeOverrides,
@@ -26,10 +29,11 @@ import type {
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { IPC } from '@shared/ipc.js'
 import { probeFile, ProbeError } from './ffmpeg/probe.js'
-import { collectMediaFiles } from './scan/walk.js'
 import { getModeOverrides, getSettings, resetSettings, setModeOverride, updateSettings } from './settings.js'
 import { repairModeFor } from '@shared/mode.js'
 import { invalidateEnvironment, resolveEnvironment, type Environment } from './environment.js'
+import { hostFor, remoteHost, remoteTargetFor, type Host } from './host.js'
+import { checkRemote } from './remote/check.js'
 import { RepairRunner } from './jobs/runner.js'
 import { scanRootFor } from './jobs/output.js'
 import { takeQueuedPaths } from './openPaths.js'
@@ -53,11 +57,15 @@ async function ensureRunner(settings: AppSettings, environment: Environment): Pr
     throw new Error(environment.problem ?? 'FFmpeg is not available.')
   }
   const binaries = { ffmpegPath: environment.ffmpegPath, ffprobePath: environment.ffprobePath }
+  const host = hostFor(settings)
   if (!runner) {
-    runner = new RepairRunner(binaries, settings.concurrency, (job: Job) => send(IPC.jobUpdate, job))
+    runner = new RepairRunner(binaries, settings.concurrency, (job: Job) => send(IPC.jobUpdate, job), host)
   } else {
     runner.setBinaries(binaries)
     runner.setConcurrency(settings.concurrency)
+    // The host can change between repairs: remote mode is a setting, and the
+    // queue outlives it.
+    runner.setHost(host)
   }
   return runner
 }
@@ -156,15 +164,14 @@ export function registerIpcHandlers(): void {
     if (!environment.ready || !environment.ffprobePath) {
       return { error: environment.problem ?? 'ffprobe is not available' }
     }
-    try {
-      await access(filePath)
-    } catch {
+    const host = hostFor(settings)
+    if (!(await host.exists(filePath))) {
       // An in-place repair that changed container renames the file, so the path
       // the row was built from no longer exists. Say so rather than erroring.
       return { missing: true }
     }
     try {
-      const probed = await probeFile(filePath, { ffprobePath: environment.ffprobePath })
+      const probed = await probeFile(filePath, { ffprobePath: environment.ffprobePath, host })
       // The renderer keeps the row's scan root; it is not known here.
       return { result: { ...analyzeFile(probed, settings), scannedAt: Date.now() } }
     } catch (error) {
@@ -197,7 +204,7 @@ export function registerIpcHandlers(): void {
 
     const jobs: Job[] = []
     for (const request of requests) {
-      const file = await currentProbe(request.file, environment)
+      const file = await currentProbe(request.file, environment, hostFor(settings))
       if (!file) continue
       // Analysed now, with today's settings, so the plan matches what the
       // table shows rather than whatever was true when the file was scanned.
@@ -254,6 +261,62 @@ export function registerIpcHandlers(): void {
   // this: the renderer has no Node and no `app`, by design.
   ipcMain.handle(IPC.about, async (): Promise<AboutInfo> => aboutInfo())
 
+  /* --- the machine that holds the files ---------------------------------- */
+
+  // Tested with whatever is typed in, enabled or not: the point of the button
+  // is to find out before committing to it.
+  ipcMain.handle(IPC.remoteCheck, async (): Promise<RemoteCheck> => {
+    const settings = await getSettings()
+    const target = remoteTargetFor({ ...settings, remoteEnabled: true })
+    if (!target) {
+      return { ok: false, host: '', missing: [], found: [], problem: 'Enter the host to connect to first.' }
+    }
+    const check = await checkRemote(target, settings)
+    // A successful test should take effect without a restart.
+    if (check.ok) invalidateEnvironment()
+    return check
+  })
+
+  ipcMain.handle(IPC.remoteList, async (_event, path?: string): Promise<RemoteListing> => {
+    const settings = await getSettings()
+    const target = remoteTargetFor({ ...settings, remoteEnabled: true })
+    if (!target) return { path: '/', entries: [], problem: 'Enter the host to connect to first.' }
+    const host = remoteHost(target)
+
+    let directory = typeof path === 'string' ? path.trim() : ''
+    try {
+      // No path means "wherever this account starts", which is the useful
+      // place to begin looking for a library.
+      if (!directory) directory = (await host.exec('sh', ['-c', 'echo \"$HOME\"'])).trim() || '/'
+      const extensions = new Set(settings.mediaExtensions.map((ext) => ext.toLowerCase().replace(/^\./, '')))
+      const entries: RemoteEntry[] = (await host.list(directory))
+        // Dot-entries are PlexFixer's own backups, caches and system clutter;
+        // a library folder is not hidden.
+        .filter((entry) => !entry.name.startsWith('.'))
+        .map((entry) => ({
+          name: entry.name,
+          path: host.paths.join(directory, entry.name),
+          isDirectory: entry.isDirectory,
+          sizeBytes: entry.sizeBytes,
+          isMedia: !entry.isDirectory && extensions.has(host.paths.extname(entry.name).slice(1).toLowerCase())
+        }))
+        .sort((a, b) =>
+          a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1
+        )
+      return {
+        path: directory,
+        parent: directory === '/' ? undefined : host.paths.dirname(directory),
+        entries
+      }
+    } catch (error) {
+      return {
+        path: directory || '/',
+        entries: [],
+        problem: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
   // Save a report the user asked for. The renderer can compose text but cannot
   // write a file, and a diagnostics bundle is usually too long to paste.
   ipcMain.handle(
@@ -307,14 +370,20 @@ function aboutInfo(): AboutInfo {
  * A repair planned from a stale probe could map streams that no longer exist,
  * and the library may hold scans from weeks ago.
  */
-async function currentProbe(stored: MediaFile, environment: Environment): Promise<MediaFile | undefined> {
+async function currentProbe(
+  stored: MediaFile,
+  environment: Environment,
+  host: Host
+): Promise<MediaFile | undefined> {
   if (!stored || typeof stored.path !== 'string') return undefined
-  const info = await stat(stored.path).catch(() => undefined)
-  if (!info?.isFile()) return undefined
-  if (stored.modifiedMs != null && info.mtimeMs === stored.modifiedMs && info.size === stored.sizeBytes) return stored
+  const info = await host.stat(stored.path)
+  if (!info || info.isDirectory) return undefined
+  if (stored.modifiedMs != null && info.modifiedMs === stored.modifiedMs && info.sizeBytes === stored.sizeBytes) {
+    return stored
+  }
   if (!environment.ffprobePath) return undefined
   try {
-    return await probeFile(stored.path, { ffprobePath: environment.ffprobePath })
+    return await probeFile(stored.path, { ffprobePath: environment.ffprobePath, host })
   } catch {
     return undefined
   }
@@ -336,10 +405,8 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
     return
   }
 
-  const files = await collectMediaFiles(inputPaths, {
-    extensions: settings.mediaExtensions,
-    recursive: settings.recursive
-  })
+  const host = hostFor(settings)
+  const files = await host.findMedia(inputPaths, settings.mediaExtensions, settings.recursive)
 
   send(IPC.scanProgress, { scanId, processed: 0, total: files.length } satisfies ScanProgressEvent)
 
@@ -358,11 +425,11 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
       const filePath = files[index]
       let result: AnalysisResult | undefined
       try {
-        const probed = await probeFile(filePath, { ffprobePath: environment.ffprobePath! })
+        const probed = await probeFile(filePath, { ffprobePath: environment.ffprobePath!, host })
         result = {
           ...analyzeFile(probed, settings),
           scannedAt: Date.now(),
-          scanRoot: await scanRootFor(inputPaths, filePath)
+          scanRoot: await scanRootFor(inputPaths, filePath, host)
         }
       } catch (error) {
         errors.push({

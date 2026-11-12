@@ -136,6 +136,37 @@ folder settings live in. **Copy details** puts the same lines on the clipboard, 
 is what a useful bug report starts with; the version now appears in the per-file and
 per-job diagnostic reports too.
 
+## Running it on the machine that holds the files
+
+A remux copies every byte of the file. Across a mounted share that is two
+network trips per byte — in to this machine and straight back out — so a repair
+that takes seconds on the server can take many minutes over the mount. Settings
+→ **Remote host** moves the work to where the disk is: `ffprobe` and `ffmpeg`
+run there, and only the probe output and the progress come back.
+
+PlexFixer shells out to your own `ssh`, so your keys, your `~/.ssh/config`, your
+agent and your `known_hosts` all apply, and the app never sees a credential. It
+also never asks for a password — a prompt on a pipe would simply hang — so
+key-based login has to work on its own (`ssh-copy-id user@host`). Host keys are
+not auto-accepted either: connect once from a terminal so the key is recorded,
+and the connection test says so plainly if you have not.
+
+**Test connection** reports what answered: the platform, both binaries with
+their versions, and every POSIX utility the repair flow shells out to — `ls`,
+`find`, `stat`, `df`, `mkdir`, `mv`, `rm`, `tail`, `head`, `base64` and `pkill`.
+A missing one is named rather than discovered half way through a repair.
+
+With it on, **Scan…** opens a browser for the *remote* filesystem — the native
+dialog can only see this machine — and everything downstream behaves as it
+always has: the same analysis, the same plans, the same temporary-file,
+re-probe, back-up and promote dance, all happening on the far end. The encoders
+reported are the remote machine's, confirmed by test encodes there, so a
+force transcode uses the NAS's NVENC rather than this laptop's idea of it.
+
+Two limits worth knowing: the remote host must be POSIX (Linux, macOS, BSD —
+not Windows), and the in-place header edit, which rewrites a few bytes rather
+than the file, only runs locally; a remote repair always rewrites the file.
+
 ## Measuring a repair
 
 Every repair records what each stage cost: the check for an in-place edit,
@@ -279,6 +310,8 @@ src/
   main/             Electron main process
     ffmpeg/         Binary discovery, ffprobe parsing, ffmpeg execution
     jobs/           Command building, output placement, queue, runner
+    remote/         The ssh transport and the connection check
+    host.ts         Local or remote: where files live and binaries run
     scan/           Filesystem walking
   preload/          The renderer's only bridge to the main process
   renderer/         React UI

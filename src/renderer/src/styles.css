@@ -1429,3 +1429,128 @@ button.expander:hover:not(:disabled) {
     grid-template-columns: 84px 1fr 170px 78px;
   }
 }
+
+/* ---------- remote host ---------- */
+
+.remote-check {
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  border-radius: 0 8px 8px 0;
+  background: var(--bg-sunken);
+  padding: 10px 14px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.remote-check.ok {
+  border-left-color: var(--ok);
+}
+
+.remote-check.bad {
+  border-left-color: var(--fail);
+}
+
+.remote-check .title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.remote-check .detail-text {
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.remote-check .hint-line {
+  color: var(--accent);
+}
+
+/* ---------- the remote file browser ---------- */
+
+.dialog.browser {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(80vh, 760px);
+}
+
+.browser-path {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+
+.browser-path input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.browser-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+  min-height: 220px;
+}
+
+.browser-row {
+  display: grid;
+  grid-template-columns: 20px 1fr 90px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+button.browser-row:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: transparent;
+  border-bottom-color: var(--border);
+  color: var(--text);
+}
+
+.browser-row.folder {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.browser-row.media .browser-name {
+  color: var(--text);
+}
+
+.browser-row .icon {
+  color: var(--accent);
+  font-size: 10px;
+  text-align: center;
+}
+
+.browser-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.browser-actions .spacer {
+  flex: 1 1 auto;
+}

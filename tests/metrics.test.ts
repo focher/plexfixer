@@ -76,6 +76,22 @@ describe('diagnoseMetrics', () => {
     expect(notes.some((note) => note.includes('crossed volumes'))).toBe(true)
   })
 
+  it('says nothing about throughput for a file too small to judge it by', () => {
+    // 40 KB in 200ms is 0.2 MB/s, and it means nothing: it is process startup.
+    const tiny = {
+      ...base,
+      sourceBytes: 41_000,
+      outputBytes: 41_000,
+      mbPerSecond: 0.2,
+      phases: [
+        { phase: 'ffmpeg' as const, ms: 45 },
+        { phase: 'verify' as const, ms: 76 },
+        { phase: 'total' as const, ms: 198 }
+      ]
+    }
+    expect(diagnoseMetrics(tiny)).toEqual([])
+  })
+
   it('falls back to saying the time was ffmpeg, when nothing else stands out', () => {
     const notes = diagnoseMetrics(base)
     expect(notes).toHaveLength(1)

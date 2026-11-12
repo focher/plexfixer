@@ -6,8 +6,8 @@
  * successfully. A failed or cancelled job leaves the original untouched.
  */
 
-import { open, stat } from 'node:fs/promises'
-import { basename, dirname, extname, join } from 'node:path'
+import { open } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
   AnalysisResult,
@@ -19,7 +19,7 @@ import type {
   JobPhase,
   RepairMode
 } from '@shared/types.js'
-import { describeVolume } from '../volumes.js'
+import { localHost, type Host } from '../host.js'
 import { FfmpegError, runFfmpeg } from '../ffmpeg/run.js'
 import { probeFile } from '../ffmpeg/probe.js'
 import { buildRepairCommand, buildSubtitleExtractCommands } from './command.js'
@@ -56,13 +56,19 @@ export class RepairRunner {
   constructor(
     private binaries: RunnerBinaries,
     concurrency: number,
-    private readonly onUpdate: JobListener
+    private readonly onUpdate: JobListener,
+    /** The machine the files are on; this one unless remote mode is set. */
+    private host: Host = localHost()
   ) {
     this.queue = new TaskQueue(concurrency)
   }
 
   setBinaries(binaries: RunnerBinaries): void {
     this.binaries = binaries
+  }
+
+  setHost(host: Host): void {
+    this.host = host
   }
 
   setConcurrency(value: number): void {
@@ -181,7 +187,7 @@ export class RepairRunner {
   /** Where the source and the destination live, and whether that is one volume. */
   private async recordVolumes(id: string, sourcePath: string, outputPath: string): Promise<void> {
     try {
-      const [source, output] = await Promise.all([describeVolume(sourcePath), describeVolume(outputPath)])
+      const [source, output] = await Promise.all([this.host.volume(sourcePath), this.host.volume(outputPath)])
       const sameVolume =
         source.device != null && output.device != null ? source.device === output.device : undefined
       this.mergeMetrics(id, { source, output, sameVolume })
@@ -200,7 +206,7 @@ export class RepairRunner {
   enqueue(options: EnqueueOptions): Job {
     const { result, settings, mode, scanRoot } = options
     const id = randomUUID()
-    const outputPath = resolveOutputPath(result.file.path, result.plan.targetContainer, settings, scanRoot)
+    const outputPath = resolveOutputPath(result.file.path, result.plan.targetContainer, settings, scanRoot, this.host)
 
     const base: Job = {
       id,
@@ -292,6 +298,13 @@ export class RepairRunner {
    */
   private async tryInPlace(id: string, options: EnqueueOptions, outputPath: string): Promise<boolean> {
     const { result, settings } = options
+    if (this.host.kind === 'remote') {
+      this.slowPath(
+        id,
+        `the file is on ${this.host.label}, and the header edit writes bytes directly — only a full rewrite is run remotely`
+      )
+      return false
+    }
     if (settings.outputPlacement !== 'in-place' || outputPath !== result.file.path) {
       this.slowPath(id, 'the repaired file is being written somewhere else, not over the original')
       return false
@@ -462,7 +475,7 @@ export class RepairRunner {
     const checkMs = performance.now() - checkStarted
 
     const { args, encoderLabel } = buildRepairCommand({ result, settings, caps, outputPath })
-    const temporaryPath = temporaryPathFor(outputPath)
+    const temporaryPath = temporaryPathFor(outputPath, this.host)
     const finalArgs = redirectOutput(args, outputPath, temporaryPath)
 
     // Progress milestones, so a long copy leaves a trail in the log.
@@ -506,6 +519,11 @@ export class RepairRunner {
         durationSeconds: result.file.durationSeconds,
         expectedBytes: result.file.sizeBytes,
         signal,
+        spawn: (command, commandArgs) => this.host.spawn(command, commandArgs),
+        // Closing the ssh connection does not reliably stop ffmpeg on the far
+        // end; the temporary path is unique to this job, so the host can find
+        // and stop exactly that process.
+        onAbort: () => void this.host.kill(temporaryPath),
         onProgress: (progress) => {
           const job = this.jobs.get(id)
           if (!job || job.state !== 'running') return
@@ -556,9 +574,7 @@ export class RepairRunner {
       if (signal.aborted) throw new Error('Cancelled')
       this.log(id, 'info', 'ffmpeg finished cleanly')
 
-      const outputBytes = await stat(temporaryPath)
-        .then((info) => info.size)
-        .catch(() => undefined)
+      const outputBytes = (await this.host.stat(temporaryPath))?.sizeBytes
       this.addPhase(id, 'ffmpeg', ffmpegMs, { bytes: outputBytes })
       this.mergeMetrics(id, {
         outputBytes,
@@ -581,7 +597,11 @@ export class RepairRunner {
       // Confirm the output is a readable media file with the streams we asked
       // for. ffmpeg can exit 0 having produced something unplayable.
       const verifyStarted = performance.now()
-      const probed = await probeFile(temporaryPath, { ffprobePath: this.binaries.ffprobePath, includeSidecars: false })
+      const probed = await probeFile(temporaryPath, {
+        ffprobePath: this.binaries.ffprobePath,
+        includeSidecars: false,
+        host: this.host
+      })
       this.addPhase(id, 'verify', performance.now() - verifyStarted)
       const hasVideo = probed.streams.some((s) => s.kind === 'video')
       const hasAudio = probed.streams.some((s) => s.kind === 'audio')
@@ -596,7 +616,8 @@ export class RepairRunner {
         temporaryPath,
         outputPath,
         result.file.path,
-        settings
+        settings,
+        this.host
       )
       this.addPhase(id, 'promote', performance.now() - promoteStarted, {
         bytes: outputBytes,
@@ -644,7 +665,7 @@ export class RepairRunner {
         })
       }
     } catch (error) {
-      await discardTemporary(temporaryPath)
+      await discardTemporary(temporaryPath, this.host)
       const running = this.jobs.get(id)
       if (!running) return
       const cancelled = signal.aborted
@@ -681,13 +702,19 @@ export class RepairRunner {
     jobId: string
   ): Promise<number> {
     if (result.plan.extractSubtitles.length === 0) return 0
-    const stem = join(dirname(finalPath), basename(finalPath, extname(finalPath)))
+    const paths = this.host.paths
+    const stem = paths.join(paths.dirname(finalPath), paths.basename(finalPath, paths.extname(finalPath)))
     const commands = buildSubtitleExtractCommands(result, stem)
     let written = 0
     for (const command of commands) {
       if (signal.aborted) break
       try {
-        await runFfmpeg({ ffmpegPath: this.binaries.ffmpegPath, args: command.args, signal })
+        await runFfmpeg({
+          ffmpegPath: this.binaries.ffmpegPath,
+          args: command.args,
+          signal,
+          spawn: (binary, binaryArgs) => this.host.spawn(binary, binaryArgs)
+        })
         written++
         this.log(jobId, 'info', `Wrote sidecar ${basename(command.outputPath)}`)
       } catch (error) {

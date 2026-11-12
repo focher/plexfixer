@@ -7,10 +7,8 @@
  * code can work with a stable shape.
  */
 
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { basename, dirname, extname, join } from 'node:path'
-import { open, readdir, stat } from 'node:fs/promises'
+import { open } from 'node:fs/promises'
+import { localHost, type Host } from '../host.js'
 import type {
   AudioStream,
   ContainerFormat,
@@ -24,8 +22,6 @@ import type {
 } from '@shared/types.js'
 import { normalizeLanguage } from '@shared/languages.js'
 import { bitDepthFromPixFmt, chromaFromPixFmt, isImageSubtitle } from '@shared/plex/rules.js'
-
-const execFileAsync = promisify(execFile)
 
 /* ------------------------------------------------------------------ *
  * Raw ffprobe shapes (only the fields we read)
@@ -161,15 +157,39 @@ function containerOf(formatName: string | undefined, extension: string): Contain
  * either box is seen.
  */
 export async function hasFaststart(filePath: string): Promise<boolean | undefined> {
-  let handle
+  const handle = await open(filePath, 'r').catch(() => undefined)
+  if (!handle) return undefined
   try {
-    handle = await open(filePath, 'r')
-    const header = Buffer.alloc(16)
-    let offset = 0
     const { size } = await handle.stat()
+    return await walkBoxes(size, async (offset, length) => {
+      const buffer = Buffer.alloc(length)
+      const { bytesRead } = await handle.read(buffer, 0, length, offset)
+      return buffer.subarray(0, bytesRead)
+    })
+  } catch {
+    return undefined
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * The same walk, over any way of reading bytes.
+ *
+ * Each box header is 8 or 16 bytes and the next one is a jump away, so this is
+ * a handful of small reads — which is what makes it affordable across a
+ * network as well as on a local disk.
+ */
+async function walkBoxes(
+  size: number,
+  read: (offset: number, length: number) => Promise<Buffer>
+): Promise<boolean | undefined> {
+  try {
+    let offset = 0
 
     for (let box = 0; box < 64 && offset + 8 <= size; box++) {
-      const { bytesRead } = await handle.read(header, 0, 16, offset)
+      const header = await read(offset, 16)
+      const bytesRead = header.length
       if (bytesRead < 8) return undefined
 
       let boxSize = header.readUInt32BE(0)
@@ -198,26 +218,26 @@ export async function hasFaststart(filePath: string): Promise<boolean | undefine
     return undefined
   } catch {
     return undefined
-  } finally {
-    await handle?.close()
   }
 }
 
 /** Sidecar subtitles sitting next to the media file (`Movie.en.srt` etc.). */
 const SIDECAR_EXTENSIONS = new Set(['srt', 'ass', 'ssa', 'vtt', 'sub', 'idx', 'sup'])
 
-async function findSidecarSubtitles(filePath: string): Promise<string[]> {
+async function findSidecarSubtitles(filePath: string, host: Host): Promise<string[]> {
   try {
-    const dir = dirname(filePath)
-    const stem = basename(filePath, extname(filePath)).toLowerCase()
-    const entries = await readdir(dir)
+    const paths = host.paths
+    const dir = paths.dirname(filePath)
+    const stem = paths.basename(filePath, paths.extname(filePath)).toLowerCase()
+    const entries = await host.list(dir)
     return entries
       .filter((entry) => {
-        const ext = extname(entry).slice(1).toLowerCase()
+        if (entry.isDirectory) return false
+        const ext = paths.extname(entry.name).slice(1).toLowerCase()
         if (!SIDECAR_EXTENSIONS.has(ext)) return false
-        return entry.toLowerCase().startsWith(stem)
+        return entry.name.toLowerCase().startsWith(stem)
       })
-      .map((entry) => join(dir, entry))
+      .map((entry) => paths.join(dir, entry.name))
       .sort()
   } catch {
     return []
@@ -327,6 +347,8 @@ export interface ProbeOptions {
   /** Also look for sidecar subtitle files beside the media file. */
   includeSidecars?: boolean
   timeoutMs?: number
+  /** Where the file lives and where ffprobe runs; this machine by default. */
+  host?: Host
 }
 
 export async function probeFile(filePath: string, options: ProbeOptions): Promise<MediaFile> {
@@ -344,12 +366,13 @@ export async function probeFile(filePath: string, options: ProbeOptions): Promis
     filePath
   ]
 
+  const host = options.host ?? localHost()
+
   let raw: RawProbe
   try {
-    const { stdout } = await execFileAsync(options.ffprobePath, args, {
-      maxBuffer: 32 * 1024 * 1024,
-      timeout: options.timeoutMs ?? 120_000,
-      windowsHide: true
+    const stdout = await host.exec(options.ffprobePath, args, {
+      maxBytes: 32 * 1024 * 1024,
+      timeoutMs: options.timeoutMs ?? 120_000
     })
     raw = JSON.parse(stdout) as RawProbe
   } catch (error) {
@@ -361,26 +384,29 @@ export async function probeFile(filePath: string, options: ProbeOptions): Promis
     throw new ProbeError(filePath, 'ffprobe reported no streams — the file may be truncated or not a media file.')
   }
 
-  const extension = extname(filePath).slice(1).toLowerCase()
+  const extension = host.paths.extname(filePath).slice(1).toLowerCase()
   const formatName = raw.format?.format_name ?? ''
   const container = containerOf(formatName, extension)
 
-  const info = await stat(filePath).catch(() => undefined)
-  const sizeBytes = toNumber(raw.format?.size) ?? info?.size ?? 0
+  const info = await host.stat(filePath)
+  const sizeBytes = toNumber(raw.format?.size) ?? info?.sizeBytes ?? 0
 
   return {
     path: filePath,
-    fileName: basename(filePath),
+    fileName: host.paths.basename(filePath),
     extension,
     sizeBytes,
-    modifiedMs: info?.mtimeMs,
+    modifiedMs: info?.modifiedMs,
     container,
     formatName,
     durationSeconds: toNumber(raw.format?.duration),
     bitRate: toNumber(raw.format?.bit_rate),
-    faststart: container === 'mp4' ? await hasFaststart(filePath) : undefined,
+    faststart:
+      container === 'mp4'
+        ? await walkBoxes(sizeBytes, (offset, length) => host.readRange(filePath, offset, length))
+        : undefined,
     streams: raw.streams.map(mapStream),
-    sidecarSubtitles: options.includeSidecars === false ? [] : await findSidecarSubtitles(filePath),
+    sidecarSubtitles: options.includeSidecars === false ? [] : await findSidecarSubtitles(filePath, host),
     tags: raw.format?.tags ?? {}
   }
 }

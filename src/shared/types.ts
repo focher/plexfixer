@@ -392,6 +392,21 @@ export interface AppSettings {
   ffmpegPath: string
   ffprobePath: string
 
+  /**
+   * Run ffprobe and ffmpeg on the machine that holds the files, over SSH.
+   *
+   * A remux copies every byte; across a mounted share that is two network
+   * trips per byte. Running it where the disk is makes it one local copy.
+   */
+  remoteEnabled: boolean
+  /** `user@host`, or a Host alias from the user's ssh config. */
+  remoteHost: string
+  /** 0 means whatever ssh would use by itself. */
+  remotePort: number
+  /** Remote binaries; blank means look on the remote PATH. */
+  remoteFfmpegPath: string
+  remoteFfprobePath: string
+
   /** Extensions treated as media when walking folders. */
   mediaExtensions: string[]
   /** Recurse into subfolders when a folder is scanned. */
@@ -585,7 +600,11 @@ export interface EnvironmentInfo {
   ready: boolean
   /** Why the toolchain is unusable, when `ready` is false. */
   problem?: string
+  /** What to do about `problem`, when there is something to do. */
+  hint?: string
   capabilities?: EncoderCapabilities
+  /** Set when scans and repairs run on another machine over SSH. */
+  remote?: { host: string; platform?: string }
 }
 
 /** What the About panel reports: the build, and the runtime under it. */
@@ -602,6 +621,45 @@ export interface AboutInfo {
   systemVersion: string
   /** The folder holding `settings.json` and the repair-mode overrides. */
   userDataPath: string
+}
+
+/** What a connection test found on the machine that holds the files. */
+export interface RemoteCheck {
+  ok: boolean
+  host: string
+  /** `Linux x86_64`, when it answered. */
+  platform?: string
+  ffmpegPath?: string
+  ffmpegVersion?: string
+  ffprobePath?: string
+  ffprobeVersion?: string
+  /** POSIX utilities the scan and repair need that are not there. */
+  missing: string[]
+  /** The ones that are, so a passing check still shows its working. */
+  found: string[]
+  /** Why the check failed. */
+  problem?: string
+  /** What to do about it, when there is something to do. */
+  hint?: string
+}
+
+/** One entry in the remote file browser. */
+export interface RemoteEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+  sizeBytes?: number
+  /** True for a file PlexFixer would scan. */
+  isMedia?: boolean
+}
+
+export interface RemoteListing {
+  /** The directory that was listed, absolute. */
+  path: string
+  /** The parent, or undefined at the root. */
+  parent?: string
+  entries: RemoteEntry[]
+  problem?: string
 }
 
 export interface EncoderCapabilities {

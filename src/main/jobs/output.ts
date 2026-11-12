@@ -2,9 +2,16 @@
  * Working out where a repaired file should be written.
  */
 
-import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path'
-import { access, mkdir, rename, rm, stat } from 'node:fs/promises'
 import type { AppSettings } from '@shared/types.js'
+import { localHost, type Host } from '../host.js'
+
+/**
+ * Every path here is arithmetic on the *host that holds the file*, which is
+ * not always this machine: a Windows client repairing a library on a Linux
+ * NAS must not build `C:\\`-style paths for it. The host carries both the path
+ * rules and the filesystem operations, and defaults to this machine so the
+ * local case reads exactly as it did.
+ */
 
 export const BACKUP_DIRECTORY = '.plexfixer-backups'
 
@@ -22,9 +29,11 @@ const CONTAINER_EXTENSIONS: Record<'mp4' | 'mkv', string[]> = {
   mkv: ['.mkv']
 }
 
-function extensionFor(sourcePath: string, targetContainer: 'mp4' | 'mkv'): string {
-  const current = extname(sourcePath).toLowerCase()
-  return CONTAINER_EXTENSIONS[targetContainer].includes(current) ? extname(sourcePath) : `.${targetContainer}`
+function extensionFor(sourcePath: string, targetContainer: 'mp4' | 'mkv', host: Host): string {
+  const current = host.paths.extname(sourcePath).toLowerCase()
+  return CONTAINER_EXTENSIONS[targetContainer].includes(current)
+    ? host.paths.extname(sourcePath)
+    : `.${targetContainer}`
 }
 
 /** The final destination for a repaired file. */
@@ -33,11 +42,13 @@ export function resolveOutputPath(
   targetContainer: 'mp4' | 'mkv',
   settings: AppSettings,
   /** Root the source was scanned from, used to mirror the tree in output-dir mode. */
-  scanRoot?: string
+  scanRoot?: string,
+  host: Host = localHost()
 ): string {
+  const { join, dirname, basename, extname, isAbsolute, relative } = host.paths
   const dir = dirname(sourcePath)
   const stem = basename(sourcePath, extname(sourcePath))
-  const extension = extensionFor(sourcePath, targetContainer)
+  const extension = extensionFor(sourcePath, targetContainer, host)
 
   switch (settings.outputPlacement) {
     case 'in-place':
@@ -78,30 +89,21 @@ export function redirectOutput(args: string[], outputPath: string, temporaryPath
 }
 
 /** A scratch path beside the destination, so the final rename stays on one volume. */
-export function temporaryPathFor(outputPath: string): string {
-  const dir = dirname(outputPath)
-  const base = basename(outputPath)
-  return join(dir, `.plexfixer-${process.pid}-${base}`)
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
-  }
+export function temporaryPathFor(outputPath: string, host: Host = localHost()): string {
+  const dir = host.paths.dirname(outputPath)
+  const base = host.paths.basename(outputPath)
+  return host.paths.join(dir, `.plexfixer-${process.pid}-${base}`)
 }
 
 /** Append " (2)", " (3)" … until the path is free. */
-export async function uniquePath(path: string): Promise<string> {
-  if (!(await exists(path))) return path
-  const dir = dirname(path)
-  const ext = extname(path)
-  const stem = basename(path, ext)
+export async function uniquePath(path: string, host: Host = localHost()): Promise<string> {
+  if (!(await host.exists(path))) return path
+  const dir = host.paths.dirname(path)
+  const ext = host.paths.extname(path)
+  const stem = host.paths.basename(path, ext)
   for (let counter = 2; counter < 1000; counter++) {
-    const candidate = join(dir, `${stem} (${counter})${ext}`)
-    if (!(await exists(candidate))) return candidate
+    const candidate = host.paths.join(dir, `${stem} (${counter})${ext}`)
+    if (!(await host.exists(candidate))) return candidate
   }
   throw new Error(`Could not find a free filename near ${path}`)
 }
@@ -111,12 +113,16 @@ export async function uniquePath(path: string): Promise<string> {
  *
  * Returns the backup path, or `undefined` when backups are disabled.
  */
-export async function backupOriginal(sourcePath: string, settings: AppSettings): Promise<string | undefined> {
+export async function backupOriginal(
+  sourcePath: string,
+  settings: AppSettings,
+  host: Host = localHost()
+): Promise<string | undefined> {
   if (!settings.keepBackups) return undefined
-  const backupDir = join(dirname(sourcePath), BACKUP_DIRECTORY)
-  await mkdir(backupDir, { recursive: true })
-  const target = await uniquePath(join(backupDir, basename(sourcePath)))
-  await rename(sourcePath, target)
+  const backupDir = host.paths.join(host.paths.dirname(sourcePath), BACKUP_DIRECTORY)
+  await host.mkdirp(backupDir)
+  const target = await uniquePath(host.paths.join(backupDir, host.paths.basename(sourcePath)), host)
+  await host.rename(sourcePath, target)
   return target
 }
 
@@ -131,58 +137,61 @@ export async function promoteOutput(
   temporaryPath: string,
   outputPath: string,
   sourcePath: string,
-  settings: AppSettings
+  settings: AppSettings,
+  host: Host = localHost()
 ): Promise<{ finalPath: string; backupPath?: string }> {
-  await mkdir(dirname(outputPath), { recursive: true })
+  await host.mkdirp(host.paths.dirname(outputPath))
 
   let backupPath: string | undefined
   const replacingOriginal = settings.outputPlacement === 'in-place'
 
   if (replacingOriginal) {
     if (settings.keepBackups) {
-      backupPath = await backupOriginal(sourcePath, settings)
-    } else if (await exists(sourcePath)) {
-      await rm(sourcePath, { force: true })
+      backupPath = await backupOriginal(sourcePath, settings, host)
+    } else if (await host.exists(sourcePath)) {
+      await host.remove(sourcePath)
     }
 
     // A container change means the destination has a different name from the
     // source, so something unrelated can already be sitting there — e.g.
     // repairing `Movie.mkv` when a separate `Movie.mp4` exists. Replacing the
     // original was asked for; destroying its neighbour was not.
-    if (outputPath !== sourcePath && (await exists(outputPath))) {
+    if (outputPath !== sourcePath && (await host.exists(outputPath))) {
       if (settings.keepBackups) {
-        await backupOriginal(outputPath, settings)
+        await backupOriginal(outputPath, settings, host)
       } else {
-        await rm(outputPath, { force: true })
+        await host.remove(outputPath)
       }
     }
   }
 
   // Never clobber an unrelated file that happens to sit at the destination.
-  const finalPath = replacingOriginal ? outputPath : await uniquePath(outputPath)
-  await rename(temporaryPath, finalPath)
+  const finalPath = replacingOriginal ? outputPath : await uniquePath(outputPath, host)
+  await host.rename(temporaryPath, finalPath)
   return { finalPath, backupPath }
 }
 
 /** Remove a partially written temporary file; failures here are not fatal. */
-export async function discardTemporary(temporaryPath: string): Promise<void> {
+export async function discardTemporary(temporaryPath: string, host: Host = localHost()): Promise<void> {
   try {
-    await rm(temporaryPath, { force: true })
+    await host.remove(temporaryPath)
   } catch {
     /* best effort */
   }
 }
 
 /** Common root of the scanned inputs, used to mirror trees in output-dir mode. */
-export async function scanRootFor(inputPaths: string[], filePath: string): Promise<string | undefined> {
+export async function scanRootFor(
+  inputPaths: string[],
+  filePath: string,
+  host: Host = localHost()
+): Promise<string | undefined> {
+  const { sep, dirname } = host.paths
   for (const input of inputPaths) {
-    try {
-      const info = await stat(input)
-      const root = info.isDirectory() ? input : dirname(input)
-      if (filePath === input || filePath.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)) return root
-    } catch {
-      continue
-    }
+    const info = await host.stat(input)
+    if (!info) continue
+    const root = info.isDirectory ? input : dirname(input)
+    if (filePath === input || filePath.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)) return root
   }
   return undefined
 }

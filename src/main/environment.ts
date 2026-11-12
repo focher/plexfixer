@@ -6,6 +6,8 @@
 import type { AppSettings, EnvironmentInfo } from '@shared/types.js'
 import { binaryVersion, locateBinary } from './ffmpeg/locate.js'
 import { detectEncoders } from './ffmpeg/run.js'
+import { hostFor, remoteTargetFor } from './host.js'
+import { checkRemote } from './remote/check.js'
 
 export type Environment = EnvironmentInfo
 
@@ -17,8 +19,25 @@ let cachedKey = ''
  * settings that affect it and only redone when those change.
  */
 export async function resolveEnvironment(settings: AppSettings, force = false): Promise<Environment> {
-  const key = `${settings.ffmpegPath}|${settings.ffprobePath}`
+  const key = [
+    settings.ffmpegPath,
+    settings.ffprobePath,
+    settings.remoteEnabled ? '1' : '0',
+    settings.remoteHost,
+    settings.remotePort,
+    settings.remoteFfmpegPath,
+    settings.remoteFfprobePath
+  ].join('|')
   if (!force && cached && cachedKey === key) return cached
+
+  // Remote mode asks the far end instead: the binaries that matter are the
+  // ones on the machine that will do the work, and so are the encoders.
+  const target = remoteTargetFor(settings)
+  if (target) {
+    cached = await resolveRemoteEnvironment(settings)
+    cachedKey = key
+    return cached
+  }
 
   const ffmpeg = locateBinary('ffmpeg', settings.ffmpegPath || undefined)
   const ffprobe = locateBinary('ffprobe', settings.ffprobePath || undefined)
@@ -67,4 +86,47 @@ export async function resolveEnvironment(settings: AppSettings, force = false): 
 export function invalidateEnvironment(): void {
   cached = undefined
   cachedKey = ''
+}
+
+/** Platform word from `uname -s`, for the encoder capabilities. */
+function platformFrom(unameOutput: string | undefined): NodeJS.Platform | undefined {
+  const first = unameOutput?.split(/\s+/)[0]?.toLowerCase()
+  if (first === 'linux') return 'linux'
+  if (first === 'darwin') return 'darwin'
+  if (first?.startsWith('freebsd')) return 'freebsd'
+  return undefined
+}
+
+async function resolveRemoteEnvironment(settings: AppSettings): Promise<Environment> {
+  const host = hostFor(settings)
+  const target = remoteTargetFor(settings)
+  if (!target) return { ready: false, problem: 'No remote host is set.' }
+
+  const check = await checkRemote(target, settings)
+  if (!check.ok || !check.ffmpegPath || !check.ffprobePath) {
+    return {
+      ready: false,
+      problem: check.problem ?? `Could not use ffmpeg on ${target.host}.`,
+      hint: check.hint,
+      remote: { host: target.host, platform: check.platform }
+    }
+  }
+
+  // The test encodes run on the far end, so what comes back is what that
+  // machine can really do — an NVENC card in the NAS, not in this laptop.
+  const capabilities = await detectEncoders(check.ffmpegPath, {
+    exec: (command, args) => host.exec(command, args, { timeoutMs: 60_000 }),
+    platform: platformFrom(check.platform)
+  })
+
+  return {
+    ready: true,
+    ffmpegPath: check.ffmpegPath,
+    ffprobePath: check.ffprobePath,
+    ffmpegSource: settings.remoteFfmpegPath.trim() ? 'settings' : 'path',
+    ffprobeSource: settings.remoteFfprobePath.trim() ? 'settings' : 'path',
+    ffmpegVersion: check.ffmpegVersion,
+    capabilities,
+    remote: { host: target.host, platform: check.platform }
+  }
 }

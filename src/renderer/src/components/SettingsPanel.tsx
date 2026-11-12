@@ -1,4 +1,5 @@
-import type { AppSettings, EnvironmentInfo, ModeOverrides, RepairMode } from '@shared/types.js'
+import { useCallback, useState } from 'react'
+import type { AppSettings, EnvironmentInfo, ModeOverrides, RemoteCheck, RepairMode } from '@shared/types.js'
 import { languageOptions } from '@shared/languages.js'
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { shortenPath } from '../format.js'
@@ -406,6 +407,8 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         </Field>
       </section>
 
+      <RemoteSection settings={settings} environment={environment} onChange={set} />
+
       <section>
         <h3>FFmpeg</h3>
         <p className="section-hint">
@@ -468,6 +471,152 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
       </section>
 
       <button onClick={props.onReset}>Reset all settings to defaults</button>
+    </div>
+  )
+}
+
+/**
+ * Running the work on the machine that holds the files.
+ *
+ * The test button is the important part of this section: SSH has many ways to
+ * not work, and each of them has a different fix. Rather than a red cross, the
+ * check reports what answered — platform, both binaries with their versions,
+ * and every utility the repair flow shells out to — so "it says no" is never
+ * the whole message.
+ */
+function RemoteSection({
+  settings,
+  environment,
+  onChange
+}: {
+  settings: AppSettings
+  environment?: EnvironmentInfo
+  onChange: (patch: Partial<AppSettings>) => void
+}): React.JSX.Element {
+  const [check, setCheck] = useState<RemoteCheck>()
+  const [testing, setTesting] = useState(false)
+
+  const test = useCallback(async () => {
+    setTesting(true)
+    try {
+      setCheck(await window.plexfixer.remote.check())
+    } catch (error) {
+      setCheck({
+        ok: false,
+        host: settings.remoteHost,
+        missing: [],
+        found: [],
+        problem: error instanceof Error ? error.message : String(error)
+      })
+    } finally {
+      setTesting(false)
+    }
+  }, [settings.remoteHost])
+
+  return (
+    <section>
+      <h3>Remote host</h3>
+      <p className="section-hint">
+        Run ffprobe and ffmpeg on the machine that holds the files, over SSH. A remux copies every byte: across a
+        mounted share that is two network trips per byte, and on the machine itself it is one local copy. PlexFixer
+        uses your own <code>ssh</code>, so your keys, your <code>~/.ssh/config</code> and your known hosts apply — and
+        it never asks for a password, so key-based login has to work on its own.
+      </p>
+
+      <Field label="Use a remote host" hint="Scans and repairs run there instead of here.">
+        <label className={`toggle${settings.remoteEnabled ? ' on' : ''}`}>
+          <input
+            type="checkbox"
+            checked={settings.remoteEnabled}
+            disabled={!settings.remoteHost.trim()}
+            onChange={(event) => onChange({ remoteEnabled: event.target.checked })}
+          />
+          <span className="switch" aria-hidden="true" />
+          {settings.remoteEnabled ? `On — ${settings.remoteHost}` : 'Off — everything runs on this machine'}
+        </label>
+      </Field>
+
+      <Field label="Host" hint="user@host, or a Host alias from your ssh config.">
+        <div className="control inline">
+          <input
+            type="text"
+            value={settings.remoteHost}
+            placeholder="plex@nas.local"
+            spellCheck={false}
+            onChange={(event) => onChange({ remoteHost: event.target.value })}
+          />
+          <button onClick={() => void test()} disabled={testing || !settings.remoteHost.trim()}>
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+        </div>
+      </Field>
+
+      <Field label="Port" hint="Leave at 0 to use whatever ssh would.">
+        <input
+          type="number"
+          min={0}
+          max={65535}
+          value={settings.remotePort}
+          onChange={(event) => onChange({ remotePort: Math.max(0, Math.min(65535, Number(event.target.value) || 0)) })}
+        />
+      </Field>
+
+      <Field label="Remote ffmpeg" hint="Blank means whatever is on the remote PATH.">
+        <input
+          type="text"
+          value={settings.remoteFfmpegPath}
+          placeholder={check?.ffmpegPath ?? '/usr/bin/ffmpeg'}
+          spellCheck={false}
+          onChange={(event) => onChange({ remoteFfmpegPath: event.target.value })}
+        />
+      </Field>
+
+      <Field label="Remote ffprobe">
+        <input
+          type="text"
+          value={settings.remoteFfprobePath}
+          placeholder={check?.ffprobePath ?? '/usr/bin/ffprobe'}
+          spellCheck={false}
+          onChange={(event) => onChange({ remoteFfprobePath: event.target.value })}
+        />
+      </Field>
+
+      {check ? <CheckReport check={check} /> : null}
+
+      {settings.remoteEnabled && environment?.remote ? (
+        <p className="section-hint">
+          Scans and repairs are running on <strong>{environment.remote.host}</strong>
+          {environment.remote.platform ? ` (${environment.remote.platform})` : ''}. Editing an MP4 header in place is
+          only done on this machine; a remote repair always rewrites the file.
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+function CheckReport({ check }: { check: RemoteCheck }): React.JSX.Element {
+  return (
+    <div className={`remote-check${check.ok ? ' ok' : ' bad'}`}>
+      <div className="title">
+        <span className={`badge ${check.ok ? 'ok' : 'fail'}`}>{check.ok ? 'ready' : 'not ready'}</span>
+        {check.host}
+        {check.platform ? <span className="muted"> · {check.platform}</span> : null}
+      </div>
+      {check.problem ? <div className="detail-text">{check.problem}</div> : null}
+      {check.hint ? <div className="detail-text hint-line">{check.hint}</div> : null}
+      {check.ffmpegVersion ? <div className="muted mono">{check.ffmpegVersion}</div> : null}
+      {check.ffprobeVersion ? <div className="muted mono">{check.ffprobeVersion}</div> : null}
+      {check.ffmpegPath ? (
+        <div className="muted mono">
+          {check.ffmpegPath} · {check.ffprobePath}
+        </div>
+      ) : null}
+      {check.found.length > 0 ? (
+        <div className="muted">
+          utilities: {check.found.join(', ')}
+          {check.missing.length > 0 ? ` — missing ${check.missing.join(', ')}` : ''}
+        </div>
+      ) : null}
     </div>
   )
 }

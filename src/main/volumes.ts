@@ -25,7 +25,7 @@ const cache = new Map<string, VolumeInfo>()
  * reports some as `afpfs`/`smbfs`. Anything that names a host is remote; a
  * device node under /dev is not.
  */
-function kindOf(filesystem: string | undefined): VolumeInfo['kind'] {
+export function kindOfFilesystem(filesystem: string | undefined): VolumeInfo['kind'] {
   if (!filesystem) return 'unknown'
   if (filesystem.startsWith('//') || filesystem.startsWith('\\\\')) return 'network'
   if (/^[A-Za-z][\w.-]*:\//.test(filesystem)) return 'network'
@@ -39,7 +39,7 @@ function kindOf(filesystem: string | undefined): VolumeInfo['kind'] {
  * path is on. The mount point is the last field and the device the first;
  * everything between is sizes, which vary by platform and are not wanted here.
  */
-function parseDf(output: string): { filesystem?: string; mount?: string } {
+export function parseDf(output: string): { filesystem?: string; mount?: string } {
   const lines = output.trim().split('\n')
   const row = lines[lines.length - 1]
   if (!row || lines.length < 2) return {}
@@ -73,7 +73,7 @@ export async function describeVolume(path: string): Promise<VolumeInfo> {
     try {
       const { stdout } = await execFileAsync('df', ['-P', directory], { timeout: 4000 })
       const { filesystem, mount } = parseDf(stdout)
-      info = { ...info, filesystem, mount, kind: kindOf(filesystem) }
+      info = { ...info, filesystem, mount, kind: kindOfFilesystem(filesystem) }
     } catch {
       /* df is missing or refused: the device id alone still answers "same volume?" */
     }
@@ -82,6 +82,3 @@ export async function describeVolume(path: string): Promise<VolumeInfo> {
   cache.set(directory, info)
   return info
 }
-
-/** Exported for the tests, which should not need a filesystem to check parsing. */
-export const _internals = { parseDf, kindOf }

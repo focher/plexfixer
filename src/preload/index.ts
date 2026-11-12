@@ -14,6 +14,8 @@ import type {
   Job,
   ModeOverrides,
   RepairMode,
+  RemoteCheck,
+  RemoteListing,
   RepairRequest,
   RescanResult,
   ScanCompleteEvent,
@@ -38,6 +40,13 @@ const api = {
   environment: {
     get: (): Promise<EnvironmentInfo> => ipcRenderer.invoke(IPC.envGet),
     refresh: (): Promise<EnvironmentInfo> => ipcRenderer.invoke(IPC.envRefresh)
+  },
+  /** The machine that holds the files, when that is not this one. */
+  remote: {
+    /** Test the host in Settings, whether or not remote mode is on yet. */
+    check: (): Promise<RemoteCheck> => ipcRenderer.invoke(IPC.remoteCheck),
+    /** One directory on the far end; no path means the account's home. */
+    list: (path?: string): Promise<RemoteListing> => ipcRenderer.invoke(IPC.remoteList, path)
   },
   dialog: {
     pickPaths: (): Promise<string[]> => ipcRenderer.invoke(IPC.pickPaths),
