@@ -17,6 +17,7 @@ import type {
   JobLogLevel,
   JobMetrics,
   JobPhase,
+  JobStage,
   RepairMode
 } from '@shared/types.js'
 import { localHost, type Host } from '../host.js'
@@ -123,8 +124,18 @@ export class RepairRunner {
   }
 
   private update(job: Job): void {
-    this.jobs.set(job.id, job)
-    this.onUpdate(job)
+    // Every update is also a sign of life: the queue uses this to tell a job
+    // that is working from one whose link has gone quiet.
+    const stamped = { ...job, updatedAt: Date.now() }
+    this.jobs.set(stamped.id, stamped)
+    this.onUpdate(stamped)
+  }
+
+  /** Move a job to its next step, for the indicator in the queue. */
+  private setStage(id: string, stage: JobStage): void {
+    const job = this.jobs.get(id)
+    if (!job || job.stage === stage) return
+    this.update({ ...job, stage })
   }
 
   /**
@@ -215,6 +226,10 @@ export class RepairRunner {
       strategy: result.plan.strategy,
       mode,
       state: 'queued',
+      stage: 'waiting',
+      // Recorded now rather than read from the settings later: remote mode is
+      // a setting, and the queue outlives a change to it.
+      host: { kind: this.host.kind, label: this.host.label },
       progress: { fraction: 0 },
       log: [
         {
@@ -234,6 +249,7 @@ export class RepairRunner {
     if (mode === 'report') {
       const job: Job = {
         ...base,
+        stage: 'finished',
         state: 'skipped',
         message: 'Report-only mode — nothing was written',
         log: [...base.log, { at: Date.now(), level: 'info', text: 'Skipped: report-only mode' }]
@@ -245,6 +261,7 @@ export class RepairRunner {
     if (result.plan.strategy === 'none') {
       const job: Job = {
         ...base,
+        stage: 'finished',
         state: 'skipped',
         message: 'Already Plex-ready — nothing to change',
         log: [...base.log, { at: Date.now(), level: 'info', text: 'Skipped: already Plex-ready' }]
@@ -256,6 +273,7 @@ export class RepairRunner {
     if (result.plan.requiresTranscode && mode !== 'force-transcode') {
       const job: Job = {
         ...base,
+        stage: 'finished',
         state: 'skipped',
         message: 'Needs a video re-encode, which safe remux will not do. Set this file or folder to Force transcode.',
         log: [
@@ -385,7 +403,7 @@ export class RepairRunner {
 
     const job = this.jobs.get(id)
     if (!job) return false
-    this.update({ ...job, state: 'running', startedAt: Date.now(), command: [] })
+    this.update({ ...job, state: 'running', stage: 'planning', startedAt: Date.now(), command: [] })
     this.log(id, 'info', 'Planned actions', describePlan(result))
     this.log(
       id,
@@ -446,6 +464,7 @@ export class RepairRunner {
       this.update({
         ...finished,
         state: 'done',
+        stage: 'finished',
         outputPath: result.file.path,
         progress: { ...finished.progress, fraction: 1 },
         message: 'edited in place — nothing copied',
@@ -470,6 +489,9 @@ export class RepairRunner {
     // atom, so they can be written straight into the file. Rewriting 6 GB
     // across a network share to change four bytes is the slowest thing this
     // app does, and for most of a real library it is all a repair amounts to.
+    // Reaching the file at all is a step of its own when it is on another
+    // machine: an unreachable host hangs here, not in ffmpeg.
+    this.setStage(id, 'connecting')
     const checkStarted = performance.now()
     if (await this.tryInPlace(id, options, outputPath)) return
     const checkMs = performance.now() - checkStarted
@@ -487,6 +509,7 @@ export class RepairRunner {
     this.update({
       ...(this.jobs.get(id) ?? current),
       state: 'running',
+      stage: 'planning',
       startedAt: Date.now(),
       command: [this.binaries.ffmpegPath, ...finalArgs],
       message: encoderLabel ? `Encoding with ${encoderLabel}` : undefined
@@ -507,6 +530,7 @@ export class RepairRunner {
 
     // Timestamps rather than wrapped calls: each stage is one await in a
     // sequence, and bracketing them individually would bury the sequence.
+    this.setStage(id, 'copying')
     const ffmpegStarted = performance.now()
     let lastProgressAt = 0
     let finaliseFrom: number | undefined
@@ -532,7 +556,12 @@ export class RepairRunner {
           if (progress.speed) lastSpeed = progress.speed
           // Everything after the last byte is reported is the finalising pass,
           // which is where an MP4 index move hides.
-          if (finaliseFrom == null && progress.fraction >= 0.999) finaliseFrom = performance.now()
+          if (finaliseFrom == null && progress.fraction >= 0.999) {
+            finaliseFrom = performance.now()
+            // ffmpeg reports nothing during the index move, so the step itself
+            // is the only sign that anything is still happening.
+            if (result.plan.faststart) this.setStage(id, 'finalising')
+          }
 
           // A multi-gigabyte remux over a network share runs for minutes with
           // nothing to show for it, which is indistinguishable from a hang.
@@ -596,6 +625,7 @@ export class RepairRunner {
 
       // Confirm the output is a readable media file with the streams we asked
       // for. ffmpeg can exit 0 having produced something unplayable.
+      this.setStage(id, 'verifying')
       const verifyStarted = performance.now()
       const probed = await probeFile(temporaryPath, {
         ffprobePath: this.binaries.ffprobePath,
@@ -611,6 +641,7 @@ export class RepairRunner {
         throw new Error('The repaired file is missing streams — the original has been left untouched.')
       }
 
+      this.setStage(id, 'promoting')
       const promoteStarted = performance.now()
       const { finalPath, backupPath } = await promoteOutput(
         temporaryPath,
@@ -632,6 +663,7 @@ export class RepairRunner {
 
       // Sidecar subtitles are written next to the finished file, named so Plex
       // picks them up automatically.
+      if (result.plan.extractSubtitles.length > 0) this.setStage(id, 'subtitles')
       const subtitlesStarted = performance.now()
       const extracted = await this.extractSubtitles(result, finalPath, signal, id)
       if (result.plan.extractSubtitles.length > 0) {
@@ -657,6 +689,7 @@ export class RepairRunner {
         this.update({
           ...job,
           state: 'done',
+          stage: 'finished',
           outputPath: finalPath,
           progress: { ...job.progress, fraction: 1 },
           message: notes.length > 0 ? notes.join('; ') : undefined,
@@ -671,7 +704,9 @@ export class RepairRunner {
       const cancelled = signal.aborted
       this.addPhase(id, 'total', running.startedAt ? Date.now() - running.startedAt : 0)
       const job = this.jobs.get(id) ?? running
-      const text = cancelled ? 'Cancelled' : error instanceof Error ? error.message : String(error)
+      const text = cancelled
+        ? 'Cancelled'
+        : (this.connectionLost(error) ?? (error instanceof Error ? error.message : String(error)))
 
       // ffmpeg's own stderr is the part worth sharing; without it a failure
       // report says only that something went wrong.
@@ -692,6 +727,21 @@ export class RepairRunner {
         ]
       })
     }
+  }
+
+  /**
+   * ssh's own failure, told apart from ffmpeg's.
+   *
+   * 255 is the exit code ssh reserves for its own errors, and ffmpeg does not
+   * use it — so a repair that comes back with 255 and nothing on stderr is the
+   * link going down, not the encode failing. Saying so is the difference
+   * between "try again" and "go and look at the file".
+   */
+  private connectionLost(error: unknown): string | undefined {
+    if (this.host.kind !== 'remote') return undefined
+    if (!(error instanceof FfmpegError) || error.exitCode !== 255) return undefined
+    const detail = error.stderrTail.trim().split('\n')[0]
+    return `The connection to ${this.host.label} dropped while the repair was running${detail ? ` (${detail})` : ''}. Nothing was promoted, and the original is untouched.`
   }
 
   /** Write the planned sidecar .srt files; failures are reported, not fatal. */
