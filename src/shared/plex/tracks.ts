@@ -18,7 +18,13 @@ import type {
   TrackPlanChange,
   Finding
 } from '../types.js'
-import { UNDEFINED_LANGUAGE, isUndefinedLanguage, languageName, normalizeLanguage } from '../languages.js'
+import {
+  UNDEFINED_LANGUAGE,
+  isCanonicalFor,
+  isUndefinedLanguage,
+  languageName,
+  normalizeLanguage
+} from '../languages.js'
 import { audioCodecTier, isImageSubtitle } from './rules.js'
 
 export type PrimaryLanguageSource =
@@ -68,6 +74,12 @@ export function videoStreams(file: MediaFile): VideoStream[] {
 
 export function audioStreams(file: MediaFile): AudioStream[] {
   return file.streams.filter((s): s is AudioStream => s.kind === 'audio')
+}
+
+/** The audio track that plays by default: the flagged one, else the first. */
+export function defaultAudioStream(file: MediaFile): AudioStream | undefined {
+  const audio = audioStreams(file)
+  return audio.find((s) => s.disposition.default) ?? audio[0]
 }
 
 export function subtitleStreams(file: MediaFile): SubtitleStream[] {
@@ -200,10 +212,13 @@ export function resolveTracks(file: MediaFile, settings: AppSettings, primary: P
     }
   }
 
-  // Non-canonical tags (e.g. "en-US", "fra", "English") are rewritten to the
-  // ISO 639-2/B form Matroska and Plex expect.
+  // Tags that are not the code this container expects ("en-US", "English",
+  // or the wrong ISO 639-2 form — "fre" in an MP4, "fra" in an MKV) are
+  // rewritten. A tag already in the right form is left alone: "fra" is correct
+  // in an MP4, and rewriting it to "fre" is what made Apple players show
+  // French tracks as unknown.
   const misTagged = [...video, ...audio, ...subtitles].filter(
-    (s) => s.rawLanguage && !isUndefinedLanguage(s.rawLanguage) && s.rawLanguage.toLowerCase() !== s.language
+    (s) => s.rawLanguage && !isUndefinedLanguage(s.rawLanguage) && !isCanonicalFor(s.rawLanguage, file.container)
   )
   if (misTagged.length > 0) {
     findings.push({
@@ -212,8 +227,9 @@ export function resolveTracks(file: MediaFile, settings: AppSettings, primary: P
       remedy: 'lossless',
       title: `${misTagged.length} track${misTagged.length === 1 ? '' : 's'} using a non-standard language tag`,
       detail:
-        'Tags such as "en-US" or "English" are not the ISO 639-2 codes Plex matches on. Rewriting them to ' +
-        'the canonical three-letter code makes track selection work consistently.',
+        'Tags such as "en-US" or "English", or the wrong form of a three-letter code for this container ' +
+        '("fre" where MP4 expects "fra"), are not what players match on. Rewriting them to the code the ' +
+        'container expects makes track selection work consistently.',
       streamIndexes: misTagged.map((s) => s.index)
     })
     for (const stream of misTagged) {
@@ -221,8 +237,10 @@ export function resolveTracks(file: MediaFile, settings: AppSettings, primary: P
       changes.push({
         streamIndex: stream.index,
         kind: stream.kind,
+        // Kept in the canonical /B form like every other language in the plan;
+        // the writer converts it to the output container's form.
         setLanguage: stream.language,
-        reason: `Rewriting "${stream.rawLanguage}" as "${stream.language}"`
+        reason: `Retagging "${stream.rawLanguage}" as ${languageName(stream.language)}, in the code the output container expects`
       })
     }
   }

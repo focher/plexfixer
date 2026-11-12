@@ -395,7 +395,7 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
 
 .row {
   display: grid;
-  grid-template-columns: 28px 92px 1fr 1.25fr 128px 74px 76px 100px;
+  grid-template-columns: 28px 92px 1fr 1.25fr 128px 112px 76px 100px;
   gap: 10px;
   align-items: center;
   padding: 9px 12px;
@@ -406,9 +406,27 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
 /* The window can go down to 940px, where eight columns stop fitting. */
 @media (max-width: 1120px) {
   .row {
-    grid-template-columns: 24px 84px 1fr 1.05fr 104px 64px 62px 96px;
+    grid-template-columns: 24px 84px 1fr 1.05fr 104px 100px 62px 96px;
     gap: 8px;
   }
+}
+
+/* ---------- the "technical" column: size over video and audio codec ---------- */
+
+.row .technical {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.row .technical .muted {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------- the "why" column ---------- */
@@ -1092,6 +1110,70 @@ button.expander:hover:not(:disabled) {
 .filterbar .chip.on .count {
   color: var(--accent-text);
   opacity: 0.75;
+}
+
+/* Codec pickers: a chip that opens a checklist. */
+.filter-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+.codec-picker {
+  position: relative;
+}
+
+.filterbar .chip .caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+.codec-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 170px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.codec-menu .codec-any {
+  justify-content: flex-start;
+  text-align: left;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.codec-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.codec-option:hover {
+  background: var(--bg);
+}
+
+.codec-option .codec-name {
+  flex: 1 1 auto;
+}
+
+.codec-option .count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
 }
 
 /* ---------- repair mode: per-file and per-folder overrides ---------- */

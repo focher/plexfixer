@@ -41,11 +41,13 @@ describe('blockedReasons', () => {
     expect(reason?.youCan).toContain('dovi_tool')
   })
 
-  it('tells the truth about the height ceiling: Force transcode will not clear it', () => {
-    const reason = blockedReasons(tooTall).find((entry) => entry.code === 'video-resolution-high')
-    expect(reason).toBeDefined()
-    expect(reason?.why).toContain('Force transcode will not either')
-    expect(reason?.youCan).toContain('Raise the height ceiling')
+  it('does not block on a warning only a re-encode would clear', () => {
+    // Over the height ceiling is advisory: the file still plays, and the plan
+    // fixes what it can (the MP4 index) without blocking it.
+    expect(tooTall.findings.some((finding) => finding.code === 'video-resolution-high')).toBe(true)
+    expect(isBlocked(tooTall)).toBe(false)
+    expect(blockedReasons(tooTall)).toEqual([])
+    expect(fileStatus(tooTall)).toBe('fixable')
   })
 
   it('never leaves a blocking finding without an explanation', () => {
@@ -65,10 +67,20 @@ describe('blockedReasons', () => {
 
 describe('the Why column on a blocked file', () => {
   it('leads with what is blocking, not with a problem the repair already fixes', () => {
-    // This file also has its MP4 index at the end, which the remux moves — and
-    // which outranks the ceiling warning on severity alone.
-    expect(tooTall.findings.some((finding) => finding.code === 'mp4-not-faststart')).toBe(true)
-    expect(summarizeReason(tooTall).headline).toContain('exceeds the 1080p ceiling')
-    expect(summarizeReason(tooTall).tone).toBe('manual')
+    // The MP4 index at the end is fixed by the remux; Dolby Vision profile 5
+    // is not, and that is what the headline has to say.
+    const both = analyzeFile(
+      mp4([video({ codec: 'hevc', codecTag: 'hvc1', dolbyVisionProfile: 5 }), mainAudio({ codec: 'aac' })], {
+        faststart: false
+      }),
+      DEFAULT_SETTINGS
+    )
+    expect(both.findings.some((finding) => finding.code === 'mp4-not-faststart')).toBe(true)
+    expect(summarizeReason(both).headline).toBe(blockedReasons(both)[0]?.title)
+    expect(summarizeReason(both).tone).toBe('manual')
+  })
+
+  it('agrees with the status column on an advisory warning', () => {
+    expect(summarizeReason(tooTall).tone).not.toBe('manual')
   })
 })

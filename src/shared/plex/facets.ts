@@ -14,6 +14,9 @@
 
 import type { AnalysisResult } from '../types.js'
 import { isBlocked } from './blocked.js'
+
+// Lives beside the explanations it decides on; re-exported for existing callers.
+export { needsYou } from './blocked.js'
 import { videoStreams } from './tracks.js'
 
 export type ResultFacet =
@@ -195,13 +198,13 @@ export function filterResults(results: AnalysisResult[], active: Set<ResultFacet
  * What happens next for a file, as one word. Every file has exactly one, so the
  * tiles never overlap and add up to the library.
  *
- * - passed:   no blocker or warning; direct plays as it is
- * - manual:   a blocker or warning that no automatic plan resolves ("Needs you")
+ * - passed:   nothing to do; direct plays as it is, perhaps with advisory notes
+ * - manual:   something only the user can sort out ("blocked"); see `needsYou`
  * - reencode: only a video re-encode fixes it
  * - fixable:  a lossless remux (perhaps with an added AAC track) fixes it
  *
- * The severity of each finding is still in the detail pane; this is about the
- * decision in front of the user, which is what a table of thousands needs.
+ * This is about the decision in front of the user, which is what a table of
+ * thousands needs; the severity of every finding is still in the detail pane.
  */
 export type FileStatus = 'passed' | 'fixable' | 'reencode' | 'manual'
 
@@ -209,13 +212,12 @@ export const STATUS_ORDER: FileStatus[] = ['passed', 'fixable', 'reencode', 'man
 
 export function fileStatus(result: AnalysisResult): FileStatus {
   if (result.verdict === 'ok') return 'passed'
-  // Same rule as the "blocked" facet: an unresolved info note is a choice the
-  // plan made on purpose, not something to go and fix.
+  // Same rule as the "blocked" facet and the detail pane's explanations.
   if (isBlocked(result)) return 'manual'
   if (result.plan.requiresTranscode) return 'reencode'
   if (result.plan.strategy !== 'none') return 'fixable'
-  // Something is wrong and nothing will happen about it.
-  return 'manual'
+  // Only advisory warnings are left, and the repair has nothing to change.
+  return 'passed'
 }
 
 export function matchesStatus(result: AnalysisResult, status: FileStatus): boolean {

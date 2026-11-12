@@ -101,9 +101,27 @@ const BY_REMEDY: Record<RemedyClass, Explanation> = {
   }
 }
 
-/** The findings that make a file "blocked": unresolved, and not merely a note. */
+/**
+ * Whether an unresolved finding makes the file "blocked".
+ *
+ * - A blocker nothing resolves: the file will not direct play, and no repair
+ *   PlexFixer can run changes that (Dolby Vision profile 5, DRM, no audio).
+ * - A warning whose only remedy is manual: something the user has to decide,
+ *   e.g. "No English audio track" when the video is tagged English but every
+ *   audio track is French — is the video tag wrong, or is a dub missing?
+ *
+ * A warning that only an optional re-encode would change ("HEVC may not play
+ * on every client", interlaced video) is advisory and does not count: it would
+ * strand a file with nothing to do as blocked. Info notes never count.
+ */
+export function needsYou(finding: Finding): boolean {
+  if (finding.severity === 'blocker') return true
+  return finding.severity === 'warning' && finding.remedy === 'manual'
+}
+
+/** The findings that make a file "blocked"; see `needsYou`. */
 export function blockingFindings(result: AnalysisResult): Finding[] {
-  return result.plan.unresolved.filter((finding) => finding.severity !== 'info')
+  return result.plan.unresolved.filter(needsYou)
 }
 
 export function isBlocked(result: AnalysisResult): boolean {

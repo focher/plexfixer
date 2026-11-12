@@ -23,6 +23,7 @@ import type {
   VideoTranscodeSpec
 } from '../types.js'
 import { languageName, normalizeLanguage } from '../languages.js'
+import { fitsH264Level } from './h264-level.js'
 import {
   DOLBY_VISION_SAFE_PROFILES,
   H264_SAFE_PROFILES,
@@ -63,12 +64,18 @@ interface VideoVerdict {
   needsPixelFormatChange: boolean
   /** Downscale target, when the source exceeds the configured ceiling. */
   scaleHeight?: number
+  /**
+   * The H.264 level to relabel the stream as, when its label is too high but
+   * its actual demands fit — a lossless fix instead of a re-encode.
+   */
+  relabelLevel?: number
 }
 
 function analyzeVideo(stream: VideoStream, file: MediaFile, settings: AppSettings): VideoVerdict {
   const findings: Finding[] = []
   let needsTranscode = false
   let needsTagFix = false
+  let relabelLevel: number | undefined
   let needsDeinterlace = false
   let needsPixelFormatChange = false
   let scaleHeight: number | undefined
@@ -145,15 +152,25 @@ function analyzeVideo(stream: VideoStream, file: MediaFile, settings: AppSetting
   }
 
   if (codec === 'h264' && stream.level != null && stream.level > settings.maxH264Level) {
-    needsTranscode = true
+    // The level is a label. When the stream's resolution, frame rate, buffer
+    // and bitrate all fit the lower level, correcting the label is lossless.
+    const relabel = fitsH264Level(stream, stream.level, settings.maxH264Level)
+    if (relabel) relabelLevel = settings.maxH264Level
+    else needsTranscode = true
+    const maxLabel = formatLevel(settings.maxH264Level)
     findings.push({
       code: 'video-level-too-high',
       severity: 'warning',
-      remedy: 'transcode',
-      title: `H.264 Level ${formatLevel(stream.level)} exceeds Level ${formatLevel(settings.maxH264Level)}`,
+      remedy: relabel ? 'lossless' : 'transcode',
+      title: `H.264 Level ${formatLevel(stream.level)} exceeds Level ${maxLabel}`,
       detail:
         'Decoders advertise a maximum level; above it they refuse the stream outright rather than degrading. ' +
-        'Older Apple TVs, Rokus and smart TVs commonly cap at Level 4.1.',
+        'Older Apple TVs, Rokus and smart TVs commonly cap at Level 4.1.' +
+        (relabel
+          ? ` This stream's resolution and frame rate fit Level ${maxLabel}, so the label is corrected without ` +
+            're-encoding. Tools such as Subler show the level in the MP4 header, which can be changed separately; ' +
+            'players and Plex read the level inside the stream.'
+          : ''),
       streamIndexes: [stream.index]
     })
   }
@@ -273,7 +290,7 @@ function analyzeVideo(stream: VideoStream, file: MediaFile, settings: AppSetting
     })
   }
 
-  return { findings, needsTranscode, needsTagFix, needsDeinterlace, needsPixelFormatChange, scaleHeight }
+  return { findings, needsTranscode, needsTagFix, needsDeinterlace, needsPixelFormatChange, scaleHeight, relabelLevel }
 }
 
 interface AudioVerdict {
@@ -657,6 +674,10 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
     })
   }
 
+  // A relabel only applies when the video is copied; a re-encode sets the
+  // level itself.
+  const videoLevel = videoVerdict.needsTranscode ? undefined : videoVerdict.relabelLevel
+
   let strategy: PlanStrategy = 'none'
 
   if (videoVerdict.needsTranscode) {
@@ -670,15 +691,24 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
     })
   } else if (audioVerdict.needsCompatibilityTrack || audioVerdict.incompatible.length > 0) {
     strategy = 'transcode-audio'
-  } else if (containerChange || videoVerdict.needsTagFix || file.faststart === false || trackChanges.length > 0) {
+  } else if (
+    containerChange ||
+    videoVerdict.needsTagFix ||
+    videoLevel != null ||
+    file.faststart === false ||
+    trackChanges.length > 0
+  ) {
     strategy = 'remux'
   }
 
-  if (containerChange || file.faststart === false || videoVerdict.needsTagFix) {
+  if (containerChange || file.faststart === false || videoVerdict.needsTagFix || videoLevel != null) {
     const parts: string[] = []
     if (containerChange) parts.push(`rewrap as ${targetContainer.toUpperCase()}`)
     if (file.faststart === false) parts.push('move the index to the front of the file')
     if (videoVerdict.needsTagFix) parts.push('retag HEVC as hvc1')
+    if (videoLevel != null && video[0]?.level != null) {
+      parts.push(`relabel H.264 Level ${formatLevel(video[0].level)} as ${formatLevel(videoLevel)}`)
+    }
     actions.push({
       label: `Remux: ${parts.join(', ')}`,
       detail: 'Stream copy — the audio and video data are not touched.'
@@ -833,6 +863,7 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
     videoTranscode,
     faststart: targetContainer === 'mp4',
     videoCodecTag,
+    videoLevel,
     unresolved,
     requiresTranscode: strategy === 'transcode-video',
     costNote

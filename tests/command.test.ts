@@ -96,6 +96,58 @@ describe('buildRepairCommand — track flags', () => {
     expect(valueAfter(args, '-metadata:s:a:1')).toBe('language=eng')
   })
 
+  it('writes ISO 639-2/T when a Matroska "fre" track moves into MP4', () => {
+    // ffmpeg copies language tags verbatim; MP4 must get "fra", not "fre".
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng', rawLanguage: 'eng' }),
+        mainAudio({ index: 1, language: 'fre', rawLanguage: 'fre' })
+      ]),
+      DEFAULT_SETTINGS
+    )
+    expect(result.plan.targetContainer).toBe('mp4')
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: OUT })
+    expect(valueAfter(args, '-metadata:s:a:0')).toBe('language=fra')
+    expect(args).not.toContain('language=fre')
+  })
+
+  it('leaves a correct MP4 "fra" alone', () => {
+    const result = analyzeFile(
+      mp4([video({ language: 'eng', rawLanguage: 'eng' }), mainAudio({ index: 1, language: 'fre', rawLanguage: 'fra' })]),
+      DEFAULT_SETTINGS
+    )
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: OUT })
+    expect(args).not.toContain('language=fre')
+    expect(args.filter((arg) => arg.startsWith('language='))).toEqual([])
+  })
+
+  it('writes ISO 639-2/B when the output stays Matroska', () => {
+    const result = analyzeFile(
+      mkv([video({ language: 'eng', rawLanguage: 'eng' }), mainAudio({ index: 1, language: 'ger', rawLanguage: 'deu' })]),
+      { ...DEFAULT_SETTINGS, remuxMkvToMp4: false }
+    )
+    expect(result.plan.targetContainer).toBe('mkv')
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: '/out/x.mkv' })
+    expect(valueAfter(args, '-metadata:s:a:0')).toBe('language=ger')
+  })
+
+  it('relabels an H.264 level with a bitstream filter on the real video track, copying the video', () => {
+    const result = analyzeFile(
+      mp4(
+        [
+          video({ width: 640, height: 480, level: 42, language: 'eng', rawLanguage: 'eng' }),
+          mainAudio({ index: 1, language: 'eng', rawLanguage: 'eng' }),
+          coverArt({ index: 2 })
+        ],
+        { faststart: true }
+      ),
+      DEFAULT_SETTINGS
+    )
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: OUT })
+    expect(valueAfter(args, '-bsf:v:0')).toBe('h264_metadata=level=4.1')
+    expect(valueAfter(args, '-c:v')).toBe('copy')
+  })
+
   it('preserves unrelated dispositions when flipping the default flag', () => {
     const result = analyzeFile(
       mkv([

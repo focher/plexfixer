@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { isUndefinedLanguage, languageName, normalizeLanguage, sameLanguage } from '@shared/languages.js'
+import {
+  isCanonicalFor,
+  isUndefinedLanguage,
+  languageForContainer,
+  languageName,
+  normalizeLanguage,
+  sameLanguage
+} from '@shared/languages.js'
 
 describe('normalizeLanguage', () => {
   it('maps ISO 639-1 to 639-2/B', () => {
@@ -50,5 +57,54 @@ describe('language helpers', () => {
   it('names known codes and falls back for unknown ones', () => {
     expect(languageName('ger')).toBe('German')
     expect(languageName('qaa')).toBe('QAA')
+  })
+})
+
+describe('languageForContainer', () => {
+  it('writes ISO 639-2/T into MP4, where it differs from /B', () => {
+    // mdhd is specified as /T; Apple players read "fre" in an MP4 as unknown.
+    expect(languageForContainer('fre', 'mp4')).toBe('fra')
+    expect(languageForContainer('ger', 'mp4')).toBe('deu')
+    expect(languageForContainer('fra', 'mp4')).toBe('fra')
+  })
+
+  it('writes ISO 639-2/B into Matroska', () => {
+    expect(languageForContainer('fra', 'mkv')).toBe('fre')
+    expect(languageForContainer('deu', 'mkv')).toBe('ger')
+  })
+
+  it('leaves languages with a single code alone', () => {
+    expect(languageForContainer('eng', 'mp4')).toBe('eng')
+    expect(languageForContainer('eng', 'mkv')).toBe('eng')
+  })
+
+  it('passes unknown codes and und through', () => {
+    expect(languageForContainer('qaa', 'mp4')).toBe('qaa')
+    expect(languageForContainer('und', 'mp4')).toBe('und')
+  })
+})
+
+describe('isCanonicalFor', () => {
+  it('accepts only the form the container specifies', () => {
+    expect(isCanonicalFor('fra', 'mp4')).toBe(true)
+    expect(isCanonicalFor('fre', 'mp4')).toBe(false)
+    expect(isCanonicalFor('fre', 'matroska')).toBe(true)
+    expect(isCanonicalFor('fra', 'matroska')).toBe(false)
+    expect(isCanonicalFor('eng', 'mp4')).toBe(true)
+  })
+
+  it('accepts either form in a container that specifies neither', () => {
+    expect(isCanonicalFor('fra', 'other')).toBe(true)
+    expect(isCanonicalFor('fre', 'other')).toBe(true)
+  })
+
+  it('rejects tags that are not three-letter codes, and ignores case', () => {
+    expect(isCanonicalFor('en-US', 'mp4')).toBe(false)
+    expect(isCanonicalFor('English', 'matroska')).toBe(false)
+    expect(isCanonicalFor('FRA', 'mp4')).toBe(true)
+  })
+
+  it('leaves an unknown three-letter code alone', () => {
+    expect(isCanonicalFor('qaa', 'mp4')).toBe(true)
   })
 })
