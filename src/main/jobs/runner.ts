@@ -98,16 +98,22 @@ export class RepairRunner {
   }
 
   /**
-   * Empty the queue: stop whatever is running and forget every job.
+   * Drop the repairs that have not started.
    *
-   * A running job does not stop the instant it is abandoned — ffmpeg has to be
-   * killed and the work unwound — and it reports its own cancellation after
-   * that. It cannot reappear in the list, because every path that updates a job
-   * looks it up first and gives up when it is no longer there.
+   * Only those: a running repair is part-way through writing a file, with a
+   * temporary beside it and possibly the original already moved aside, and
+   * stopping that is what Cancel is for. Finished jobs are the record of what
+   * happened, which "Clear finished" removes. Returns how many went.
    */
-  clearAll(): void {
-    this.jobs.clear()
-    this.queue.cancelAll()
+  clearQueued(): number {
+    let removed = 0
+    for (const [id, job] of this.jobs) {
+      if (job.state !== 'queued') continue
+      this.queue.cancel(id)
+      this.jobs.delete(id)
+      removed++
+    }
+    return removed
   }
 
   private update(job: Job): void {

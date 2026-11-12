@@ -1,10 +1,10 @@
 /**
- * Emptying the job queue.
+ * Clearing the queue.
  *
- * The awkward part is a job that is still running: ffmpeg has to be killed and
- * the job unwinds asynchronously, so its own "cancelled" update lands after the
- * list has been emptied. It must not put the job back into a list the user just
- * cleared.
+ * "Clear queue" takes out what has not started and nothing else: a running
+ * repair is part-way through writing a file, and a finished one is the record
+ * of what happened. The job that must never come back is a cleared one — the
+ * queue has to forget it before its slot frees up, or it starts anyway.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -40,51 +40,73 @@ const result = analyzeFile(
   DEFAULT_SETTINGS
 )
 
-async function runner(): Promise<{ instance: RepairRunner; updates: Job[] }> {
+/** One at a time, so the second repair enqueued is reliably still waiting. */
+async function runner(concurrency = 1): Promise<{ instance: RepairRunner; updates: Job[] }> {
   const updates: Job[] = []
   const instance = new RepairRunner(
     { ffmpegPath: await slowFfmpeg(), ffprobePath: await slowFfmpeg() },
-    2,
+    concurrency,
     (job) => updates.push(job)
   )
   return { instance, updates }
 }
 
-describe('clearAll', () => {
-  it('removes finished and unstarted jobs alike', async () => {
+const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+describe('clearQueued', () => {
+  it('removes what has not started and leaves the running repair alone', async () => {
     const { instance } = await runner()
-    instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'report' })
-    instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'report' })
+    const running = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    const waiting = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    await settle(150)
+    expect(instance.list().find((job) => job.id === running.id)?.state).toBe('running')
+    expect(instance.list().find((job) => job.id === waiting.id)?.state).toBe('queued')
+
+    expect(instance.clearQueued()).toBe(1)
+    const ids = instance.list().map((job) => job.id)
+    expect(ids).toContain(running.id)
+    expect(ids).not.toContain(waiting.id)
+  })
+
+  it('never starts a job that was cleared, even once the slot frees up', async () => {
+    const { instance, updates } = await runner()
+    instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    const waiting = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    await settle(150)
+
+    instance.clearQueued()
+    instance.cancel(instance.list()[0]?.id ?? '')
+    await settle(600)
+
+    expect(instance.list().map((job) => job.id)).not.toContain(waiting.id)
+    expect(updates.some((job) => job.id === waiting.id && job.state === 'running')).toBe(false)
+  })
+
+  it('keeps finished jobs, which are the record of what happened', async () => {
+    const { instance } = await runner()
     // Report-only jobs finish immediately without touching ffmpeg.
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    expect(instance.list().length).toBe(2)
+    const done = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'report' })
+    await settle(100)
+    expect(instance.list().find((job) => job.id === done.id)?.state).toBe('skipped')
 
-    instance.clearAll()
-    expect(instance.list()).toEqual([])
+    expect(instance.clearQueued()).toBe(0)
+    expect(instance.list().map((job) => job.id)).toContain(done.id)
   })
+})
 
-  it('does not let a running job come back after it is cleared', async () => {
+describe('clearFinished', () => {
+  it('is the other half: finished go, running and queued stay', async () => {
     const { instance } = await runner()
-    instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    expect(instance.list().map((job) => job.state)).toEqual(['running'])
+    const done = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'report' })
+    const running = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    const waiting = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    await settle(150)
 
-    instance.clearAll()
-    expect(instance.list()).toEqual([])
+    instance.clearFinished()
+    const ids = instance.list().map((job) => job.id)
+    expect(ids).not.toContain(done.id)
+    expect(ids).toEqual(expect.arrayContaining([running.id, waiting.id]))
 
-    // The kill, and the job's own report of it, arrive after the list is empty.
-    await new Promise((resolve) => setTimeout(resolve, 600))
-    expect(instance.list()).toEqual([])
-  })
-
-  it('leaves a later job alone', async () => {
-    const { instance } = await runner()
-    instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    instance.clearAll()
-
-    const kept = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'report' })
-    await new Promise((resolve) => setTimeout(resolve, 600))
-    expect(instance.list().map((job) => job.id)).toContain(kept.id)
+    instance.cancelAll()
   })
 })

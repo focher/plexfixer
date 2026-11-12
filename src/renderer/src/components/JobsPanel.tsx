@@ -100,7 +100,7 @@ export default function JobsPanel({
   onCancel,
   onCancelAll,
   onClear,
-  onClearAll,
+  onClearQueue,
   onReveal,
   onSave
 }: {
@@ -117,8 +117,8 @@ export default function JobsPanel({
   onCancel: (id: string) => void
   onCancelAll: () => void
   onClear: () => void
-  /** Stop everything and empty the list. */
-  onClearAll: () => void
+  /** Drop the repairs that have not started yet. */
+  onClearQueue: () => void
   onReveal: (path: string) => void
   /** Write a report to a file the user picks; resolves to the path, or undefined. */
   onSave: (suggestedName: string, contents: string) => Promise<string | undefined>
@@ -189,6 +189,7 @@ export default function JobsPanel({
   }, [onSave, diagnostics])
 
   const finished = jobs.filter((job) => job.state !== 'queued' && job.state !== 'running')
+  const queued = jobs.filter((job) => job.state === 'queued')
 
   if (jobs.length === 0) {
     return (
@@ -236,22 +237,11 @@ export default function JobsPanel({
           Clear finished
         </button>
         <button
-          onClick={() => {
-            // Only worth asking when it would stop work that is under way;
-            // emptying a list of finished jobs costs nothing.
-            if (
-              active.length > 0 &&
-              !window.confirm(
-                `Stop ${active.length} running or queued repair${active.length === 1 ? '' : 's'} and empty the list?`
-              )
-            ) {
-              return
-            }
-            onClearAll()
-          }}
-          title="Stop anything still running and remove every job from the list"
+          onClick={onClearQueue}
+          disabled={queued.length === 0}
+          title="Remove the repairs that have not started. Anything already running carries on, and finished jobs stay in the list."
         >
-          Clear all
+          Clear queue{queued.length > 0 ? ` (${queued.length})` : ''}
         </button>
       </div>
 

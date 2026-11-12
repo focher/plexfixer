@@ -925,9 +925,11 @@ export default function App(): React.JSX.Element {
                 previous.filter((job) => job.state === 'queued' || job.state === 'running')
               )
             }}
-            onClearAll={() => {
-              void window.plexfixer.jobs.clearAll()
-              setJobs([])
+            onClearQueue={() => {
+              void window.plexfixer.jobs.clearQueued()
+              // Mirrored here rather than re-fetched: the main process drops
+              // the same jobs, and a removal sends no update event.
+              setJobs((previous) => previous.filter((job) => job.state !== 'queued'))
             }}
             onReveal={(path) => void window.plexfixer.shell.reveal(path)}
           />

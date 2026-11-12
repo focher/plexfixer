@@ -223,7 +223,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.jobsClear, async (): Promise<void> => runner?.clearFinished())
 
-  ipcMain.handle(IPC.jobsClearAll, async (): Promise<void> => runner?.clearAll())
+  ipcMain.handle(IPC.jobsClearQueued, async (): Promise<number> => runner?.clearQueued() ?? 0)
 
   /* --- shell -------------------------------------------------------------- */
 

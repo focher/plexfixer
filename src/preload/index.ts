@@ -68,8 +68,8 @@ const api = {
     cancel: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.jobsCancel, id),
     cancelAll: (): Promise<void> => ipcRenderer.invoke(IPC.jobsCancelAll),
     clearFinished: (): Promise<void> => ipcRenderer.invoke(IPC.jobsClear),
-    /** Stop everything and empty the list. */
-    clearAll: (): Promise<void> => ipcRenderer.invoke(IPC.jobsClearAll),
+    /** Drop the repairs that have not started; returns how many went. */
+    clearQueued: (): Promise<number> => ipcRenderer.invoke(IPC.jobsClearQueued),
     onUpdate: (listener: (job: Job) => void): Unsubscribe => {
       const handler = (_event: unknown, payload: Job): void => listener(payload)
       ipcRenderer.on(IPC.jobUpdate, handler)

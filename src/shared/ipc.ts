@@ -24,7 +24,7 @@ export const IPC = {
   jobsCancel: 'jobs:cancel',
   jobsCancelAll: 'jobs:cancel-all',
   jobsClear: 'jobs:clear',
-  jobsClearAll: 'jobs:clear-all',
+  jobsClearQueued: 'jobs:clear-queued',
   revealPath: 'shell:reveal',
   fileContextMenu: 'shell:file-context-menu',
   initialPaths: 'app:initial-paths',
