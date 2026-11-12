@@ -506,6 +506,11 @@ export class RepairRunner {
       const extracted = await this.extractSubtitles(result, finalPath, signal, id)
 
       const notes: string[] = []
+      // Writing beside the original, or into an output folder, leaves the
+      // source file untouched — so the row it was started from goes on
+      // reporting the same faults, correctly. Say where the fixed file went,
+      // or "done" next to an unchanged status reads as a repair that failed.
+      if (finalPath !== result.file.path) notes.push(`written to ${basename(finalPath)}`)
       if (backupPath) notes.push(`original kept in ${join(BACKUP_LABEL, basename(backupPath))}`)
       if (extracted > 0) notes.push(`${extracted} subtitle sidecar${extracted === 1 ? '' : 's'} written`)
 

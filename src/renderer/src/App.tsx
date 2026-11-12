@@ -305,6 +305,12 @@ export default function App(): React.JSX.Element {
    * original path is gone we follow the finished job to the new one and the row
    * tracks the repaired file rather than disappearing.
    */
+  /** Where a finished repair of `path` actually wrote its file, if it finished. */
+  const finishedOutputFor = useCallback((path: string): string | undefined => {
+    const job = jobsByPathRef.current.get(path)
+    return job?.state === 'done' ? job.outputPath : undefined
+  }, [])
+
   const refreshFile = useCallback(
     async (path: string) => {
       setRefreshing((previous) => new Set(previous).add(path))
@@ -313,8 +319,7 @@ export default function App(): React.JSX.Element {
         let response = await window.plexfixer.scan.rescanFile(path)
 
         if (response.missing) {
-          const job = jobsByPathRef.current.get(path)
-          const moved = job?.state === 'done' ? job.outputPath : undefined
+          const moved = finishedOutputFor(path)
           if (moved && moved !== path) {
             targetPath = moved
             response = await window.plexfixer.scan.rescanFile(moved)
@@ -328,15 +333,29 @@ export default function App(): React.JSX.Element {
           // in the table and in IndexedDB, so a file the library no longer
           // holds is dropped rather than re-added.
           if (!libraryRef.current.has(path)) return
-          const entry = entryFromResult(response.result, libraryRef.current.get(path)?.scanRoot)
+          const scanRoot = libraryRef.current.get(path)?.scanRoot
+          const entries = [entryFromResult(response.result, scanRoot)]
           const remove = targetPath !== path ? [path] : []
+
+          // A repair set to write beside the original, or into an output
+          // folder, leaves the source exactly as it was: re-scanning it finds
+          // the same faults, and the row rightly keeps saying so. The repaired
+          // file is a different file, and nothing had ever put it in the
+          // library — so the fix the user just ran was nowhere on screen, and
+          // the row's "done" badge sat next to a status that had not budged.
+          const output = finishedOutputFor(path)
+          if (output && output !== targetPath) {
+            const made = await window.plexfixer.scan.rescanFile(output)
+            if (made.result) entries.push(entryFromResult(made.result, scanRoot))
+          }
+
           setLibrary((previous) => {
             const next = new Map(previous)
             for (const gone of remove) next.delete(gone)
-            next.set(entry.path, entry)
+            for (const added of entries) next.set(added.path, added)
             return next
           })
-          void writeLibrary([entry], remove).catch((error: unknown) => console.error('Could not save the scan', error))
+          void writeLibrary(entries, remove).catch((error: unknown) => console.error('Could not save the scan', error))
           if (targetPath !== path) {
             setSelected((previous) => {
               if (!previous.has(path)) return previous
@@ -377,7 +396,9 @@ export default function App(): React.JSX.Element {
         })
       }
     },
-    []
+    // `finishedOutputFor` reads a ref and never changes, so this stays the one
+    // handler every row keeps hold of for the life of the app.
+    [finishedOutputFor]
   )
 
   /**
