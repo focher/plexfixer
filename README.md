@@ -189,6 +189,16 @@ names what the numbers point at — a network mount, an index move that is half
 the run, a destination on another volume that forces the output to be copied
 again rather than renamed.
 
+The queue also shows *where* each repair has got to, as steps rather than a
+number: **Connecting → Copying 42% → Verifying → Moving**, with the index move
+and subtitle sidecars appearing when a file needs them. A percentage only
+exists while ffmpeg is copying; the steps either side of it are the ones that
+go quiet on a remote host or a slow link, and a bar sitting at 100% with no
+explanation is indistinguishable from a repair that has died. A job running on
+another machine says so on its own row, and if nothing is reported for 20
+seconds the row says how long it has been silent rather than letting a stopped
+bar speak for itself. A job that fails stays at the step it failed in.
+
 **Copy diagnostics** (or **Save diagnostics…**) in the Queue tab collects the
 build, the ffmpeg in use, the settings that shape repair cost, and the
 measurements of every repair in the session into one plain-text block to paste

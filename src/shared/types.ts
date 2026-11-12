@@ -528,6 +528,39 @@ export interface JobMetrics {
   sameVolume?: boolean
 }
 
+/**
+ * Where a repair has got to, as a step rather than a percentage.
+ *
+ * A percentage only exists while ffmpeg is copying. Everything either side of
+ * that — connecting, re-probing the output, moving the file into place — can
+ * take minutes on a big file or a slow link, and without a step to show, the
+ * bar sits at 100% and the repair looks hung when it is working.
+ */
+export type JobStage =
+  | 'waiting'
+  /** Reaching the machine that holds the file, and looking at where it lives. */
+  | 'connecting'
+  /** Working out what to run. */
+  | 'planning'
+  /** ffmpeg, copying. */
+  | 'copying'
+  /** The second pass that moves an MP4 index to the front. */
+  | 'finalising'
+  /** Re-probing the output to confirm it is what was asked for. */
+  | 'verifying'
+  /** Backing up the original and moving the output into place. */
+  | 'promoting'
+  /** Writing subtitle sidecars. */
+  | 'subtitles'
+  | 'finished'
+
+/** The machine a job is running on, recorded when it starts. */
+export interface JobHost {
+  kind: 'local' | 'remote'
+  /** `this machine`, or `plex@nas`. */
+  label: string
+}
+
 export interface Job {
   id: string
   sourcePath: string
@@ -545,6 +578,18 @@ export interface Job {
   log: JobLogEntry[]
   /** What each stage of the repair cost; filled in as the job runs. */
   metrics?: JobMetrics
+  /** Where it has got to. */
+  stage?: JobStage
+  /** The machine it is running on. */
+  host?: JobHost
+  /**
+   * When this job last reported anything at all.
+   *
+   * A remote repair can stop reporting because the link went quiet rather than
+   * because it failed; this is what lets the queue say "no update for 40s"
+   * instead of showing a bar that has silently stopped moving.
+   */
+  updatedAt?: number
 }
 
 /* ------------------------------------------------------------------ *

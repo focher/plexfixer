@@ -3,6 +3,7 @@ import type { AnalysisResult, AppSettings, EnvironmentInfo, Job, ModeOverrides, 
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { summarizeReason } from '@shared/plex/reason.js'
 import { fileStatus, type FileStatus } from '@shared/plex/facets.js'
+import { describeProgress } from '@shared/stages.js'
 import FileDetail from './FileDetail.js'
 import type { SortKey, SortState } from '@shared/sort.js'
 import { formatAgo, formatAudioCodec, formatBytes, formatVideoCodec, parentDirectory, shortenPath } from '../format.js'
@@ -275,7 +276,14 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                   <RefreshIcon className={isRefreshing ? 'spin' : undefined} />
                 </button>
                 {jobActive && job ? (
-                  <span className={`badge ${JOB_TONE[job.state]}`} title={job.message}>
+                  <span
+                    className={`badge ${JOB_TONE[job.state]}`}
+                    title={
+                      job.host?.kind === 'remote'
+                        ? `${describeProgress(job)} on ${job.host.label}`
+                        : describeProgress(job)
+                    }
+                  >
                     {job.state === 'running' ? `${Math.round(job.progress.fraction * 100)}%` : job.state}
                   </span>
                 ) : (

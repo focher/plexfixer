@@ -1649,3 +1649,83 @@ button.browser-row:hover:not(:disabled) {
   font-size: 11px;
   overflow-wrap: anywhere;
 }
+
+/* ---------- where a repair has got to ---------- */
+
+.stage-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.stage-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+/* The steps read as a track: each one leads to the next. */
+.stage-step + .stage-step::before {
+  content: '';
+  width: 10px;
+  height: 1px;
+  background: var(--border-strong);
+  margin-right: 5px;
+}
+
+.stage-step .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+}
+
+.stage-step.done {
+  color: var(--text-dim);
+}
+
+.stage-step.done .dot {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.stage-step.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stage-step.active .dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(229 160 13 / 20%);
+  animation: stage-pulse 1.6s ease-in-out infinite;
+}
+
+.stage-step .pct {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes stage-pulse {
+  50% {
+    box-shadow: 0 0 0 5px rgb(229 160 13 / 8%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-step.active .dot {
+    animation: none;
+  }
+}
+
+.stage-host {
+  color: var(--info);
+}
+
+.stage-stall {
+  color: var(--warn);
+}

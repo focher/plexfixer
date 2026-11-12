@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { AboutInfo, AnalysisResult, AppSettings, EnvironmentInfo, Job, JobLogEntry } from '@shared/types.js'
 import { buildDiagnosticsReport, buildJobReport } from '@shared/report.js'
 import { PHASE_LABEL, diagnoseMetrics, formatMs, phase, rankedPhases, summarizeMetrics } from '@shared/metrics.js'
+import { STAGE_DETAIL, describeProgress, stalledSeconds, stepsFor } from '@shared/stages.js'
 import { shortenPath } from '../format.js'
 
 const TONE: Record<Job['state'], string> = {
@@ -82,6 +83,43 @@ function JobTiming({ job }: { job: Job }): React.JSX.Element | null {
   )
 }
 
+/**
+ * Where the repair has got to, as steps rather than a number.
+ *
+ * The percentage only covers the copy. On another machine the steps either
+ * side of it are the ones that go quiet — connecting, re-probing the finished
+ * file over the link, moving it into place — and this is what distinguishes
+ * "still working" from "stopped".
+ */
+function StageTrack({ job, now }: { job: Job; now: number }): React.JSX.Element | null {
+  const steps = stepsFor(job)
+  if (steps.length === 0) return null
+  const stalled = stalledSeconds(job, now)
+  const percent = job.stage === 'copying' ? Math.round(job.progress.fraction * 100) : undefined
+
+  return (
+    <div className="stage-track">
+      {steps.map((step) => (
+        <span key={step.stage} className={`stage-step ${step.state}`} title={STAGE_DETAIL[step.stage]}>
+          <span className="dot" aria-hidden="true" />
+          {step.label}
+          {step.state === 'active' && percent != null ? <span className="pct"> {percent}%</span> : null}
+        </span>
+      ))}
+      {job.host?.kind === 'remote' ? (
+        <span className="stage-host" title={`This repair is running on ${job.host.label}`}>
+          on {job.host.label}
+        </span>
+      ) : null}
+      {stalled != null ? (
+        <span className="stage-stall" title="Nothing has been reported for a while. The repair may still be working.">
+          no update for {stalled}s
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 /** Bytes written so far, so a long copy visibly moves even at 0%. */
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
@@ -125,6 +163,14 @@ export default function JobsPanel({
 }): React.JSX.Element {
   const active = jobs.filter((job) => job.state === 'queued' || job.state === 'running')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  // Ticks only while something is running, so an idle queue costs nothing.
+  const [now, setNow] = useState(() => Date.now())
+  const running = active.length > 0
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [running])
   const [copied, setCopied] = useState<string>()
   const [saved, setSaved] = useState<string>()
 
@@ -267,6 +313,7 @@ export default function JobsPanel({
                       <div style={{ width: `${Math.round(job.progress.fraction * 100)}%` }} />
                     </div>
                   ) : null}
+                  <StageTrack job={job} now={now} />
                   <div className="job-actions">
                     <button className="ghost" onClick={() => toggle(job.id)} aria-expanded={open}>
                       {open ? '▾' : '▸'} {job.log.length} step{job.log.length === 1 ? '' : 's'}
@@ -279,7 +326,7 @@ export default function JobsPanel({
                 </span>
                 <span className="muted nowrap" style={{ fontSize: 12 }}>
                   {job.state === 'running'
-                    ? `${Math.round(job.progress.fraction * 100)}%${job.progress.speed ? ` · ${job.progress.speed}` : ''}${
+                    ? `${describeProgress(job)}${job.progress.speed ? ` · ${job.progress.speed}` : ''}${
                         job.progress.bytesWritten ? ` · ${formatBytes(job.progress.bytesWritten)}` : ''
                       }`
                     : (summary ??
