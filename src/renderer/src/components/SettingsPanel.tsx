@@ -495,23 +495,43 @@ function RemoteSection({
 }): React.JSX.Element {
   const [check, setCheck] = useState<RemoteCheck>()
   const [testing, setTesting] = useState(false)
+  const [trusting, setTrusting] = useState(false)
+
+  const asFailure = useCallback(
+    (error: unknown): RemoteCheck => ({
+      ok: false,
+      host: settings.remoteHost,
+      missing: [],
+      found: [],
+      problem: error instanceof Error ? error.message : String(error)
+    }),
+    [settings.remoteHost]
+  )
 
   const test = useCallback(async () => {
     setTesting(true)
     try {
       setCheck(await window.plexfixer.remote.check())
     } catch (error) {
-      setCheck({
-        ok: false,
-        host: settings.remoteHost,
-        missing: [],
-        found: [],
-        problem: error instanceof Error ? error.message : String(error)
-      })
+      setCheck(asFailure(error))
     } finally {
       setTesting(false)
     }
-  }, [settings.remoteHost])
+  }, [asFailure])
+
+  // Answering SSH's first-connection question: the key is recorded and the
+  // connection tested again in one step, because the only reason to record it
+  // is to get past this.
+  const trust = useCallback(async () => {
+    setTrusting(true)
+    try {
+      setCheck(await window.plexfixer.remote.trustHost())
+    } catch (error) {
+      setCheck(asFailure(error))
+    } finally {
+      setTrusting(false)
+    }
+  }, [asFailure])
 
   return (
     <section>
@@ -561,6 +581,36 @@ function RemoteSection({
         />
       </Field>
 
+      <Field
+        label="Private key"
+        hint="Blank uses your agent and ssh's usual identities, which is what most setups want."
+      >
+        <div className="control inline">
+          <input
+            type="text"
+            value={settings.remoteKeyPath}
+            placeholder="~/.ssh/id_ed25519"
+            spellCheck={false}
+            onChange={(event) => onChange({ remoteKeyPath: event.target.value })}
+          />
+          <button
+            onClick={() => {
+              void (async () => {
+                const path = await window.plexfixer.remote.pickKeyFile()
+                if (path) onChange({ remoteKeyPath: path })
+              })()
+            }}
+          >
+            Choose…
+          </button>
+          {settings.remoteKeyPath ? (
+            <button className="ghost" onClick={() => onChange({ remoteKeyPath: '' })}>
+              Clear
+            </button>
+          ) : null}
+        </div>
+      </Field>
+
       <Field label="Remote ffmpeg" hint="Blank means whatever is on the remote PATH.">
         <input
           type="text"
@@ -581,7 +631,7 @@ function RemoteSection({
         />
       </Field>
 
-      {check ? <CheckReport check={check} /> : null}
+      {check ? <CheckReport check={check} onTrust={() => void trust()} trusting={trusting} /> : null}
 
       {settings.remoteEnabled && environment?.remote ? (
         <p className="section-hint">
@@ -594,16 +644,48 @@ function RemoteSection({
   )
 }
 
-function CheckReport({ check }: { check: RemoteCheck }): React.JSX.Element {
+function CheckReport({
+  check,
+  onTrust,
+  trusting
+}: {
+  check: RemoteCheck
+  onTrust: () => void
+  trusting: boolean
+}): React.JSX.Element {
   return (
     <div className={`remote-check${check.ok ? ' ok' : ' bad'}`}>
       <div className="title">
-        <span className={`badge ${check.ok ? 'ok' : 'fail'}`}>{check.ok ? 'ready' : 'not ready'}</span>
+        <span className={`badge ${check.ok ? 'ok' : check.hostKeyUnknown ? 'warn' : 'fail'}`}>
+          {check.ok ? 'ready' : check.hostKeyUnknown ? 'new host' : 'not ready'}
+        </span>
         {check.host}
         {check.platform ? <span className="muted"> · {check.platform}</span> : null}
       </div>
       {check.problem ? <div className="detail-text">{check.problem}</div> : null}
       {check.hint ? <div className="detail-text hint-line">{check.hint}</div> : null}
+
+      {check.fingerprints && check.fingerprints.length > 0 ? (
+        <div className="fingerprints">
+          {check.fingerprints.map((key) => (
+            <div key={key.fingerprint} className="mono">
+              <span className="muted">{key.type}</span> {key.fingerprint}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {check.hostKeyUnknown ? (
+        <div>
+          <button className="primary" onClick={onTrust} disabled={trusting} style={{ marginTop: 6 }}>
+            {trusting ? 'Trusting…' : 'Trust this host'}
+          </button>
+          <div className="muted" style={{ marginTop: 6 }}>
+            This writes the key above to <code>~/.ssh/known_hosts</code> — the same thing typing “yes” at an ssh prompt
+            does. Only do it if the fingerprint matches the machine you mean.
+          </div>
+        </div>
+      ) : null}
       {check.ffmpegVersion ? <div className="muted mono">{check.ffmpegVersion}</div> : null}
       {check.ffprobeVersion ? <div className="muted mono">{check.ffprobeVersion}</div> : null}
       {check.ffmpegPath ? (

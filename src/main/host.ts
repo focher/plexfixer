@@ -387,7 +387,11 @@ export function remoteHost(target: SshTarget): Host {
 
 export function remoteTargetFor(settings: AppSettings): SshTarget | undefined {
   if (!settings.remoteEnabled || !settings.remoteHost.trim()) return undefined
-  return { host: settings.remoteHost.trim(), port: settings.remotePort > 0 ? settings.remotePort : undefined }
+  return {
+    host: settings.remoteHost.trim(),
+    port: settings.remotePort > 0 ? settings.remotePort : undefined,
+    identityFile: settings.remoteKeyPath.trim() || undefined
+  }
 }
 
 /** The host every scan and repair should use, given the settings in force. */

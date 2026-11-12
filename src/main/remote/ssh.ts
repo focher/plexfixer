@@ -21,6 +21,13 @@ export interface SshTarget {
   host: string
   /** Only when it differs from what ssh would use by itself. */
   port?: number
+  /**
+   * A private key to authenticate with. Without one, ssh uses the agent and
+   * the default identities, which is what most setups want; with one, only
+   * that key is offered, so a host that rejects it fails quickly and clearly
+   * rather than after trying everything else.
+   */
+  identityFile?: string
 }
 
 export interface SshResult {
@@ -72,6 +79,7 @@ export function sshArgs(target: SshTarget, remoteCommand: string): string[] {
     'ConnectTimeout=10',
     '-o',
     'ServerAliveInterval=20',
+    ...(target.identityFile ? ['-i', target.identityFile, '-o', 'IdentitiesOnly=yes'] : []),
     ...(target.port ? ['-p', String(target.port)] : []),
     target.host,
     remoteCommand

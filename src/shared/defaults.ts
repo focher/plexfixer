@@ -54,6 +54,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   remoteEnabled: false,
   remoteHost: '',
   remotePort: 0,
+  remoteKeyPath: '',
   remoteFfmpegPath: '',
   remoteFfprobePath: '',
 

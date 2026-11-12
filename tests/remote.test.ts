@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { explainSshFailure, shellCommand, shellQuote, sshArgs } from '../src/main/remote/ssh.js'
 import { checkScript, parseCheck, REQUIRED_UTILITIES } from '../src/main/remote/check.js'
 import { parseLsLong, parseStatLine, remoteHost, hostFor, remoteTargetFor } from '../src/main/host.js'
+import { keyMaterial, keysMatch, knownHostsName, parseFingerprints } from '../src/main/remote/hostkey.js'
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.js'
 
 describe('shellQuote', () => {
@@ -47,6 +48,48 @@ describe('sshArgs', () => {
     expect(args).not.toContain('-p')
     expect(args.slice(-2)).toEqual(['plex@nas', 'uname -s'])
     expect(sshArgs({ host: 'nas', port: 2222 }, 'x')).toContain('2222')
+  })
+
+  it('offers only the chosen key when one is given', () => {
+    const args = sshArgs({ host: 'nas', identityFile: '/Users/me/.ssh/id_ed25519' }, 'x')
+    expect(args).toContain('-i')
+    expect(args).toContain('/Users/me/.ssh/id_ed25519')
+    // Without this, ssh still tries every default identity first, and a host
+    // that rejects them fails slowly and for the wrong reason.
+    expect(args).toContain('IdentitiesOnly=yes')
+    expect(sshArgs({ host: 'nas' }, 'x')).not.toContain('-i')
+  })
+})
+
+describe('host keys', () => {
+  it('names a host the way known_hosts does', () => {
+    expect(knownHostsName({ hostname: 'nas.local', port: 22 })).toBe('nas.local')
+    expect(knownHostsName({ hostname: 'nas.local', port: 2222 })).toBe('[nas.local]:2222')
+  })
+
+  it('compares keys by their material, not by the host they are listed against', () => {
+    const recorded = ['nas.local,10.0.0.5 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAfake']
+    const sameKey = '[nas.local]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAfake'
+    const otherKey = 'nas.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAsomethingelse'
+
+    expect(keyMaterial(recorded[0]!)).toBe('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAfake')
+    // A hashed entry still compares, because the hash is only the hostname.
+    expect(keyMaterial('|1|abc=|def= ssh-rsa AAAAB3Nza')).toBe('ssh-rsa AAAAB3Nza')
+    expect(keysMatch(recorded, sameKey)).toBe(true)
+    expect(keysMatch(recorded, otherKey)).toBe(false)
+    expect(keysMatch([], sameKey)).toBe(false)
+  })
+
+  it('reads what ssh-keygen -l prints, type and all', () => {
+    const output = [
+      '256 SHA256:orNX1IZ7xPY838zo7sE+Qn+t4IpHFV03C3CqfoEVPfw 127.0.0.1 (ED25519)',
+      '3072 SHA256:RdTVE05N+lpZP0TGAAY0JBv01zo6A5HYtW/6T42IVkg 127.0.0.1 (RSA)'
+    ].join('\n')
+    expect(parseFingerprints(output)).toEqual([
+      { type: 'ED25519', fingerprint: 'SHA256:orNX1IZ7xPY838zo7sE+Qn+t4IpHFV03C3CqfoEVPfw' },
+      { type: 'RSA', fingerprint: 'SHA256:RdTVE05N+lpZP0TGAAY0JBv01zo6A5HYtW/6T42IVkg' }
+    ])
+    expect(parseFingerprints('no keys here')).toEqual([])
   })
 })
 
@@ -139,10 +182,15 @@ describe('hostFor', () => {
     expect(hostFor({ ...DEFAULT_SETTINGS, remoteHost: 'nas' }).kind).toBe('local')
     expect(hostFor({ ...DEFAULT_SETTINGS, remoteEnabled: true }).kind).toBe('local')
     expect(hostFor({ ...DEFAULT_SETTINGS, remoteEnabled: true, remoteHost: ' nas ' }).kind).toBe('remote')
-    expect(remoteTargetFor({ ...DEFAULT_SETTINGS, remoteEnabled: true, remoteHost: 'nas', remotePort: 2222 })).toEqual({
-      host: 'nas',
-      port: 2222
-    })
+    expect(
+      remoteTargetFor({
+        ...DEFAULT_SETTINGS,
+        remoteEnabled: true,
+        remoteHost: 'nas',
+        remotePort: 2222,
+        remoteKeyPath: ' /keys/id_ed25519 '
+      })
+    ).toEqual({ host: 'nas', port: 2222, identityFile: '/keys/id_ed25519' })
   })
 })
 

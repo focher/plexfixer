@@ -32,6 +32,8 @@ export const IPC = {
   saveText: 'app:save-text',
   remoteCheck: 'remote:check',
   remoteList: 'remote:list',
+  remoteTrustHost: 'remote:trust-host',
+  pickKeyFile: 'dialog:pick-key',
   // Events pushed to the renderer
   scanProgress: 'scan:progress',
   scanComplete: 'scan:complete',

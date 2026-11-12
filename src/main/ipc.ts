@@ -34,6 +34,7 @@ import { repairModeFor } from '@shared/mode.js'
 import { invalidateEnvironment, resolveEnvironment, type Environment } from './environment.js'
 import { hostFor, remoteHost, remoteTargetFor, type Host } from './host.js'
 import { checkRemote } from './remote/check.js'
+import { trustHost } from './remote/hostkey.js'
 import { RepairRunner } from './jobs/runner.js'
 import { scanRootFor } from './jobs/output.js'
 import { takeQueuedPaths } from './openPaths.js'
@@ -275,6 +276,48 @@ export function registerIpcHandlers(): void {
     // A successful test should take effect without a restart.
     if (check.ok) invalidateEnvironment()
     return check
+  })
+
+  /**
+   * Record the host's key, then test again.
+   *
+   * This is the "yes" to SSH's first-connection question, which a batch-mode
+   * connection cannot ask. It writes nothing unless the user pressed the
+   * button, and `trustHost` refuses outright when a *different* key is already
+   * recorded for that host.
+   */
+  ipcMain.handle(IPC.remoteTrustHost, async (): Promise<RemoteCheck> => {
+    const settings = await getSettings()
+    const target = remoteTargetFor({ ...settings, remoteEnabled: true })
+    if (!target) {
+      return { ok: false, host: '', missing: [], found: [], problem: 'Enter the host to connect to first.' }
+    }
+    const trusted = await trustHost(target)
+    if (!trusted.ok) {
+      return {
+        ok: false,
+        host: target.host,
+        missing: [],
+        found: [],
+        problem: trusted.problem,
+        hint: trusted.hint,
+        hostKeyChanged: true
+      }
+    }
+    const check = await checkRemote(target, settings)
+    if (check.ok) invalidateEnvironment()
+    // Say what was recorded, whatever the connection then made of it.
+    return { ...check, fingerprints: check.fingerprints ?? trusted.fingerprints }
+  })
+
+  ipcMain.handle(IPC.pickKeyFile, async (): Promise<string | undefined> => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Choose a private key',
+      // `~/.ssh` is hidden, which is where every key people have lives.
+      defaultPath: join(app.getPath('home'), '.ssh'),
+      properties: ['openFile', 'showHiddenFiles', 'dontAddToRecent']
+    })
+    return canceled ? undefined : filePaths[0]
   })
 
   ipcMain.handle(IPC.remoteList, async (_event, path?: string): Promise<RemoteListing> => {
