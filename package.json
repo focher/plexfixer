@@ -1,6 +1,6 @@
 {
   "name": "plexfixer",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Analyze and fix MKV/M4V media files for reliable Plex direct play",
   "author": "Timothy Weaver",
   "license": "MIT",
