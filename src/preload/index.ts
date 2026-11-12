@@ -8,6 +8,7 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
+  AboutInfo,
   AppSettings,
   EnvironmentInfo,
   Job,
@@ -83,6 +84,17 @@ const api = {
   app: {
     /** Paths the app was launched with (command line, Finder, Dock drop). */
     initialPaths: (): Promise<string[]> => ipcRenderer.invoke(IPC.initialPaths),
+    /** The build and the runtime under it, for the About panel. */
+    about: (): Promise<AboutInfo> => ipcRenderer.invoke(IPC.about),
+    /** Write a report to a file the user picks; resolves to the path, or undefined if cancelled. */
+    saveText: (suggestedName: string, contents: string): Promise<string | undefined> =>
+      ipcRenderer.invoke(IPC.saveText, suggestedName, contents),
+    /** The About menu item was chosen. */
+    onShowAbout: (listener: () => void): Unsubscribe => {
+      const handler = (): void => listener()
+      ipcRenderer.on(IPC.showAbout, handler)
+      return () => ipcRenderer.removeListener(IPC.showAbout, handler)
+    },
     onOpenPaths: (listener: (paths: string[]) => void): Unsubscribe => {
       const handler = (_event: unknown, payload: string[]): void => listener(payload)
       ipcRenderer.on(IPC.openPaths, handler)

@@ -8,6 +8,7 @@
  */
 
 import type {
+  AboutInfo,
   AnalysisResult,
   AppSettings,
   EnvironmentInfo,
@@ -16,6 +17,9 @@ import type {
   MediaFile,
   RepairMode
 } from './types.js'
+import { buildAboutText } from './about.js'
+import { blockedReasons } from './plex/blocked.js'
+import { diagnoseMetrics, formatBytes, formatMs, metricsLines, phase, summarizeMetrics } from './metrics.js'
 
 export interface ReportContext {
   job: Job
@@ -185,6 +189,18 @@ export function buildFileReport(context: FileReportContext): string {
     for (const finding of result.plan.unresolved) out.push(`[${finding.severity}] ${finding.title} (${finding.code})`)
   }
 
+  // The same explanation the detail pane shows, so a shared report answers
+  // "why will it not fix this?" without the app open beside it.
+  const blocked = blockedReasons(result)
+  if (blocked.length > 0) {
+    out.push(section('Why this file is blocked'))
+    for (const reason of blocked) {
+      out.push(`${reason.title}`)
+      out.push(`    why          ${reason.why}`)
+      out.push(`    what you can ${reason.youCan}`)
+    }
+  }
+
   return out.join('\n')
 }
 
@@ -214,6 +230,16 @@ export function buildJobReport(context: ReportContext): string {
     out.push(job.command.map((part) => (/[\s"'$`\\]/.test(part) ? JSON.stringify(part) : part)).join(' '))
   }
 
+  if (job.metrics) {
+    out.push(section('Performance'))
+    out.push(...metricsLines(job.metrics))
+    const notes = diagnoseMetrics(job.metrics)
+    if (notes.length > 0) {
+      out.push('', 'What that points at:')
+      for (const note of notes) out.push(`  • ${note}`)
+    }
+  }
+
   out.push(section('Log'))
   const start = job.log[0]?.at ?? job.startedAt ?? Date.now()
   if (job.log.length === 0) {
@@ -224,6 +250,133 @@ export function buildJobReport(context: ReportContext): string {
       if (entry.detail) {
         for (const line of entry.detail.split('\n')) out.push(`         ${line}`)
       }
+    }
+  }
+
+  return out.join('\n')
+}
+
+/* ------------------------------------------------------------------ *
+ * Whole-app diagnostics
+ * ------------------------------------------------------------------ */
+
+export interface DiagnosticsContext {
+  about?: AboutInfo
+  environment?: EnvironmentInfo
+  settings?: AppSettings
+  /** Every job this session knows about; finished ones carry measurements. */
+  jobs: Job[]
+  /** The analysis of each job's source, where the library still holds it. */
+  resultsByPath?: Map<string, AnalysisResult>
+  /** How the scanned library breaks down, for context on what was repaired. */
+  library?: { total: number; passed: number; fixable: number; reencode: number; blocked: number }
+  platform?: string
+}
+
+/** The settings that decide how fast a repair runs, rather than what it does. */
+function describePerformanceSettings(settings: AppSettings): string[] {
+  return [
+    `concurrency       ${settings.concurrency}`,
+    `output placement  ${settings.outputPlacement}${
+      settings.outputPlacement === 'output-dir' ? ` -> ${settings.outputDirectory || '(not set)'}` : ''
+    }`,
+    `keep backups      ${settings.keepBackups}`,
+    `target container  ${settings.targetContainer} (remux MKV to MP4: ${settings.remuxMkvToMp4})`,
+    `extract subs      ${settings.extractTextSubtitles}`,
+    `hardware encoder  ${settings.hardwareEncoder}`,
+    `transcode codec   ${settings.transcodeVideoCodec} @ quality ${settings.videoQuality}`
+  ]
+}
+
+/**
+ * Everything needed to answer "why was that slow?" from outside the machine.
+ *
+ * Deliberately one plain-text block: it is meant to be pasted into a message,
+ * so it carries the build, the settings that shape a repair's cost, and the
+ * measurements of what actually ran — not a log file someone has to go and
+ * find.
+ */
+export function buildDiagnosticsReport(context: DiagnosticsContext): string {
+  const { about, environment, settings, jobs } = context
+  const out: string[] = []
+
+  out.push('# PlexFixer diagnostics')
+  out.push('')
+  out.push(`generated  ${new Date().toISOString()}`)
+  if (context.platform) out.push(`platform   ${context.platform}`)
+  if (about) {
+    out.push('')
+    out.push(buildAboutText(about, environment))
+  } else if (environment) {
+    out.push(section('Environment'))
+    out.push(...describeEnvironment(environment))
+  }
+
+  if (settings) {
+    out.push(section('Settings that decide repair cost'))
+    out.push(...describePerformanceSettings(settings))
+    out.push(section('Settings that decide the verdict'))
+    out.push(...describeSettings(settings))
+  }
+
+  if (context.library) {
+    const { total, passed, fixable, reencode, blocked } = context.library
+    out.push(section('Library'))
+    out.push(`scanned    ${total}`)
+    out.push(`passed     ${passed}`)
+    out.push(`fixable    ${fixable}`)
+    out.push(`re-encode  ${reencode}`)
+    out.push(`blocked    ${blocked}`)
+  }
+
+  const measured = jobs.filter((job) => job.metrics && phase(job.metrics, 'total'))
+  out.push(section(`Repairs (${jobs.length}, ${measured.length} measured)`))
+  if (jobs.length === 0) out.push('(nothing has been repaired in this session)')
+
+  // Most recent first: the repair someone is asking about is the last one run.
+  const ordered = [...jobs].sort((a, b) => (b.finishedAt ?? b.startedAt ?? 0) - (a.finishedAt ?? a.startedAt ?? 0))
+  for (const job of ordered.slice(0, 25)) {
+    const result = context.resultsByPath?.get(job.sourcePath)
+    out.push('')
+    out.push(`• ${job.sourcePath}`)
+    out.push(`  ${job.state} · ${job.strategy} · mode ${job.mode}${job.message ? ` · ${job.message}` : ''}`)
+    if (result) {
+      out.push(
+        `  ${result.file.formatName} · ${formatBytes(result.file.sizeBytes)} · ` +
+          `${Math.round(result.file.durationSeconds ?? 0)}s · ${result.plan.costNote}`
+      )
+    }
+    if (job.metrics) {
+      const summary = summarizeMetrics(job.metrics)
+      if (summary) out.push(`  ${summary}`)
+      for (const line of metricsLines(job.metrics)) out.push(`  ${line}`)
+      for (const note of diagnoseMetrics(job.metrics)) out.push(`  → ${note}`)
+    }
+    // A failure is the one case where the steps matter more than the timings.
+    if (job.state === 'failed') {
+      out.push('  Last steps:')
+      for (const entry of job.log.slice(-8)) {
+        out.push(`    ${entry.level === 'info' ? ' ' : entry.level === 'warn' ? '!' : 'x'} ${entry.text}`)
+        if (entry.detail) for (const line of entry.detail.split('\n').slice(0, 6)) out.push(`        ${line}`)
+      }
+    }
+  }
+
+  const throughputs = measured
+    .map((job) => job.metrics?.mbPerSecond)
+    .filter((rate): rate is number => typeof rate === 'number' && rate > 0)
+  if (throughputs.length > 1) {
+    const sorted = [...throughputs].sort((a, b) => a - b)
+    const median = sorted[Math.floor(sorted.length / 2)] ?? 0
+    out.push(section('Across this session'))
+    out.push(`repairs measured  ${throughputs.length}`)
+    out.push(`median throughput ${Math.round(median)} MB/s`)
+    out.push(`slowest / fastest ${Math.round(sorted[0] ?? 0)} / ${Math.round(sorted[sorted.length - 1] ?? 0)} MB/s`)
+    const slowest = measured
+      .slice()
+      .sort((a, b) => (phase(b.metrics!, 'total')?.ms ?? 0) - (phase(a.metrics!, 'total')?.ms ?? 0))[0]
+    if (slowest) {
+      out.push(`longest repair    ${formatMs(phase(slowest.metrics!, 'total')?.ms ?? 0)} — ${slowest.sourcePath}`)
     }
   }
 

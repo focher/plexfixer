@@ -6,7 +6,7 @@
  * successfully. A failed or cancelled job leaves the original untouched.
  */
 
-import { open } from 'node:fs/promises'
+import { open, stat } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -15,8 +15,11 @@ import type {
   EncoderCapabilities,
   Job,
   JobLogLevel,
+  JobMetrics,
+  JobPhase,
   RepairMode
 } from '@shared/types.js'
+import { describeVolume } from '../volumes.js'
 import { FfmpegError, runFfmpeg } from '../ffmpeg/run.js'
 import { probeFile } from '../ffmpeg/probe.js'
 import { buildRepairCommand, buildSubtitleExtractCommands } from './command.js'
@@ -140,6 +143,45 @@ export class RepairRunner {
     const job = this.jobs.get(id)
     if (!job) return
     this.update({ ...job, log: [...job.log, { at: Date.now(), level, text, detail }] })
+  }
+
+  /**
+   * Record how long one stage took.
+   *
+   * Measured rather than inferred: "the remux was slow" is only actionable
+   * once it is clear whether the time went on reading the source, on the
+   * second pass that moves the MP4 index, or on moving the result across
+   * volumes afterwards.
+   */
+  private addPhase(id: string, phase: JobPhase, ms: number, extra?: { bytes?: number; note?: string }): void {
+    const job = this.jobs.get(id)
+    if (!job) return
+    const metrics: JobMetrics = job.metrics ?? { phases: [] }
+    this.update({
+      ...job,
+      metrics: {
+        ...metrics,
+        phases: [...metrics.phases.filter((entry) => entry.phase !== phase), { phase, ms: Math.round(ms), ...extra }]
+      }
+    })
+  }
+
+  private mergeMetrics(id: string, patch: Partial<JobMetrics>): void {
+    const job = this.jobs.get(id)
+    if (!job) return
+    this.update({ ...job, metrics: { ...(job.metrics ?? { phases: [] }), ...patch } })
+  }
+
+  /** Where the source and the destination live, and whether that is one volume. */
+  private async recordVolumes(id: string, sourcePath: string, outputPath: string): Promise<void> {
+    try {
+      const [source, output] = await Promise.all([describeVolume(sourcePath), describeVolume(outputPath)])
+      const sameVolume =
+        source.device != null && output.device != null ? source.device === output.device : undefined
+      this.mergeMetrics(id, { source, output, sameVolume })
+    } catch {
+      /* diagnostics must never fail a repair */
+    }
   }
 
   /**
@@ -367,8 +409,20 @@ export class RepairRunner {
       return false
     }
 
-    const finished = this.jobs.get(id)
-    if (finished) {
+    const running = this.jobs.get(id)
+    if (running) {
+      const elapsed = running.startedAt ? Date.now() - running.startedAt : 0
+      this.addPhase(id, 'in-place-edit', elapsed, {
+        note: `${patches.length} field${patches.length === 1 ? '' : 's'} rewritten; nothing copied`
+      })
+      this.addPhase(id, 'total', elapsed)
+      this.mergeMetrics(id, {
+        sourceBytes: result.file.sizeBytes,
+        durationSeconds: result.file.durationSeconds
+      })
+      // Re-read: the lines above are updates of their own, and spreading the
+      // snapshot taken before them would throw the measurements away.
+      const finished = this.jobs.get(id) ?? running
       const seconds = finished.startedAt ? ((Date.now() - finished.startedAt) / 1000).toFixed(1) : '?'
       this.update({
         ...finished,
@@ -397,7 +451,9 @@ export class RepairRunner {
     // atom, so they can be written straight into the file. Rewriting 6 GB
     // across a network share to change four bytes is the slowest thing this
     // app does, and for most of a real library it is all a repair amounts to.
+    const checkStarted = performance.now()
     if (await this.tryInPlace(id, options, outputPath)) return
+    const checkMs = performance.now() - checkStarted
 
     const { args, encoderLabel } = buildRepairCommand({ result, settings, caps, outputPath })
     const temporaryPath = temporaryPathFor(outputPath)
@@ -426,6 +482,17 @@ export class RepairRunner {
     )
     this.log(id, 'info', 'Writing to a temporary file first', temporaryPath)
 
+    this.addPhase(id, 'in-place-check', checkMs, { note: 'no in-place edit was possible, so the file is rewritten' })
+    this.mergeMetrics(id, { sourceBytes: result.file.sizeBytes, durationSeconds: result.file.durationSeconds })
+    await this.recordVolumes(id, result.file.path, outputPath)
+
+    // Timestamps rather than wrapped calls: each stage is one await in a
+    // sequence, and bracketing them individually would bury the sequence.
+    const ffmpegStarted = performance.now()
+    let lastProgressAt = 0
+    let finaliseFrom: number | undefined
+    let lastSpeed: string | undefined
+
     try {
       await runFfmpeg({
         ffmpegPath: this.binaries.ffmpegPath,
@@ -437,6 +504,11 @@ export class RepairRunner {
           const job = this.jobs.get(id)
           if (!job || job.state !== 'running') return
           this.update({ ...job, progress })
+          lastProgressAt = performance.now()
+          if (progress.speed) lastSpeed = progress.speed
+          // Everything after the last byte is reported is the finalising pass,
+          // which is where an MP4 index move hides.
+          if (finaliseFrom == null && progress.fraction >= 0.999) finaliseFrom = performance.now()
 
           // A multi-gigabyte remux over a network share runs for minutes with
           // nothing to show for it, which is indistinguishable from a hang.
@@ -474,12 +546,37 @@ export class RepairRunner {
         }
       })
 
+      const ffmpegMs = performance.now() - ffmpegStarted
       if (signal.aborted) throw new Error('Cancelled')
       this.log(id, 'info', 'ffmpeg finished cleanly')
 
+      const outputBytes = await stat(temporaryPath)
+        .then((info) => info.size)
+        .catch(() => undefined)
+      this.addPhase(id, 'ffmpeg', ffmpegMs, { bytes: outputBytes })
+      this.mergeMetrics(id, {
+        outputBytes,
+        ffmpegSpeed: lastSpeed,
+        mbPerSecond: outputBytes && ffmpegMs > 0 ? outputBytes / (1024 * 1024) / (ffmpegMs / 1000) : undefined
+      })
+
+      // The tail after the last progress report is the second pass: for an MP4
+      // whose index has to move to the front, it is another run over the whole
+      // file with nothing to show for it.
+      const tail = finaliseFrom != null ? performance.now() - finaliseFrom : lastProgressAt ? performance.now() - lastProgressAt : 0
+      if (tail > 500) {
+        this.addPhase(id, 'finalise', tail, {
+          note: result.plan.faststart
+            ? 'second pass over the file to put the index at the front'
+            : 'ffmpeg finishing after the last byte was reported'
+        })
+      }
+
       // Confirm the output is a readable media file with the streams we asked
       // for. ffmpeg can exit 0 having produced something unplayable.
+      const verifyStarted = performance.now()
       const probed = await probeFile(temporaryPath, { ffprobePath: this.binaries.ffprobePath, includeSidecars: false })
+      this.addPhase(id, 'verify', performance.now() - verifyStarted)
       const hasVideo = probed.streams.some((s) => s.kind === 'video')
       const hasAudio = probed.streams.some((s) => s.kind === 'audio')
       const sourceHadAudio = result.file.streams.some((s) => s.kind === 'audio')
@@ -488,12 +585,17 @@ export class RepairRunner {
         throw new Error('The repaired file is missing streams — the original has been left untouched.')
       }
 
+      const promoteStarted = performance.now()
       const { finalPath, backupPath } = await promoteOutput(
         temporaryPath,
         outputPath,
         result.file.path,
         settings
       )
+      this.addPhase(id, 'promote', performance.now() - promoteStarted, {
+        bytes: outputBytes,
+        note: backupPath ? 'moved the original into the backup folder, then the output into place' : undefined
+      })
       this.log(
         id,
         'info',
@@ -503,7 +605,13 @@ export class RepairRunner {
 
       // Sidecar subtitles are written next to the finished file, named so Plex
       // picks them up automatically.
+      const subtitlesStarted = performance.now()
       const extracted = await this.extractSubtitles(result, finalPath, signal, id)
+      if (result.plan.extractSubtitles.length > 0) {
+        this.addPhase(id, 'subtitles', performance.now() - subtitlesStarted, {
+          note: `${extracted} of ${result.plan.extractSubtitles.length} written`
+        })
+      }
 
       const notes: string[] = []
       // Writing beside the original, or into an output folder, leaves the
@@ -514,8 +622,10 @@ export class RepairRunner {
       if (backupPath) notes.push(`original kept in ${join(BACKUP_LABEL, basename(backupPath))}`)
       if (extracted > 0) notes.push(`${extracted} subtitle sidecar${extracted === 1 ? '' : 's'} written`)
 
-      const job = this.jobs.get(id)
-      if (job) {
+      const running = this.jobs.get(id)
+      if (running) {
+        this.addPhase(id, 'total', running.startedAt ? Date.now() - running.startedAt : 0)
+        const job = this.jobs.get(id) ?? running
         const seconds = job.startedAt ? ((Date.now() - job.startedAt) / 1000).toFixed(1) : '?'
         this.update({
           ...job,
@@ -529,9 +639,11 @@ export class RepairRunner {
       }
     } catch (error) {
       await discardTemporary(temporaryPath)
-      const job = this.jobs.get(id)
-      if (!job) return
+      const running = this.jobs.get(id)
+      if (!running) return
       const cancelled = signal.aborted
+      this.addPhase(id, 'total', running.startedAt ? Date.now() - running.startedAt : 0)
+      const job = this.jobs.get(id) ?? running
       const text = cancelled ? 'Cancelled' : error instanceof Error ? error.message : String(error)
 
       // ffmpeg's own stderr is the part worth sharing; without it a failure

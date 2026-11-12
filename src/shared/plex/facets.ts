@@ -13,10 +13,12 @@
  */
 
 import type { AnalysisResult } from '../types.js'
+import { isBlocked } from './blocked.js'
 import { videoStreams } from './tracks.js'
 
 export type ResultFacet =
   | 'direct-play'
+  | 'fixable'
   | 'remux-only'
   | 'container'
   | 'faststart'
@@ -31,11 +33,13 @@ export type ResultFacet =
   | 'blocked'
 
 /**
- * Display order, loosely cheapest work first. `blocked` is left out: the
- * "Needs you" status tile shows exactly those files.
+ * Display order: the three answers to "can this be fixed?" first, then the
+ * kinds of work, loosely cheapest first.
  */
 export const FACET_ORDER: ResultFacet[] = [
   'direct-play',
+  'fixable',
+  'blocked',
   'remux-only',
   'container',
   'faststart',
@@ -59,6 +63,10 @@ export const FACET_INFO: Record<ResultFacet, FacetDescription> = {
   'direct-play': {
     label: 'Direct plays',
     hint: 'Nothing to do — these already stream to every client without the server touching them.'
+  },
+  fixable: {
+    label: 'Fixable',
+    hint: 'PlexFixer can repair these: a stream copy, or a re-encode where nothing else will do.'
   },
   'remux-only': {
     label: 'Remux only',
@@ -105,8 +113,8 @@ export const FACET_INFO: Record<ResultFacet, FacetDescription> = {
     hint: 'A stream copy cannot fix this file at the configured target: the video has to be re-encoded.'
   },
   blocked: {
-    label: 'Needs you',
-    hint: 'Something here cannot be repaired automatically.'
+    label: 'Blocked',
+    hint: 'Something here has no automatic repair. Open a row to see why, and what you can do about it.'
   }
 }
 
@@ -115,7 +123,12 @@ export function facetsFor(result: AnalysisResult): Set<ResultFacet> {
   const { plan, file } = result
   const facets = new Set<ResultFacet>()
 
-  if (plan.unresolved.some((finding) => finding.severity !== 'info')) facets.add('blocked')
+  const blocked = isBlocked(result)
+  if (blocked) facets.add('blocked')
+  // Fixable and blocked are the two halves of "will PlexFixer deal with this?",
+  // so nothing carries both: a file with an unresolved blocker is blocked even
+  // when the plan would also fix three other things about it.
+  if (!blocked && plan.strategy !== 'none') facets.add('fixable')
 
   if (plan.strategy === 'none') {
     facets.add('direct-play')
@@ -198,7 +211,7 @@ export function fileStatus(result: AnalysisResult): FileStatus {
   if (result.verdict === 'ok') return 'passed'
   // Same rule as the "blocked" facet: an unresolved info note is a choice the
   // plan made on purpose, not something to go and fix.
-  if (result.plan.unresolved.some((finding) => finding.severity !== 'info')) return 'manual'
+  if (isBlocked(result)) return 'manual'
   if (result.plan.requiresTranscode) return 'reencode'
   if (result.plan.strategy !== 'none') return 'fixable'
   // Something is wrong and nothing will happen about it.

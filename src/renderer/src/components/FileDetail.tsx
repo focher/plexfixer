@@ -3,6 +3,7 @@ import type { AnalysisResult, AppSettings, EnvironmentInfo, Job, ModeOverrides, 
 import { buildFileReport } from '@shared/report.js'
 import { languageName } from '@shared/languages.js'
 import { MODE_LABEL, findOverrideKey, resolveMode, type ResolvedMode } from '@shared/mode.js'
+import { blockedReasons } from '@shared/plex/blocked.js'
 import StreamTable from './StreamTable.js'
 import { formatBitrate, formatBytes, formatDuration, parentDirectory, shortenPath } from '../format.js'
 
@@ -65,7 +66,8 @@ export default function FileDetail({
   overrides,
   onSetMode,
   settings,
-  environment
+  environment,
+  appVersion
 }: {
   result: AnalysisResult
   job?: Job
@@ -78,6 +80,7 @@ export default function FileDetail({
   /** Included in the diagnostic report, since both shape the verdict. */
   settings?: AppSettings
   environment?: EnvironmentInfo
+  appVersion?: string
 }): React.JSX.Element {
   const { file, plan, findings } = result
   const [copied, setCopied] = useState(false)
@@ -87,6 +90,7 @@ export default function FileDetail({
       result,
       settings,
       environment,
+      appVersion,
       mode: mode.mode,
       modeSource: mode.source === 'default' ? 'the default' : `set on ${mode.from}`,
       platform: navigator.userAgent.includes('Mac')
@@ -103,8 +107,9 @@ export default function FileDetail({
       // Clipboard can be refused; the detail pane is still on screen.
       setCopied(false)
     }
-  }, [result, settings, environment, mode])
+  }, [result, settings, environment, appVersion, mode])
 
+  const blocked = blockedReasons(result)
   const folder = parentDirectory(file.path)
   const fileKey = findOverrideKey(file.path, overrides)
   const folderKey = findOverrideKey(folder, overrides)
@@ -174,6 +179,23 @@ export default function FileDetail({
           onChange={(next) => onSetMode(folderKey ?? folder, next)}
         />
       </div>
+
+      {blocked.length > 0 ? (
+        <>
+          <h4>
+            Why this is blocked <span className="badge fail">no automatic fix</span>
+          </h4>
+          {blocked.map((reason) => (
+            <div className="blocked-reason" key={reason.code}>
+              <div className="title">{reason.title}</div>
+              <div className="detail-text">{reason.why}</div>
+              <div className="detail-text you-can">
+                <strong>What you can do:</strong> {reason.youCan}
+              </div>
+            </div>
+          ))}
+        </>
+      ) : null}
 
       <h4>Tracks</h4>
       <StreamTable result={result} />

@@ -87,7 +87,11 @@ export function summarizeReason(result: AnalysisResult): ReasonSummary {
           ? 'ok'
           : 'fix'
 
-  const lead = rank(findings, unresolved)[0]
+  // On a blocked file the headline is what is blocking it. A fixed-by-the-plan
+  // blocker can be more severe than the thing the user has to decide about —
+  // and leading with a problem the repair already handles buries the one it
+  // does not.
+  const lead = blocking.length > 0 ? rank(blocking, unresolved)[0] : rank(findings, unresolved)[0]
 
   return {
     tone,

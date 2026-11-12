@@ -28,9 +28,12 @@ export const IPC = {
   revealPath: 'shell:reveal',
   fileContextMenu: 'shell:file-context-menu',
   initialPaths: 'app:initial-paths',
+  about: 'app:about',
+  saveText: 'app:save-text',
   // Events pushed to the renderer
   scanProgress: 'scan:progress',
   scanComplete: 'scan:complete',
   jobUpdate: 'job:update',
-  openPaths: 'app:open-paths'
+  openPaths: 'app:open-paths',
+  showAbout: 'app:show-about'
 } as const

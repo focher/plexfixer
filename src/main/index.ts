@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { BrowserWindow, app, shell } from 'electron'
 import { registerIpcHandlers } from './ipc.js'
+import { installApplicationMenu } from './menu.js'
 import { IPC } from '@shared/ipc.js'
 import { parseLaunchArgs } from '@shared/launch.js'
 import { filterExistingPaths, onPaths, pathsFromArgv, queuePaths, userArgs } from './openPaths.js'
@@ -85,6 +86,7 @@ if (!gotLock) {
 
   void app.whenReady().then(() => {
     registerIpcHandlers()
+    installApplicationMenu()
     queuePaths(pathsFromArgv(process.argv))
     createWindow()
 

@@ -54,7 +54,9 @@ commentary track — carries the default flag.
 library, which persists between launches. Scanning only reads. Re-scanning a
 folder updates its files and drops the ones that are gone; changing a setting
 re-evaluates the whole library without re-probing anything. A search box
-narrows the list by any part of the path. **Clear list** empties the library —
+narrows the list by any part of the path, every column header sorts the table,
+and the **Fixable** and **Blocked** chips split the library by whether
+PlexFixer can repair a file at all. **Clear list** empties the library —
 PlexFixer forgets what it has scanned, and the files themselves are untouched.
 
 Nothing is written until you ask, per file or for the selection:
@@ -64,6 +66,17 @@ Nothing is written until you ask, per file or for the selection:
 | **Repair** | Use the file's own mode — see *Repair modes* below. |
 | **Safe remux** | Apply every fix that is a stream copy. Skips files needing a re-encode. |
 | **Force transcode** | Also re-encode the video, with GPU acceleration where available. |
+
+### When a file is blocked
+
+**Blocked** means no automatic repair applies. Opening the row says why, which
+is a different question from what is wrong: DRM cannot be remuxed by anything;
+Dolby Vision profile 5 needs its RPU metadata rewritten, which ffmpeg alone
+cannot do and a plain re-encode would destroy; a file above the height ceiling
+would have to be scaled down, which throws away detail permanently and which
+Force transcode will *not* do either. Each reason comes with the move that is
+actually open to you — a setting to change, a client preference, or a different
+tool.
 
 ### Repair modes
 
@@ -113,6 +126,31 @@ a machine with no NVIDIA driver will not be offered.
 
 Decoding and filtering stay on the CPU, which keeps deinterlacing and scaling
 correct on every build; the encode, which dominates the cost, runs on the GPU.
+
+### About
+
+**About** — in the app menu, or the button at the right of the title bar — reports
+the version, the Electron and Chromium under it, which ffmpeg is in use and where
+that binary came from, the hardware encoders that were actually detected, and the
+folder settings live in. **Copy details** puts the same lines on the clipboard, which
+is what a useful bug report starts with; the version now appears in the per-file and
+per-job diagnostic reports too.
+
+## Measuring a repair
+
+Every repair records what each stage cost: the check for an in-place edit,
+ffmpeg itself, the second pass that moves an MP4 index to the front, re-probing
+the output, and moving the finished file into place. The queue shows where the
+time went as a bar per stage, with the throughput and the realtime multiple, and
+names what the numbers point at — a network mount, an index move that is half
+the run, a destination on another volume that forces the output to be copied
+again rather than renamed.
+
+**Copy diagnostics** (or **Save diagnostics…**) in the Queue tab collects the
+build, the ffmpeg in use, the settings that shape repair cost, and the
+measurements of every repair in the session into one plain-text block to paste
+into a bug report. Each individual repair also still has its own **Copy
+report**.
 
 ## Running it
 

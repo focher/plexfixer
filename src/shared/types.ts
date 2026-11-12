@@ -435,6 +435,74 @@ export interface JobLogEntry {
   detail?: string
 }
 
+/* ------------------------------------------------------------------ *
+ * Repair performance
+ * ------------------------------------------------------------------ */
+
+/** The measurable stages of a repair. */
+export type JobPhase =
+  /** Deciding whether the repair fits in the file's header. */
+  | 'in-place-check'
+  /** Writing those header fields. */
+  | 'in-place-edit'
+  /** ffmpeg, start to exit. */
+  | 'ffmpeg'
+  /** The tail of the ffmpeg run after the last progress report — the MP4 index move. */
+  | 'finalise'
+  /** Re-probing the output to confirm it is what was asked for. */
+  | 'verify'
+  /** Backing up the original and moving the output into place. */
+  | 'promote'
+  /** Writing subtitle sidecars. */
+  | 'subtitles'
+  /** Queued to finished. */
+  | 'total'
+
+export interface JobPhaseTiming {
+  phase: JobPhase
+  ms: number
+  /** Bytes the phase moved, where it moved any. */
+  bytes?: number
+  /** Why it took the path it did, when that is the interesting part. */
+  note?: string
+}
+
+/** Whether a path is on a local disk or across a network, and where. */
+export interface VolumeInfo {
+  /** Mount point, e.g. `/` or `/Volumes/Media`. */
+  mount?: string
+  /** What is mounted there: a device node, or `//user@host/share` for SMB. */
+  filesystem?: string
+  kind: 'local' | 'network' | 'unknown'
+  /** Device id from stat(2); equal ids mean a move is a rename, not a copy. */
+  device?: number
+}
+
+/**
+ * What a repair actually cost, measured rather than guessed.
+ *
+ * A remux is a byte copy, so "slower than expected" is nearly always one of
+ * four things: the source is read over a network, the MP4 index move is a
+ * second pass over the file, the finished file lands on a different volume and
+ * has to be copied there, or the disk is simply slow. Timing each stage
+ * separately is what tells those apart.
+ */
+export interface JobMetrics {
+  sourceBytes?: number
+  outputBytes?: number
+  /** Running time of the media, for the realtime multiple. */
+  durationSeconds?: number
+  phases: JobPhaseTiming[]
+  /** Output bytes over the ffmpeg phase, in MB/s. */
+  mbPerSecond?: number
+  /** ffmpeg's own speed figure at the end, e.g. `12.4x`. */
+  ffmpegSpeed?: string
+  source?: VolumeInfo
+  output?: VolumeInfo
+  /** False when the output had to cross volumes to reach its destination. */
+  sameVolume?: boolean
+}
+
 export interface Job {
   id: string
   sourcePath: string
@@ -450,6 +518,8 @@ export interface Job {
   finishedAt?: number
   /** Ordered record of what the repair actually did, for sharing in a report. */
   log: JobLogEntry[]
+  /** What each stage of the repair cost; filled in as the job runs. */
+  metrics?: JobMetrics
 }
 
 /* ------------------------------------------------------------------ *
@@ -516,6 +586,22 @@ export interface EnvironmentInfo {
   /** Why the toolchain is unusable, when `ready` is false. */
   problem?: string
   capabilities?: EncoderCapabilities
+}
+
+/** What the About panel reports: the build, and the runtime under it. */
+export interface AboutInfo {
+  version: string
+  /** False in a dev run, where the version is the working tree's, not a build's. */
+  packaged: boolean
+  electron: string
+  chrome: string
+  node: string
+  platform: NodeJS.Platform
+  arch: string
+  /** The OS version: macOS `15.1`, Windows `10.0.22631`. */
+  systemVersion: string
+  /** The folder holding `settings.json` and the repair-mode overrides. */
+  userDataPath: string
 }
 
 export interface EncoderCapabilities {

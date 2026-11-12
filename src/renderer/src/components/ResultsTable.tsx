@@ -4,7 +4,8 @@ import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { summarizeReason } from '@shared/plex/reason.js'
 import { fileStatus, type FileStatus } from '@shared/plex/facets.js'
 import FileDetail from './FileDetail.js'
-import { formatAgo, parentDirectory, shortenPath } from '../format.js'
+import type { SortKey, SortState } from '@shared/sort.js'
+import { formatAgo, formatBytes, parentDirectory, shortenPath } from '../format.js'
 import { BoltIcon, RefreshIcon, WrenchIcon } from './icons.js'
 
 /** How an overridden mode shows in the row. */
@@ -19,7 +20,7 @@ const STATUS_BADGE: Record<FileStatus, { label: string; tone: string; hint: stri
   passed: { label: 'passed', tone: 'ok', hint: 'Passed every check — direct plays as it is' },
   fixable: { label: 'fixable', tone: 'info', hint: 'A lossless remux fixes this file' },
   reencode: { label: 're-encode', tone: 'warn', hint: 'Only a video re-encode fixes this file' },
-  manual: { label: 'needs you', tone: 'fail', hint: 'No automatic repair fixes this — see the details' }
+  manual: { label: 'blocked', tone: 'fail', hint: 'No automatic repair fixes this — open the row for why, and what you can do' }
 }
 
 /** The plan column: the repair, short, with the long form on hover. */
@@ -54,6 +55,8 @@ export interface ResultsTableProps {
   /** Passed through to each row's report button. */
   settings?: AppSettings
   environment?: EnvironmentInfo
+  /** Stamped into the diagnostic report a row can copy. */
+  appVersion?: string
   onReveal: (path: string) => void
   /** Right-click on a row. */
   onContextMenu: (path: string) => void
@@ -61,6 +64,44 @@ export interface ResultsTableProps {
   onRefresh: (path: string) => void
   /** Paths with a refresh in flight. */
   refreshing: Set<string>
+  /** Which column the table is ordered by. */
+  sort: SortState
+  onSort: (key: SortKey) => void
+}
+
+/**
+ * A column heading that sorts.
+ *
+ * `aria-sort` goes on the cell rather than the button, which is where a screen
+ * reader looks for it; the arrow is the same information for everyone else.
+ */
+function SortHeader({
+  label,
+  column,
+  sort,
+  onSort,
+  className
+}: {
+  label: string
+  column: SortKey
+  sort: SortState
+  onSort: (key: SortKey) => void
+  className?: string
+}): React.JSX.Element {
+  const active = sort.key === column
+  return (
+    <span
+      className={`sortable${active ? ' sorted' : ''}${className ? ` ${className}` : ''}`}
+      aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button onClick={() => onSort(column)} title={`Sort by ${label.toLowerCase()}`}>
+        {label}
+        <span className="arrow" aria-hidden="true">
+          {active ? (sort.direction === 'asc' ? '▲' : '▼') : '⇅'}
+        </span>
+      </button>
+    </span>
+  )
 }
 
 export default function ResultsTable(props: ResultsTableProps): React.JSX.Element {
@@ -92,11 +133,12 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
           onChange={props.onToggleAll}
           aria-label="Select all files"
         />
-        <span>Status</span>
-        <span>File</span>
-        <span>Why</span>
-        <span>Plan</span>
-        <span>Scanned</span>
+        <SortHeader label="Status" column="status" sort={props.sort} onSort={props.onSort} />
+        <SortHeader label="File" column="name" sort={props.sort} onSort={props.onSort} />
+        <SortHeader label="Why" column="reason" sort={props.sort} onSort={props.onSort} />
+        <SortHeader label="Plan" column="plan" sort={props.sort} onSort={props.onSort} />
+        <SortHeader label="Size" column="size" sort={props.sort} onSort={props.onSort} className="numeric" />
+        <SortHeader label="Scanned" column="scanned" sort={props.sort} onSort={props.onSort} />
         <span>Action</span>
       </div>
 
@@ -182,6 +224,9 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                   </span>
                 ) : null}
               </span>
+              <span className="muted nowrap numeric" style={{ fontSize: 12 }}>
+                {formatBytes(result.file.sizeBytes)}
+              </span>
               <span
                 className="muted nowrap"
                 style={{ fontSize: 12 }}
@@ -252,6 +297,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 onSetMode={props.onSetMode}
                 settings={props.settings}
                 environment={props.environment}
+                appVersion={props.appVersion}
               />
             ) : null}
           </div>

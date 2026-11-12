@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  AboutInfo,
   AnalysisResult,
   AppSettings,
   EnvironmentInfo,
@@ -9,10 +10,12 @@ import type {
   ScanError
 } from '@shared/types.js'
 import { repairModeFor, resolveMode } from '@shared/mode.js'
+import { DEFAULT_SORT, nextSort, sortResults, type SortState } from '@shared/sort.js'
 import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
+import AboutDialog from './components/AboutDialog.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
@@ -53,7 +56,7 @@ const STATUS_TILES: { key: FileStatus; label: string; tone: string; hint: string
   { key: 'passed', label: 'Passed', tone: 'ok', hint: 'Show only files that passed every check' },
   { key: 'fixable', label: 'Fixable', tone: 'info', hint: 'Show only files a lossless remux fixes' },
   { key: 'reencode', label: 'Re-encode', tone: 'warn', hint: 'Show only files that need their video re-encoded' },
-  { key: 'manual', label: 'Needs you', tone: 'fail', hint: 'Show only files no automatic repair can fix' }
+  { key: 'manual', label: 'Blocked', tone: 'fail', hint: 'Show only files no automatic repair can fix' }
 ]
 
 /**
@@ -65,6 +68,19 @@ function readPref(key: string): boolean {
     return localStorage.getItem(`plexfixer.${key}`) === 'true'
   } catch {
     return false
+  }
+}
+
+function readSort(): SortState {
+  try {
+    const raw = localStorage.getItem('plexfixer.sort')
+    if (!raw) return DEFAULT_SORT
+    const parsed = JSON.parse(raw) as SortState
+    // Anything written by an older build, or by hand, falls back rather than
+    // leaving the table sorted by a column that no longer exists.
+    return parsed.key && parsed.direction ? parsed : DEFAULT_SORT
+  } catch {
+    return DEFAULT_SORT
   }
 }
 
@@ -92,6 +108,8 @@ export default function App(): React.JSX.Element {
   // Per-file and per-folder mode overrides, kept in the main process.
   const [overrides, setOverrides] = useState<ModeOverrides>({})
   const [environment, setEnvironment] = useState<EnvironmentInfo>()
+  const [about, setAbout] = useState<AboutInfo>()
+  const [aboutOpen, setAboutOpen] = useState(false)
   // Every file ever scanned, by path; mirrored to IndexedDB.
   const [library, setLibrary] = useState<Map<string, LibraryEntry>>(new Map())
   const [libraryLoaded, setLibraryLoaded] = useState(false)
@@ -101,6 +119,7 @@ export default function App(): React.JSX.Element {
   const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
   const [status, setStatus] = useState<FileStatus>()
   const [hidePassed, setHidePassed] = useState(() => readPref('hidePassed'))
+  const [sort, setSort] = useState<SortState>(readSort)
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; currentPath?: string }>()
   const [jobs, setJobs] = useState<Job[]>([])
@@ -120,13 +139,18 @@ export default function App(): React.JSX.Element {
   // update or every row would lose its handler mid-repair.
   const jobsByPathRef = useRef<Map<string, Job>>(new Map())
 
+  // The About menu item, which the main process routes here rather than to
+  // the native panel — that one can show a version and nothing else.
+  useEffect(() => window.plexfixer.app.onShowAbout(() => setAboutOpen(true)), [])
+
   /* --- bootstrap ------------------------------------------------------ */
 
   useEffect(() => {
     void (async () => {
-      const [loadedSettings, loadedOverrides, entries] = await Promise.all([
+      const [loadedSettings, loadedOverrides, loadedAbout, entries] = await Promise.all([
         window.plexfixer.settings.get(),
         window.plexfixer.overrides.get(),
+        window.plexfixer.app.about(),
         loadLibrary().catch((error: unknown) => {
           console.error('Could not open the library database', error)
           return [] as LibraryEntry[]
@@ -135,6 +159,9 @@ export default function App(): React.JSX.Element {
       console.info(`Loaded ${entries.length} file${entries.length === 1 ? '' : 's'} from the library`)
       setSettings(loadedSettings)
       setOverrides(loadedOverrides)
+      // Held from startup rather than fetched when the panel opens: the
+      // version belongs in every diagnostic report too.
+      setAbout(loadedAbout)
       // Merged rather than replaced: a scan started from the command line may
       // already have streamed fresher entries in while the database opened.
       setLibrary((previous) => {
@@ -529,7 +556,12 @@ export default function App(): React.JSX.Element {
     return rows
   }, [searched, status, hidingPassed])
   const facetCounts = useMemo(() => countFacets(narrowed), [narrowed])
-  const visibleResults = useMemo(() => filterResults(narrowed, facets), [narrowed, facets])
+  // Sorted last, so the filters above decide *which* rows and this decides
+  // only their order.
+  const visibleResults = useMemo(
+    () => sortResults(filterResults(narrowed, facets), sort),
+    [narrowed, facets, sort]
+  )
 
   if (!settings || !libraryLoaded) {
     return (
@@ -554,7 +586,17 @@ export default function App(): React.JSX.Element {
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
     >
-      <div className="titlebar">PlexFixer</div>
+      <div className="titlebar">
+        PlexFixer
+        <button
+          className="ghost titlebar-about"
+          onClick={() => setAboutOpen(true)}
+          title="Version details"
+          aria-label="About PlexFixer"
+        >
+          About
+        </button>
+      </div>
 
       <div className="toolbar">
         <div className="tabs">
@@ -562,7 +604,7 @@ export default function App(): React.JSX.Element {
             Library
           </button>
           <button aria-selected={tab === 'jobs'} onClick={() => setTab('jobs')}>
-            Jobs{jobs.filter((job) => job.state === 'running' || job.state === 'queued').length > 0 ? ` (${jobs.filter((job) => job.state === 'running' || job.state === 'queued').length})` : ''}
+            Queue{jobs.filter((job) => job.state === 'running' || job.state === 'queued').length > 0 ? ` (${jobs.filter((job) => job.state === 'running' || job.state === 'queued').length})` : ''}
           </button>
           <button aria-selected={tab === 'settings'} onClick={() => setTab('settings')}>
             Settings
@@ -808,6 +850,19 @@ export default function App(): React.JSX.Element {
                 ) : null}
 
                 <ResultsTable
+                  sort={sort}
+                  onSort={(key) =>
+                    setSort((previous) => {
+                      const next = nextSort(previous, key)
+                      try {
+                        localStorage.setItem('plexfixer.sort', JSON.stringify(next))
+                      } catch {
+                        /* a sort that is not remembered is not worth an error */
+                      }
+                      return next
+                    })
+                  }
+                  appVersion={about?.version}
                   results={visibleResults}
                   jobs={jobsByPath}
                   selected={selected}
@@ -851,6 +906,17 @@ export default function App(): React.JSX.Element {
             jobs={jobs}
             resultsByPath={resultsByPath}
             environment={environment}
+            appVersion={about?.version}
+            about={about}
+            settings={settings}
+            libraryCounts={{
+              total: results.length,
+              passed: counts.passed,
+              fixable: counts.fixable,
+              reencode: counts.reencode,
+              blocked: counts.manual
+            }}
+            onSave={(name, contents) => window.plexfixer.app.saveText(name, contents)}
             onCancel={(id) => void window.plexfixer.jobs.cancel(id)}
             onCancelAll={() => void window.plexfixer.jobs.cancelAll()}
             onClear={() => {
@@ -904,6 +970,10 @@ export default function App(): React.JSX.Element {
           />
         ) : null}
       </div>
+
+      {aboutOpen ? (
+        <AboutDialog about={about} environment={environment} onClose={() => setAboutOpen(false)} />
+      ) : null}
     </div>
   )
 }

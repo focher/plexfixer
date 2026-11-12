@@ -6,9 +6,11 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { access, stat } from 'node:fs/promises'
-import { BrowserWindow, Menu, clipboard, dialog, ipcMain, shell } from 'electron'
+import { access, stat, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
+  AboutInfo,
   AnalysisResult,
   AppSettings,
   Job,
@@ -247,6 +249,50 @@ export function registerIpcHandlers(): void {
 
   // Paths the app was launched with, consumed once by the renderer on startup.
   ipcMain.handle(IPC.initialPaths, async (): Promise<string[]> => takeQueuedPaths())
+
+  // The build and the runtime under it. Only the main process knows any of
+  // this: the renderer has no Node and no `app`, by design.
+  ipcMain.handle(IPC.about, async (): Promise<AboutInfo> => aboutInfo())
+
+  // Save a report the user asked for. The renderer can compose text but cannot
+  // write a file, and a diagnostics bundle is usually too long to paste.
+  ipcMain.handle(
+    IPC.saveText,
+    async (event, suggestedName: string, contents: string): Promise<string | undefined> => {
+      if (typeof suggestedName !== 'string' || typeof contents !== 'string') return undefined
+      const window = BrowserWindow.fromWebContents(event.sender) ?? undefined
+      const { canceled, filePath } = await (window
+        ? dialog.showSaveDialog(window, saveOptions(suggestedName))
+        : dialog.showSaveDialog(saveOptions(suggestedName)))
+      if (canceled || !filePath) return undefined
+      await writeFile(filePath, contents, 'utf8')
+      return filePath
+    }
+  )
+}
+
+function saveOptions(suggestedName: string): Electron.SaveDialogOptions {
+  return {
+    title: 'Save diagnostics',
+    defaultPath: join(app.getPath('downloads'), suggestedName),
+    filters: [{ name: 'Text', extensions: ['txt'] }]
+  }
+}
+
+function aboutInfo(): AboutInfo {
+  return {
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+    // Electron's own reading of the OS version, which is the one the user
+    // would recognise rather than a kernel build number.
+    systemVersion: process.getSystemVersion(),
+    userDataPath: app.getPath('userData')
+  }
 }
 
 /* ------------------------------------------------------------------ *

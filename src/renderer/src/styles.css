@@ -1,19 +1,25 @@
 :root {
-  --bg: #14161c;
-  --bg-raised: #1b1e26;
-  --bg-sunken: #0f1116;
-  --border: #2a2f3a;
-  --border-strong: #3a4150;
-  --text: #e6e9ef;
-  --text-dim: #9aa3b2;
+  --bg: #101219;
+  --bg-raised: #1a1d26;
+  --bg-hover: #222632;
+  --bg-sunken: #0c0e13;
+  --border: #272c37;
+  --border-strong: #39414f;
+  --text: #e8ebf1;
+  --text-dim: #99a2b2;
   --text-faint: #6b7483;
   --accent: #e5a00d;
+  --accent-bright: #f5b324;
   --accent-text: #1a1206;
-  --ok: #3fb950;
+  /* Accent at the two strengths used for tinting backgrounds. */
+  --accent-soft: rgb(229 160 13 / 10%);
+  --accent-line: rgb(229 160 13 / 45%);
+  --ok: #46c55a;
   --warn: #d29922;
   --fail: #f85149;
   --info: #58a6ff;
-  --radius: 8px;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 28%);
   color-scheme: dark;
 }
 
@@ -29,10 +35,38 @@ body,
 }
 
 body {
-  background: var(--bg);
+  /* Two very low-contrast pools of light, so a full-screen window does not
+     read as one flat slab. */
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgb(229 160 13 / 6%), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgb(88 166 255 / 5%), transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbars, which are otherwise the one bright element on a dark window. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333a47;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #434c5c;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 button,
@@ -43,17 +77,26 @@ input {
 }
 
 button {
-  background: var(--bg-raised);
+  background: linear-gradient(180deg, #232733, #1c202a);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 6px 12px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
 }
 
 button:hover:not(:disabled) {
-  background: #242934;
+  background: linear-gradient(180deg, #2b3040, #232733);
   border-color: #4a5365;
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 button:disabled {
@@ -123,19 +166,32 @@ code {
 }
 
 .titlebar {
-  height: 38px;
+  height: 40px;
   flex: 0 0 auto;
+  position: relative;
   -webkit-app-region: drag;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-sunken);
+  background: linear-gradient(180deg, #171a22, #0e1016);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-dim);
+}
+
+/* A mark rather than an icon file: one glyph, themed with everything else. */
+.titlebar::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, var(--accent-bright), var(--accent));
+  box-shadow: 0 0 10px rgb(229 160 13 / 45%);
 }
 
 .toolbar {
@@ -145,6 +201,7 @@ code {
   gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgb(26 29 38 / 60%), transparent);
   flex-wrap: wrap;
 }
 
@@ -157,16 +214,32 @@ code {
   gap: 4px;
 }
 
+.tabs {
+  background: rgb(12 14 19 / 70%);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+}
+
 .tabs button {
   background: transparent;
   border-color: transparent;
   color: var(--text-dim);
+  font-weight: 550;
 }
 
-.tabs button[aria-selected='true'] {
-  background: var(--bg-raised);
+.tabs button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 4%);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.tabs button[aria-selected='true'],
+.tabs button[aria-selected='true']:hover:not(:disabled) {
+  background: linear-gradient(180deg, #2a2f3d, #222634);
   border-color: var(--border-strong);
   color: var(--text);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
 .content {
@@ -197,7 +270,8 @@ code {
 
 .dropzone {
   border: 2px dashed var(--border-strong);
-  border-radius: 12px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgb(26 29 38 / 55%), transparent);
   padding: 56px 24px;
   text-align: center;
   color: var(--text-dim);
@@ -229,20 +303,48 @@ code {
 }
 
 .stat {
-  background: var(--bg-raised);
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--bg-raised), #16191f);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 10px 14px;
-  min-width: 108px;
+  box-shadow: var(--shadow);
+  padding: 11px 16px;
+  min-width: 116px;
+  transition: transform 100ms ease, border-color 120ms ease, background 120ms ease;
   /* Tiles are buttons (each is a filter) but keep the tile look. */
   text-align: left;
   font: inherit;
   color: inherit;
 }
 
+/* A coloured edge, so the tiles read as a legend as well as a filter. */
+.stat::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+.stat.ok::before {
+  color: var(--ok);
+}
+.stat.info::before {
+  color: var(--info);
+}
+.stat.warn::before {
+  color: var(--warn);
+}
+.stat.fail::before {
+  color: var(--fail);
+}
+
 button.stat:hover:not(:disabled) {
-  background: var(--bg-raised);
+  background: linear-gradient(180deg, #20242e, #181b22);
   border-color: var(--border-strong);
+  transform: translateY(-1px);
 }
 
 button.stat[aria-pressed='true'],
@@ -256,9 +358,10 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
 }
 
 .stat .value {
-  font-size: 21px;
+  font-size: 24px;
   font-weight: 650;
-  line-height: 1.2;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat .label {
@@ -287,11 +390,12 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 
 .row {
   display: grid;
-  grid-template-columns: 28px 88px 1fr 1.25fr 128px 76px 100px;
+  grid-template-columns: 28px 92px 1fr 1.25fr 128px 74px 76px 100px;
   gap: 10px;
   align-items: center;
   padding: 9px 12px;
@@ -299,10 +403,10 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
   background: var(--bg-raised);
 }
 
-/* The window can go down to 940px, where seven columns stop fitting. */
+/* The window can go down to 940px, where eight columns stop fitting. */
 @media (max-width: 1120px) {
   .row {
-    grid-template-columns: 24px 82px 1fr 1.1fr 104px 68px 100px;
+    grid-template-columns: 24px 84px 1fr 1.05fr 104px 64px 62px 96px;
     gap: 8px;
   }
 }
@@ -362,11 +466,17 @@ button.more:hover {
 }
 
 .row:not(.header):hover {
-  background: #20242d;
+  background: var(--bg-hover);
+}
+
+/* The row whose detail pane is open, and the ones ticked for an action. */
+.row:not(.header):has(input[type='checkbox']:checked) {
+  background: linear-gradient(90deg, var(--accent-soft), transparent 55%), var(--bg-raised);
 }
 
 .row.header {
-  background: var(--bg-sunken);
+  background: rgb(12 14 19 / 92%);
+  backdrop-filter: blur(6px);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -566,6 +676,7 @@ button.icon-button:hover:not(:disabled) {
 .badge {
   display: inline-block;
   padding: 2px 8px;
+  border: 1px solid transparent;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 650;
@@ -574,15 +685,18 @@ button.icon-button:hover:not(:disabled) {
 }
 
 .badge.ok {
-  background: rgba(63, 185, 80, 0.16);
+  background: rgb(70 197 90 / 14%);
+  border-color: rgb(70 197 90 / 28%);
   color: var(--ok);
 }
 .badge.warn {
-  background: rgba(210, 153, 34, 0.16);
+  background: rgb(210 153 34 / 14%);
+  border-color: rgb(210 153 34 / 30%);
   color: var(--warn);
 }
 .badge.fail {
-  background: rgba(248, 81, 73, 0.16);
+  background: rgb(248 81 73 / 14%);
+  border-color: rgb(248 81 73 / 30%);
   color: var(--fail);
 }
 .badge.error {
@@ -799,7 +913,9 @@ button.expander:hover:not(:disabled) {
 
 .job {
   display: grid;
-  grid-template-columns: 90px 1fr 170px 90px;
+  /* The third column carries "621ms · 1024 MB/s · 356x realtime", which is
+     wider than a bare duration ever was. */
+  grid-template-columns: 90px 1fr 225px 84px;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
@@ -891,8 +1007,22 @@ button.expander:hover:not(:disabled) {
 
 .progress > div {
   height: 100%;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+  background-size: 200% 100%;
   transition: width 200ms ease;
+  animation: progress-shimmer 2.4s linear infinite;
+}
+
+@keyframes progress-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress > div {
+    animation: none;
+  }
 }
 
 .empty {
@@ -1026,4 +1156,276 @@ button.expander:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+}
+
+/* ---------- About ---------- */
+
+/*
+ * Absolutely placed rather than a flex child, so the app name stays centred in
+ * the titlebar; `no-drag` because a button inside a drag region is a handle for
+ * moving the window, not a button.
+ */
+.titlebar-about {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  -webkit-app-region: no-drag;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgb(0 0 0 / 55%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.dialog {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+  padding: 20px 22px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 100%;
+  overflow: auto;
+}
+
+.dialog h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.about-version {
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* Labels sized to the longest of them, values free to wrap: paths are long. */
+.about-rows {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 16px 0 0;
+}
+
+.about-rows dt {
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.about-rows dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.about-note {
+  margin: 16px 0 0;
+  font-size: 12px;
+}
+
+.about-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.about-actions .spacer {
+  flex: 1 1 auto;
+}
+
+.about-actions a {
+  color: var(--info);
+}
+
+/* ---------- sortable columns ---------- */
+
+.row.header .sortable {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.row.header .sortable button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.row.header .sortable button:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+
+/* The inactive arrow is a hint that the column sorts, not a state. */
+.row.header .sortable .arrow {
+  font-size: 8px;
+  opacity: 0.35;
+}
+
+.row.header .sorted {
+  color: var(--text);
+}
+
+.row.header .sorted .arrow {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* Sizes line up only when the digits do. */
+.numeric {
+  justify-self: end;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.row.header .numeric {
+  justify-content: flex-end;
+}
+
+/* ---------- repair timings ---------- */
+
+.timing {
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 18px;
+}
+
+.timing-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.timing-row {
+  display: grid;
+  grid-template-columns: 220px 1fr 70px 44px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.timing-label {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timing-bar {
+  display: block;
+  height: 8px;
+  background: rgb(255 255 255 / 4%);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.timing-bar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--info), #7fc0ff);
+  border-radius: 999px;
+}
+
+.timing-ms {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.timing-share {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.timing-notes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.timing-notes li {
+  margin-bottom: 4px;
+}
+
+@media (max-width: 1120px) {
+  .timing-row {
+    grid-template-columns: 150px 1fr 64px 40px;
+  }
+}
+
+/* ---------- why a file is blocked ---------- */
+
+.blocked-reason {
+  border-left: 3px solid var(--fail);
+  background: rgb(248 81 73 / 6%);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+
+.blocked-reason .title {
+  font-weight: 650;
+  margin-bottom: 4px;
+}
+
+.blocked-reason .detail-text {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.blocked-reason .you-can {
+  margin-top: 6px;
+  color: var(--text);
+}
+
+.blocked-reason .you-can strong {
+  color: var(--accent);
+}
+
+/* ---------- the queue's own toolbar ---------- */
+
+.queue-toolbar {
+  padding: 0 0 12px;
+  border-bottom: none;
+  background: none;
+}
+
+/* The repair's cost, beside its row: never wider than its column. */
+.job > span:nth-child(3) {
+  justify-self: end;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1120px) {
+  .job {
+    grid-template-columns: 84px 1fr 170px 78px;
+  }
 }
