@@ -343,25 +343,43 @@ export default function App(): React.JSX.Element {
     setOverrides(await window.plexfixer.overrides.set(path, mode))
   }, [])
 
-  const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
-    // Verdicts are recomputed from the stored probes against the new settings
-    // (see `results`), so nothing needs re-scanning.
-    setSettings(await window.plexfixer.settings.update(patch))
-    // Anything that changes *which* ffmpeg runs, or where, means the
-    // environment on screen is about to be wrong.
-    const binaryKeys = [
-      'ffmpegPath',
-      'ffprobePath',
-      'remoteEnabled',
-      'remoteHost',
-      'remotePort',
-      'remoteFfmpegPath',
-      'remoteFfprobePath'
-    ] as const
-    if (binaryKeys.some((key) => key in patch)) {
-      setEnvironment(await window.plexfixer.environment.refresh())
-    }
+  /**
+   * Re-probe what will run the work, once the setting has settled.
+   *
+   * A refresh is an ssh round trip to the remote host and a set of test
+   * encodes locally. A toggle is one deliberate change and can have it at
+   * once; a text field produces one change per keystroke, and probing a
+   * half-typed hostname only produces a slow failure, so those wait until the
+   * typing stops.
+   */
+  const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const refreshEnvironment = useCallback((delay: number) => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current)
+    refreshTimer.current = setTimeout(() => {
+      void (async () => setEnvironment(await window.plexfixer.environment.refresh()))()
+    }, delay)
   }, [])
+
+  const updateSettings = useCallback(
+    async (patch: Partial<AppSettings>) => {
+      // Verdicts are recomputed from the stored probes against the new settings
+      // (see `results`), so nothing needs re-scanning.
+      setSettings(await window.plexfixer.settings.update(patch))
+      // Anything that changes *which* ffmpeg runs, or where, means the
+      // environment on screen is about to be wrong.
+      const typedKeys = [
+        'ffmpegPath',
+        'ffprobePath',
+        'remoteHost',
+        'remotePort',
+        'remoteFfmpegPath',
+        'remoteFfprobePath'
+      ] as const
+      if ('remoteEnabled' in patch) refreshEnvironment(0)
+      else if (typedKeys.some((key) => key in patch)) refreshEnvironment(600)
+    },
+    [refreshEnvironment]
+  )
 
   /**
    * Re-analyse a single row in place.
