@@ -21,6 +21,7 @@ import type {
   VideoStream
 } from '@shared/types.js'
 import { normalizeLanguage } from '@shared/languages.js'
+import { parseH264Config, parseHexDump, type H264Config } from '@shared/plex/h264-sps.js'
 import { bitDepthFromPixFmt, chromaFromPixFmt, isImageSubtitle } from '@shared/plex/rules.js'
 
 /* ------------------------------------------------------------------ *
@@ -351,6 +352,66 @@ export interface ProbeOptions {
   host?: Host
 }
 
+/**
+ * Fill in what ffprobe's summary leaves out of an H.264 stream: the real
+ * reference-frame count and the level in the avcC header, read from the codec
+ * configuration itself.
+ *
+ * It costs a second ffprobe call, so it is only made where it can change a
+ * verdict — a stream labelled above Level 4.0, the lowest ceiling a setting
+ * offers. Video streams only, so a Matroska file's font attachments are not
+ * dumped along with it. Anything going wrong leaves the streams as they were.
+ */
+async function withH264Config(
+  streams: MediaStream[],
+  filePath: string,
+  options: ProbeOptions,
+  host: Host
+): Promise<MediaStream[]> {
+  const wanted = streams.filter(
+    (stream): stream is VideoStream =>
+      stream.kind === 'video' && stream.codec.toLowerCase() === 'h264' && stream.level != null && stream.level > 40
+  )
+  if (wanted.length === 0) return streams
+  try {
+    const stdout = await host.exec(
+      options.ffprobePath,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-select_streams',
+        'v',
+        '-show_entries',
+        'stream=index,extradata',
+        '-show_data',
+        '-print_format',
+        'json',
+        filePath
+      ],
+      { maxBytes: 4 * 1024 * 1024, timeoutMs: options.timeoutMs ?? 120_000 }
+    )
+    const parsed = JSON.parse(stdout) as { streams?: { index: number; extradata?: string }[] }
+    const configs = new Map<number, H264Config>()
+    for (const entry of parsed.streams ?? []) {
+      if (!entry.extradata) continue
+      const config = parseH264Config(parseHexDump(entry.extradata))
+      if (config) configs.set(entry.index, config)
+    }
+    return streams.map((stream) => {
+      const config = configs.get(stream.index)
+      if (!config || stream.kind !== 'video') return stream
+      return {
+        ...stream,
+        refFrames: config.maxNumRefFrames,
+        ...(config.headerLevel != null ? { headerLevel: config.headerLevel } : {})
+      }
+    })
+  } catch {
+    return streams
+  }
+}
+
 export async function probeFile(filePath: string, options: ProbeOptions): Promise<MediaFile> {
   const args = [
     '-hide_banner',
@@ -405,7 +466,7 @@ export async function probeFile(filePath: string, options: ProbeOptions): Promis
       container === 'mp4'
         ? await walkBoxes(sizeBytes, (offset, length) => host.readRange(filePath, offset, length))
         : undefined,
-    streams: raw.streams.map(mapStream),
+    streams: await withH264Config(raw.streams.map(mapStream), filePath, options, host),
     sidecarSubtitles: options.includeSidecars === false ? [] : await findSidecarSubtitles(filePath, host),
     tags: raw.format?.tags ?? {}
   }
