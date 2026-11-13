@@ -791,7 +791,12 @@ export default function App(): React.JSX.Element {
         ) : null}
       </div>
 
-      <div className="content">
+      {/*
+        The library keeps a header of its own: the tiles, the search box and the
+        filter chips stay put while only the file list scrolls. Every other tab
+        scrolls as one page.
+      */}
+      <div className={`content${tab === 'library' ? ' split' : ''}`}>
         {environment && !environment.ready ? (
           <div className="banner error">
             <strong>FFmpeg not available.</strong> {environment.problem}
@@ -799,236 +804,244 @@ export default function App(): React.JSX.Element {
         ) : null}
 
         {tab === 'library' ? (
-          <>
-            {scanning ? (
-              <div className="banner">
-                <strong>
-                  Scanning… {scanProgress?.processed ?? 0}
-                  {scanProgress?.total ? ` of ${scanProgress.total}` : ''}
-                </strong>
-                {scanProgress?.currentPath ? <div className="muted mono">{scanProgress.currentPath}</div> : null}
-              </div>
-            ) : null}
-
-            {cleaned.length > 0 ? (
-              <div className="banner">
-                <strong>
-                  Removed {cleaned.length} leftover temporary file{cleaned.length === 1 ? '' : 's'} (
-                  {formatBytes(cleaned.reduce((total, entry) => total + entry.bytes, 0))}).
-                </strong>{' '}
-                {cleaned.length === 1 ? 'It was' : 'They were'} left by a repair that never finished.
-                <button className="ghost" style={{ marginLeft: 8 }} onClick={() => setCleaned([])}>
-                  Dismiss
-                </button>
-              </div>
-            ) : null}
-
-            {scanErrors.length > 0 ? (
-              <div className="banner error">
-                <strong>
-                  {scanErrors.length} file{scanErrors.length === 1 ? '' : 's'} could not be read.
-                </strong>
-                {scanErrors.slice(0, 5).map((error) => (
-                  <div key={error.path} className="muted mono" style={{ fontSize: 11 }}>
-                    {error.path} — {error.message}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
-            {results.length === 0 && !scanning ? (
-              <div className={`dropzone${dragging ? ' active' : ''}`}>
-                <h2>Drop media files or a folder here</h2>
-                <p>
-                  PlexFixer checks whether each MKV or M4V will direct play on a remote Plex client, and fixes what it
-                  can without re-encoding.
-                </p>
-                <button className="primary" onClick={() => void choosePaths()}>
-                  Scan…
-                </button>
-              </div>
-            ) : null}
-
-            {results.length > 0 ? (
-              <>
-                <div className="summary">
-                  {STATUS_TILES.map((tile) => {
-                    const on = status === tile.key
-                    return (
-                      <button
-                        key={tile.key}
-                        className={`stat ${tile.tone}`}
-                        aria-pressed={on}
-                        title={on ? 'Show all files again' : tile.hint}
-                        onClick={() => setStatus(on ? undefined : tile.key)}
-                      >
-                        <div className="value">{counts[tile.key]}</div>
-                        <div className="label">
-                          {tile.label}
-                          {on ? <span className="clear-mark"> ×</span> : null}
-                        </div>
-                      </button>
-                    )
-                  })}
+          <div className="library">
+            <div className="library-head">
+              {scanning ? (
+                <div className="banner">
+                  <strong>
+                    Scanning… {scanProgress?.processed ?? 0}
+                    {scanProgress?.total ? ` of ${scanProgress.total}` : ''}
+                  </strong>
+                  {scanProgress?.currentPath ? <div className="muted mono">{scanProgress.currentPath}</div> : null}
                 </div>
+              ) : null}
 
-                {needsTranscode.length > 0 ? (
-                  <div className="banner">
-                    <strong>
-                      {needsTranscode.length} file{needsTranscode.length === 1 ? '' : 's'} cannot be fixed by a remux
-                      alone.
-                    </strong>{' '}
-                    A safe remux will skip {needsTranscode.length === 1 ? 'it' : 'them'}; Force transcode re-encodes the
-                    video.
-                    <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button onClick={() => void repair(needsTranscode, 'force-transcode')}>
-                        Force transcode {needsTranscode.length === 1 ? 'it' : 'these'} now
-                      </button>
-                      {libraryRoots.length === 1 &&
-                      resolveMode(libraryRoots[0], overrides, settings.defaultMode).mode !== 'force-transcode' ? (
-                        <button
-                          onClick={() => void setMode(libraryRoots[0], 'force-transcode')}
-                          title={`Everything under ${libraryRoots[0]} repairs in force-transcode mode from now on`}
-                        >
-                          Set this folder to Force transcode
-                        </button>
-                      ) : null}
+              {cleaned.length > 0 ? (
+                <div className="banner">
+                  <strong>
+                    Removed {cleaned.length} leftover temporary file{cleaned.length === 1 ? '' : 's'} (
+                    {formatBytes(cleaned.reduce((total, entry) => total + entry.bytes, 0))}).
+                  </strong>{' '}
+                  {cleaned.length === 1 ? 'It was' : 'They were'} left by a repair that never finished.
+                  <button className="ghost" style={{ marginLeft: 8 }} onClick={() => setCleaned([])}>
+                    Dismiss
+                  </button>
+                </div>
+              ) : null}
+
+              {scanErrors.length > 0 ? (
+                <div className="banner error">
+                  <strong>
+                    {scanErrors.length} file{scanErrors.length === 1 ? '' : 's'} could not be read.
+                  </strong>
+                  {scanErrors.slice(0, 5).map((error) => (
+                    <div key={error.path} className="muted mono" style={{ fontSize: 11 }}>
+                      {error.path} — {error.message}
                     </div>
-                  </div>
-                ) : null}
-
-                <div className="searchbar">
-                  <input
-                    type="search"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search files and folders"
-                    aria-label="Search files and folders"
-                    spellCheck={false}
-                  />
-                  {(query.trim() || status || hidingPassed) && !chipFiltersActive ? (
-                    <span className="muted nowrap">
-                      {visibleResults.length} of {results.length}
-                    </span>
-                  ) : null}
-                  <span className="spacer" />
-                  <label
-                    className={`toggle${hidingPassed ? ' on' : ''}`}
-                    title={
-                      status === 'passed'
-                        ? 'Turns off the Passed filter and hides passed files'
-                        : 'Leave out files that passed every check'
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      checked={hidingPassed}
-                      onChange={(event) => {
-                        const on = event.target.checked
-                        setHidePassed(on)
-                        writePref('hidePassed', on)
-                        // Hiding passed files while the Passed tile is showing
-                        // only them is a contradiction. The switch is the later
-                        // instruction, so the tile gives way.
-                        if (on && status === 'passed') setStatus(undefined)
-                      }}
-                    />
-                    <span className="switch" aria-hidden="true" />
-                    Hide passed
-                    <span className="count">{counts.passed}</span>
-                  </label>
+                  ))}
                 </div>
+              ) : null}
 
-                <FilterBar
-                  counts={facetCounts}
-                  active={facets}
-                  codecCounts={codecCounts}
-                  codecs={codecs}
-                  total={results.length}
-                  shown={visibleResults.length}
-                  onToggle={(facet) =>
-                    setFacets((previous) => {
-                      const next = new Set(previous)
-                      if (next.has(facet)) next.delete(facet)
-                      else next.add(facet)
-                      return next
-                    })
-                  }
-                  onToggleCodec={(kind, codec) =>
-                    setCodecs((previous) => {
-                      const next = new Set(previous[kind])
-                      if (next.has(codec)) next.delete(codec)
-                      else next.add(codec)
-                      return { ...previous, [kind]: next }
-                    })
-                  }
-                  onClearCodecs={(kind) => setCodecs((previous) => ({ ...previous, [kind]: new Set() }))}
-                  onClear={() => {
-                    setFacets(new Set())
-                    setCodecs(emptyCodecFilter())
-                  }}
-                />
-
-                {visibleResults.length === 0 ? (
-                  <div className="empty">
-                    {query.trim() && searched.length === 0
-                      ? `No file matches “${query.trim()}”.`
-                      : hidingPassed && !status && !chipFiltersActive
-                        ? 'Every file here passed. Turn off Hide passed to see them.'
-                        : 'No file matches the filters you have on. Clear one to see the rest.'}
+              {results.length > 0 ? (
+                <>
+                  <div className="summary">
+                    {STATUS_TILES.map((tile) => {
+                      const on = status === tile.key
+                      return (
+                        <button
+                          key={tile.key}
+                          className={`stat ${tile.tone}`}
+                          aria-pressed={on}
+                          title={on ? 'Show all files again' : tile.hint}
+                          onClick={() => setStatus(on ? undefined : tile.key)}
+                        >
+                          <div className="value">{counts[tile.key]}</div>
+                          <div className="label">
+                            {tile.label}
+                            {on ? <span className="clear-mark"> ×</span> : null}
+                          </div>
+                        </button>
+                      )
+                    })}
                   </div>
-                ) : null}
 
-                <ResultsTable
-                  sort={sort}
-                  onSort={(key) =>
-                    setSort((previous) => {
-                      const next = nextSort(previous, key)
-                      try {
-                        localStorage.setItem('plexfixer.sort', JSON.stringify(next))
-                      } catch {
-                        /* a sort that is not remembered is not worth an error */
+                  {needsTranscode.length > 0 ? (
+                    <div className="banner">
+                      <strong>
+                        {needsTranscode.length} file{needsTranscode.length === 1 ? '' : 's'} cannot be fixed by a remux
+                        alone.
+                      </strong>{' '}
+                      A safe remux will skip {needsTranscode.length === 1 ? 'it' : 'them'}; Force transcode re-encodes the
+                      video.
+                      <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button onClick={() => void repair(needsTranscode, 'force-transcode')}>
+                          Force transcode {needsTranscode.length === 1 ? 'it' : 'these'} now
+                        </button>
+                        {libraryRoots.length === 1 &&
+                        resolveMode(libraryRoots[0], overrides, settings.defaultMode).mode !== 'force-transcode' ? (
+                          <button
+                            onClick={() => void setMode(libraryRoots[0], 'force-transcode')}
+                            title={`Everything under ${libraryRoots[0]} repairs in force-transcode mode from now on`}
+                          >
+                            Set this folder to Force transcode
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="searchbar">
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Search files and folders"
+                      aria-label="Search files and folders"
+                      spellCheck={false}
+                    />
+                    {(query.trim() || status || hidingPassed) && !chipFiltersActive ? (
+                      <span className="muted nowrap">
+                        {visibleResults.length} of {results.length}
+                      </span>
+                    ) : null}
+                    <span className="spacer" />
+                    <label
+                      className={`toggle${hidingPassed ? ' on' : ''}`}
+                      title={
+                        status === 'passed'
+                          ? 'Turns off the Passed filter and hides passed files'
+                          : 'Leave out files that passed every check'
                       }
-                      return next
-                    })
-                  }
-                  appVersion={about?.version}
-                  results={visibleResults}
-                  jobs={jobsByPath}
-                  selected={selected}
-                  onToggleSelect={(path) =>
-                    setSelected((previous) => {
-                      const next = new Set(previous)
-                      if (next.has(path)) next.delete(path)
-                      else next.add(path)
-                      return next
-                    })
-                  }
-                  onToggleAll={() =>
-                    setSelected((previous) => {
-                      // Acts on the rows actually on screen: selecting files a
-                      // filter is hiding is not what the header checkbox means.
-                      const visible = visibleResults.map((r) => r.file.path)
-                      const next = new Set(previous)
-                      if (visible.every((path) => next.has(path))) for (const path of visible) next.delete(path)
-                      else for (const path of visible) next.add(path)
-                      return next
-                    })
-                  }
-                  overrides={overrides}
-                  defaultMode={settings.defaultMode}
-                  settings={settings}
-                  environment={environment}
-                  onSetMode={(path, mode) => void setMode(path, mode)}
-                  onRepair={(paths, mode) => void repair(paths, mode)}
-                  onReveal={(path) => void window.plexfixer.shell.reveal(path)}
-                  onContextMenu={(path) => void window.plexfixer.shell.fileMenu(path)}
-                  onRefresh={(path) => void refreshFile(path)}
-                  refreshing={refreshing}
-                />
-              </>
-            ) : null}
-          </>
+                    >
+                      <input
+                        type="checkbox"
+                        checked={hidingPassed}
+                        onChange={(event) => {
+                          const on = event.target.checked
+                          setHidePassed(on)
+                          writePref('hidePassed', on)
+                          // Hiding passed files while the Passed tile is showing
+                          // only them is a contradiction. The switch is the later
+                          // instruction, so the tile gives way.
+                          if (on && status === 'passed') setStatus(undefined)
+                        }}
+                      />
+                      <span className="switch" aria-hidden="true" />
+                      Hide passed
+                      <span className="count">{counts.passed}</span>
+                    </label>
+                  </div>
+
+                  <FilterBar
+                    counts={facetCounts}
+                    active={facets}
+                    codecCounts={codecCounts}
+                    codecs={codecs}
+                    total={results.length}
+                    shown={visibleResults.length}
+                    onToggle={(facet) =>
+                      setFacets((previous) => {
+                        const next = new Set(previous)
+                        if (next.has(facet)) next.delete(facet)
+                        else next.add(facet)
+                        return next
+                      })
+                    }
+                    onToggleCodec={(kind, codec) =>
+                      setCodecs((previous) => {
+                        const next = new Set(previous[kind])
+                        if (next.has(codec)) next.delete(codec)
+                        else next.add(codec)
+                        return { ...previous, [kind]: next }
+                      })
+                    }
+                    onClearCodecs={(kind) => setCodecs((previous) => ({ ...previous, [kind]: new Set() }))}
+                    onClear={() => {
+                      setFacets(new Set())
+                      setCodecs(emptyCodecFilter())
+                    }}
+                  />
+                </>
+              ) : null}
+            </div>
+
+            <div className="library-body">
+              {results.length === 0 && !scanning ? (
+                <div className={`dropzone${dragging ? ' active' : ''}`}>
+                  <h2>Drop media files or a folder here</h2>
+                  <p>
+                    PlexFixer checks whether each MKV or M4V will direct play on a remote Plex client, and fixes what it
+                    can without re-encoding.
+                  </p>
+                  <button className="primary" onClick={() => void choosePaths()}>
+                    Scan…
+                  </button>
+                </div>
+              ) : null}
+
+              {results.length > 0 ? (
+                <>
+                  {visibleResults.length === 0 ? (
+                    <div className="empty">
+                      {query.trim() && searched.length === 0
+                        ? `No file matches “${query.trim()}”.`
+                        : hidingPassed && !status && !chipFiltersActive
+                          ? 'Every file here passed. Turn off Hide passed to see them.'
+                          : 'No file matches the filters you have on. Clear one to see the rest.'}
+                    </div>
+                  ) : null}
+
+                  <ResultsTable
+                    sort={sort}
+                    onSort={(key) =>
+                      setSort((previous) => {
+                        const next = nextSort(previous, key)
+                        try {
+                          localStorage.setItem('plexfixer.sort', JSON.stringify(next))
+                        } catch {
+                          /* a sort that is not remembered is not worth an error */
+                        }
+                        return next
+                      })
+                    }
+                    appVersion={about?.version}
+                    results={visibleResults}
+                    jobs={jobsByPath}
+                    selected={selected}
+                    onToggleSelect={(path) =>
+                      setSelected((previous) => {
+                        const next = new Set(previous)
+                        if (next.has(path)) next.delete(path)
+                        else next.add(path)
+                        return next
+                      })
+                    }
+                    onToggleAll={() =>
+                      setSelected((previous) => {
+                        // Acts on the rows actually on screen: selecting files a
+                        // filter is hiding is not what the header checkbox means.
+                        const visible = visibleResults.map((r) => r.file.path)
+                        const next = new Set(previous)
+                        if (visible.every((path) => next.has(path))) for (const path of visible) next.delete(path)
+                        else for (const path of visible) next.add(path)
+                        return next
+                      })
+                    }
+                    overrides={overrides}
+                    defaultMode={settings.defaultMode}
+                    settings={settings}
+                    environment={environment}
+                    onSetMode={(path, mode) => void setMode(path, mode)}
+                    onRepair={(paths, mode) => void repair(paths, mode)}
+                    onReveal={(path) => void window.plexfixer.shell.reveal(path)}
+                    onContextMenu={(path) => void window.plexfixer.shell.fileMenu(path)}
+                    onRefresh={(path) => void refreshFile(path)}
+                    refreshing={refreshing}
+                  />
+                </>
+              ) : null}
+            </div>
+          </div>
         ) : null}
 
         {tab === 'jobs' ? (

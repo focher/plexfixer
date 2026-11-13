@@ -248,6 +248,39 @@ code {
   padding: 16px;
 }
 
+/*
+ * The library scrolls its list and nothing else.
+ *
+ * The tiles, the search box and the filter chips are how the list is steered,
+ * and scrolling them off the top to reach the four hundredth row means
+ * scrolling back up to change anything. On that tab `.content` stops scrolling
+ * and hands the job to `.results`, which also gives the table's column header
+ * a scroll box to stick to. Every other tab is a page, and still scrolls as one.
+ */
+.content.split {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.library {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.library-head {
+  flex: 0 0 auto;
+}
+
+.library-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .banner {
   border: 1px solid var(--border-strong);
   border-left: 3px solid var(--warn);
@@ -389,7 +422,10 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
 .results {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* Scrolls itself, so the sticky column header has something to stick to. */
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
   box-shadow: var(--shadow);
 }
 
@@ -864,8 +900,79 @@ button.expander:hover:not(:disabled) {
 
 /* ---------- settings ---------- */
 
+/*
+ * One section at a time, chosen from the list on the left.
+ *
+ * Stacking every section made the page's height depend on settings that change
+ * it — turning the remote host on and off adds and removes fields — so the
+ * scroll position stopped meaning anything. The list also answers "where is
+ * that setting", which a single long column never did.
+ */
 .settings {
-  max-width: 820px;
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  max-width: 1120px;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+}
+
+.settings-nav button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 7px 10px;
+}
+
+.settings-nav button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 4%);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.settings-nav button[aria-selected='true'],
+.settings-nav button[aria-selected='true']:hover:not(:disabled) {
+  background: linear-gradient(180deg, #2a2f3d, #222634);
+  border-color: var(--border-strong);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+.settings-nav .nav-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.settings-nav .nav-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+/* Reset sits apart from the sections: it is not one of them. */
+.settings-nav .nav-spacer {
+  margin: 8px 2px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-nav .nav-reset {
+  font-size: 12px;
 }
 
 .settings section {
@@ -873,7 +980,17 @@ button.expander:hover:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px 18px;
-  margin-bottom: 14px;
+}
+
+/* Narrow windows put the list above the section rather than squeezing both. */
+@media (max-width: 860px) {
+  .settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-nav {
+    position: static;
+  }
 }
 
 .settings h3 {
