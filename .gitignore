@@ -21,3 +21,6 @@ resources/bin/**
 # Vite
 .vite/
 stats.html
+
+# Per-machine Claude Code permissions (settings.json is shared, .local is not)
+.claude/settings.local.json

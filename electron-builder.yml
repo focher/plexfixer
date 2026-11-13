@@ -9,6 +9,10 @@ directories:
 # Fails the build if the bundled ffmpeg did not land where the app looks for it.
 afterPack: scripts/after-pack.mjs
 
+# Submits each signed macOS app to Apple. A no-op when no credentials are in
+# the environment, so a local build still works; see scripts/notarize.mjs.
+afterSign: scripts/notarize.mjs
+
 files:
   - out/**
   - package.json
@@ -58,6 +62,30 @@ mac:
 
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
+  # The stock background art is 540x380 and is drawn from the top-left, so the
+  # width stays at 540 — only the height grows, leaving a plain strip under the
+  # artwork for the third item to sit in.
+  window:
+    width: 540
+    height: 480
+  # Once `contents` is given it replaces the default layout, so the app and the
+  # Applications link have to be listed too. The .command is there for builds
+  # that are not notarized: macOS blocks those on first launch, and this is the
+  # one-click version of the `xattr` line people otherwise have to be told.
+  contents:
+    # The first two keep the stock positions, which is where the artwork's
+    # arrow points.
+    - x: 130
+      y: 220
+      type: file
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+    - x: 270
+      y: 410
+      type: file
+      path: build/Allow PlexFixer to open.command
 
 win:
   extraResources:

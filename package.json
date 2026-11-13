@@ -23,6 +23,7 @@
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.0.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
