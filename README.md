@@ -303,45 +303,31 @@ downloads itself (pinned to Wine 11 in `electron-builder.yml`). That build is
 x86_64, so on Apple Silicon it needs Rosetta 2:
 `softwareupdate --install-rosetta`.
 
-macOS builds are signed if a Developer ID certificate is in your keychain, and
-notarized if credentials are in the environment. `scripts/notarize.mjs` runs
-after signing and submits the app to Apple; with no credentials it says so and
-carries on, so a local build still works.
+macOS builds are signed if a Developer ID certificate is in your keychain. They
+are **not notarized** — notarization needs a paid Apple Developer account, and
+PlexFixer does not have one. That is a deliberate, settled choice, not a gap
+waiting to be filled.
 
-Either set of credentials works, in the gitignored `plexfixer.env`:
-
-```
-APPLE_ID=you@example.com
-APPLE_APP_SPECIFIC_PASSWORD=abcd-efgh-ijkl-mnop   # appleid.apple.com, not your password
-APPLE_TEAM_ID=XXXXXXXXXX
-```
-
-or an App Store Connect API key, which does not expire when the password does:
-
-```
-APPLE_API_KEY=/path/to/AuthKey_XXXXXXXX.p8
-APPLE_API_KEY_ID=XXXXXXXX
-APPLE_API_ISSUER=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
-
-`PLEXFIXER_SKIP_NOTARIZE=1` skips it for one build. Notarization takes a few
-minutes per architecture and the build waits for it; if it fails, the build
-fails, because a half-notarized release is worse than an obviously unnotarized
-one.
-
-**Without** notarization, macOS blocks the app on first launch — and since
-Sequoia, Control-clicking it no longer offers a way past. The DMG therefore
-ships **Allow PlexFixer to open.command**, which clears the quarantine flag
-from `/Applications/PlexFixer.app`, confirms the signature is still intact and
-opens it. The equivalent by hand is:
+The consequence is that macOS blocks the app on first launch, and since Sequoia
+Control-clicking it no longer offers a way past. The DMG therefore ships
+**Allow PlexFixer to open.command** beside the app: it clears the quarantine
+flag from `/Applications/PlexFixer.app`, confirms the signature is still intact
+(and refuses if it is not), then opens it. That is the supported path, not a
+stopgap. The equivalent by hand is:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/PlexFixer.app
 ```
 
-or System Settings → Privacy & Security → Open Anyway. Note that macOS
-quarantines the `.command` too, so a user who cannot run it has to fall back to
-one of those; notarizing is what actually removes the problem.
+or System Settings → Privacy & Security → Open Anyway. macOS quarantines the
+`.command` too, so a Mac that blocks the script as well needs one of those two.
+
+`scripts/notarize.mjs` runs after signing and is a no-op unless Apple
+credentials are present in the environment — either `APPLE_ID` +
+`APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`, or an App Store Connect API
+key (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`). It stays in the
+build so that a fork with its own developer account gets notarized releases
+without touching the build config; nothing needs to be done with it here.
 
 ## Tests
 
