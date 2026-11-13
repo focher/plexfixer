@@ -127,6 +127,30 @@ export async function backupOriginal(
 }
 
 /**
+ * Make an instant APFS clone of a file in the backup folder beside it, before
+ * the file is edited in place.
+ *
+ * Returns the backup path, or `undefined` when backups are off or the volume
+ * cannot clone — a full copy would cost more than the edit it protects.
+ */
+export async function cloneToBackup(
+  sourcePath: string,
+  settings: AppSettings,
+  host: Host = localHost()
+): Promise<string | undefined> {
+  if (!settings.keepBackups) return undefined
+  const backupDir = host.paths.join(host.paths.dirname(sourcePath), BACKUP_DIRECTORY)
+  await host.mkdirp(backupDir)
+  const target = await uniquePath(host.paths.join(backupDir, host.paths.basename(sourcePath)), host)
+  if (!(await host.cloneFile(sourcePath, target))) {
+    // The folder may have been created just now for nothing.
+    await host.removeEmptyDirectory(backupDir).catch(() => undefined)
+    return undefined
+  }
+  return target
+}
+
+/**
  * Promote the finished temporary file to its destination.
  *
  * In-place mode has to deal with the original first — moved aside when backups
@@ -139,10 +163,11 @@ export async function promoteOutput(
   sourcePath: string,
   settings: AppSettings,
   host: Host = localHost()
-): Promise<{ finalPath: string; backupPath?: string }> {
+): Promise<{ finalPath: string; backupPath?: string; otherBackups: string[] }> {
   await host.mkdirp(host.paths.dirname(outputPath))
 
   let backupPath: string | undefined
+  const otherBackups: string[] = []
   const replacingOriginal = settings.outputPlacement === 'in-place'
 
   if (replacingOriginal) {
@@ -158,7 +183,8 @@ export async function promoteOutput(
     // original was asked for; destroying its neighbour was not.
     if (outputPath !== sourcePath && (await host.exists(outputPath))) {
       if (settings.keepBackups) {
-        await backupOriginal(outputPath, settings, host)
+        const moved = await backupOriginal(outputPath, settings, host)
+        if (moved) otherBackups.push(moved)
       } else {
         await host.remove(outputPath)
       }
@@ -168,7 +194,7 @@ export async function promoteOutput(
   // Never clobber an unrelated file that happens to sit at the destination.
   const finalPath = replacingOriginal ? outputPath : await uniquePath(outputPath, host)
   await host.rename(temporaryPath, finalPath)
-  return { finalPath, backupPath }
+  return { finalPath, backupPath, otherBackups }
 }
 
 /** Remove a partially written temporary file; failures here are not fatal. */

@@ -38,6 +38,8 @@ import { trustHost } from './remote/hostkey.js'
 import { RepairRunner } from './jobs/runner.js'
 import { scanRootFor } from './jobs/output.js'
 import { takeQueuedPaths } from './openPaths.js'
+import { findBackups, pruneBackups, recordBackup, removeAllBackups } from './backups.js'
+import { isStaleTemporary, isTemporaryName } from '@shared/temporary.js'
 
 interface ActiveScan {
   controller: AbortController
@@ -60,7 +62,20 @@ async function ensureRunner(settings: AppSettings, environment: Environment): Pr
   const binaries = { ffmpegPath: environment.ffmpegPath, ffprobePath: environment.ffprobePath }
   const host = hostFor(settings)
   if (!runner) {
-    runner = new RepairRunner(binaries, settings.concurrency, (job: Job) => send(IPC.jobUpdate, job), host)
+    runner = new RepairRunner(
+      binaries,
+      settings.concurrency,
+      (job: Job) => {
+        send(IPC.jobUpdate, job)
+        // A finished repair may have made a backup, and is a natural moment to
+        // let go of ones that have expired.
+        if (job.state === 'done') scheduleBackupPrune()
+      },
+      host
+    )
+    runner.onBackup = (record) => {
+      void recordBackup(record).catch((error: unknown) => console.warn('Could not record a backup', error))
+    }
   } else {
     runner.setBinaries(binaries)
     runner.setConcurrency(settings.concurrency)
@@ -71,7 +86,41 @@ async function ensureRunner(settings: AppSettings, environment: Environment): Pr
   return runner
 }
 
+/* --- backup housekeeping ------------------------------------------------ */
+
+let pruneTimer: ReturnType<typeof setTimeout> | undefined
+let pruning = false
+
+/** Remove backups past the retention setting, on whichever host is current. */
+async function pruneExpiredBackups(): Promise<void> {
+  if (pruning) return
+  pruning = true
+  try {
+    const settings = await getSettings()
+    if (!(settings.backupRetentionDays > 0)) return
+    const { removed, bytes } = await pruneBackups(hostFor(settings), settings.backupRetentionDays)
+    if (removed > 0) {
+      console.info(`Removed ${removed} expired backup${removed === 1 ? '' : 's'} (${Math.round(bytes / 1024 / 1024)} MB)`)
+    }
+  } catch (error) {
+    console.warn('Could not prune expired backups', error)
+  } finally {
+    pruning = false
+  }
+}
+
+/** Soon, but not in the middle of a burst of repairs finishing together. */
+function scheduleBackupPrune(delayMs = 30_000): void {
+  clearTimeout(pruneTimer)
+  pruneTimer = setTimeout(() => void pruneExpiredBackups(), delayMs)
+}
+
 export function registerIpcHandlers(): void {
+  // Once shortly after launch, then hourly, so backups expire even on a day
+  // with no repairs.
+  scheduleBackupPrune(15_000)
+  setInterval(() => void pruneExpiredBackups(), 60 * 60 * 1000).unref?.()
+
   /* --- settings ------------------------------------------------------- */
 
   ipcMain.handle(IPC.settingsGet, async (): Promise<AppSettings> => getSettings())
@@ -232,6 +281,22 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.jobsClear, async (): Promise<void> => runner?.clearFinished())
 
   ipcMain.handle(IPC.jobsClearQueued, async (): Promise<number> => runner?.clearQueued() ?? 0)
+
+  /* --- backups ------------------------------------------------------------ */
+
+  ipcMain.handle(
+    IPC.backupsSummary,
+    async (_event, roots: string[]): Promise<{ count: number; bytes: number }> => {
+      const { files, bytes } = await findBackups(roots, hostFor(await getSettings()))
+      return { count: files.length, bytes }
+    }
+  )
+
+  ipcMain.handle(
+    IPC.backupsRemoveAll,
+    async (_event, roots: string[]): Promise<{ removed: number; bytes: number }> =>
+      removeAllBackups(roots, hostFor(await getSettings()))
+  )
 
   /* --- shell -------------------------------------------------------------- */
 
@@ -432,6 +497,25 @@ async function currentProbe(
   }
 }
 
+/** Delete the leftover repair temporaries among `paths`; the rest are in use. */
+async function removeStaleTemporaries(paths: string[], host: Host): Promise<{ path: string; bytes: number }[]> {
+  if (paths.length === 0) return []
+  const active = runner?.activeTemporaryPaths() ?? new Set<string>()
+  const now = Date.now()
+  const removed: { path: string; bytes: number }[] = []
+  for (const path of paths) {
+    const info = await host.stat(path)
+    if (!info || !isStaleTemporary(path, info.modifiedMs, now, active)) continue
+    try {
+      await host.remove(path)
+      removed.push({ path, bytes: info.sizeBytes })
+    } catch (error) {
+      console.warn(`Could not remove the leftover temporary file ${path}`, error)
+    }
+  }
+  return removed
+}
+
 async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal): Promise<void> {
   const settings = await getSettings()
   const environment = await resolveEnvironment(settings)
@@ -449,7 +533,11 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
   }
 
   const host = hostFor(settings)
-  const files = await host.findMedia(inputPaths, settings.mediaExtensions, settings.recursive)
+  const found = await host.findMedia(inputPaths, settings.mediaExtensions, settings.recursive)
+  // A repair's temporary file has a media extension, but it is not a library
+  // file; it is either in use or left over from a repair that never finished.
+  const files = found.filter((path) => !isTemporaryName(path))
+  const temporaries = found.filter((path) => isTemporaryName(path))
 
   send(IPC.scanProgress, { scanId, processed: 0, total: files.length } satisfies ScanProgressEvent)
 
@@ -494,11 +582,14 @@ async function runScan(scanId: string, inputPaths: string[], signal: AbortSignal
 
   await Promise.all(Array.from({ length: parallelism }, worker))
 
+  const cleaned = signal.aborted ? [] : await removeStaleTemporaries(temporaries, host)
+
   send(IPC.scanComplete, {
     scanId,
     inputPaths,
     errors,
     foundPaths: files,
-    cancelled: signal.aborted
+    cancelled: signal.aborted,
+    ...(cleaned.length > 0 ? { cleaned } : {})
   } satisfies ScanCompleteEvent)
 }

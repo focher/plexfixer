@@ -9,10 +9,12 @@ import type {
   RepairMode,
   ScanError
 } from '@shared/types.js'
-import { repairModeFor, resolveMode } from '@shared/mode.js'
+import { resolveMode } from '@shared/mode.js'
 import { DEFAULT_SORT, nextSort, sortResults, type SortState } from '@shared/sort.js'
 import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
+import BulkMenu from './components/BulkMenu.js'
+import { repairConfirmation, summarizeRepair } from '@shared/bulk.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
 import AboutDialog from './components/AboutDialog.js'
@@ -21,6 +23,7 @@ import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { pruneSelection } from '@shared/selection.js'
+import { formatBytes } from './format.js'
 import {
   codecFilterActive,
   countCodecs,
@@ -136,6 +139,9 @@ export default function App(): React.JSX.Element {
   const [jobs, setJobs] = useState<Job[]>([])
   const [dragging, setDragging] = useState(false)
   const [refreshing, setRefreshing] = useState<Set<string>>(new Set())
+  const [removingBackups, setRemovingBackups] = useState(false)
+  // Leftover repair temporaries the last scan removed, for a line of feedback.
+  const [cleaned, setCleaned] = useState<{ path: string; bytes: number }[]>([])
 
   const scanIdRef = useRef<string | undefined>(undefined)
   // Read by the scan-complete listener, registered once.
@@ -149,6 +155,8 @@ export default function App(): React.JSX.Element {
   // Read inside `refreshFile`, which must not re-create itself on every job
   // update or every row would lose its handler mid-repair.
   const jobsByPathRef = useRef<Map<string, Job>>(new Map())
+  // Read inside `repair`, created once, to say what a bulk repair will do.
+  const resultsByPathRef = useRef<Map<string, AnalysisResult>>(new Map())
 
   // The About menu item, which the main process routes here rather than to
   // the native panel — that one can show a version and nothing else.
@@ -231,6 +239,7 @@ export default function App(): React.JSX.Element {
         return next
       })
       setScanErrors(event.errors)
+      setCleaned(event.cleaned ?? [])
       setScanning(false)
       setScanProgress(undefined)
     })
@@ -486,8 +495,9 @@ export default function App(): React.JSX.Element {
    * mode — its override, its folder's, or the global default — which is what
    * the per-folder settings are for.
    *
-   * A force transcode of more than one file asks first: it re-encodes video,
-   * which takes hours across a library and is not undone by a click.
+   * A batch that would re-encode video asks first, saying how many files are
+   * re-encoded and how many only remuxed: a re-encode takes hours across a
+   * library and is not undone by a click.
    */
   const repair = useCallback(
     async (paths: string[], mode?: RepairMode) => {
@@ -496,23 +506,20 @@ export default function App(): React.JSX.Element {
         return entry ? [{ file: entry.file, scanRoot: entry.scanRoot }] : []
       })
       if (requests.length === 0) return
-      // Files set to report-only are not written to even by an explicit force
-      // transcode, so they are not part of what the confirmation is about.
-      const transcoding = requests.filter(
-        (request) =>
-          repairModeFor(
-            request.file.path,
-            overridesRef.current,
-            settingsRef.current?.defaultMode ?? 'safe-remux',
-            mode
-          ) === 'force-transcode'
-      ).length
-      if (
-        transcoding > 1 &&
-        !window.confirm(`Force transcode ${transcoding} files? Files that need it will have their video re-encoded.`)
-      ) {
-        return
-      }
+      // Say what each file will actually get: Force transcode only re-encodes
+      // the files that need it, and the rest are remuxed as usual.
+      const analysed = requests.flatMap((request) => {
+        const result = resultsByPathRef.current.get(request.file.path)
+        return result ? [result] : []
+      })
+      const summary = summarizeRepair(
+        analysed,
+        overridesRef.current,
+        settingsRef.current?.defaultMode ?? 'safe-remux',
+        mode
+      )
+      const question = repairConfirmation(summary, requests.length, mode)
+      if (question && !window.confirm(question)) return
       await window.plexfixer.jobs.enqueue(requests, mode)
       setTab('jobs')
     },
@@ -580,6 +587,10 @@ export default function App(): React.JSX.Element {
     for (const entry of results) map.set(entry.file.path, entry)
     return map
   }, [results])
+
+  useEffect(() => {
+    resultsByPathRef.current = resultsByPath
+  }, [resultsByPath])
 
   // The search narrows first, so the chips count what the search left.
   const searched = useMemo(
@@ -685,56 +696,57 @@ export default function App(): React.JSX.Element {
           <>
             {results.length > 0 ? (
               <>
-                <span className="muted nowrap">{selectedPaths.length} selected</span>
-                {selected.size > 0 ? (
-                  <button onClick={() => setSelected(new Set())} title="Unselect every file, including any a filter is hiding">
-                    Clear selection
-                  </button>
-                ) : null}
+                <span className="muted nowrap selection-count">{selectedPaths.length} selected</span>
                 <button
-                  disabled={selectedPaths.length === 0}
-                  onClick={() => void repair(selectedPaths)}
-                  title="Repair each file in its own mode — its override, its folder's, or the default"
+                  onClick={() => setSelected(new Set())}
+                  disabled={selected.size === 0}
+                  title="Unselect every file, including any a filter is hiding"
                 >
-                  Repair selected
+                  Clear selection
                 </button>
-                <button
+                <BulkMenu
                   disabled={selectedPaths.length === 0}
-                  onClick={() => void repair(selectedPaths, 'safe-remux')}
-                  title="Apply the lossless fixes; files that need a re-encode are skipped"
-                >
-                  Safe remux selected
-                </button>
-                <button
-                  disabled={selectedPaths.length === 0}
-                  onClick={() => void repair(selectedPaths, 'force-transcode')}
-                  title="Fix everything, re-encoding video where a remux cannot"
-                >
-                  Force transcode selected
-                </button>
+                  items={[
+                    {
+                      key: 'rescan',
+                      label: refreshing.size > 0 ? 'Rescanning…' : 'Rescan',
+                      hint: 'Re-scan only the selected files',
+                      disabled: scanning || refreshing.size > 0,
+                      onSelect: () => void refreshSelected(selectedPaths)
+                    },
+                    {
+                      key: 'repair',
+                      label: 'Repair',
+                      hint: "Each file in its own mode — its override, its folder's, or the default",
+                      onSelect: () => void repair(selectedPaths)
+                    },
+                    {
+                      key: 'remux',
+                      label: 'Force lossless remux',
+                      hint: 'Only the lossless fixes; files that need a re-encode are skipped',
+                      onSelect: () => void repair(selectedPaths, 'safe-remux')
+                    },
+                    {
+                      key: 'transcode',
+                      label: 'Force transcode',
+                      hint: 'Fix everything, re-encoding video only where a remux cannot',
+                      onSelect: () => void repair(selectedPaths, 'force-transcode')
+                    }
+                  ]}
+                />
               </>
             ) : null}
             {scanning ? (
               <button onClick={() => void cancelScan()}>Cancel scan</button>
             ) : (
               <>
-                {selectedPaths.length > 0 ? (
-                  <button
-                    onClick={() => void refreshSelected(selectedPaths)}
-                    disabled={refreshing.size > 0}
-                    title="Re-scan only the selected files"
-                  >
-                    {refreshing.size > 0 ? 'Refreshing…' : 'Refresh selected'}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => void refreshAll()}
-                    disabled={library.size === 0}
-                    title="Re-scan every folder in the library"
-                  >
-                    Refresh all
-                  </button>
-                )}
+                <button
+                  onClick={() => void refreshAll()}
+                  disabled={library.size === 0}
+                  title="Re-scan every folder in the library"
+                >
+                  Refresh all
+                </button>
                 <button
                   onClick={() => {
                     if (
@@ -777,6 +789,19 @@ export default function App(): React.JSX.Element {
                   {scanProgress?.total ? ` of ${scanProgress.total}` : ''}
                 </strong>
                 {scanProgress?.currentPath ? <div className="muted mono">{scanProgress.currentPath}</div> : null}
+              </div>
+            ) : null}
+
+            {cleaned.length > 0 ? (
+              <div className="banner">
+                <strong>
+                  Removed {cleaned.length} leftover temporary file{cleaned.length === 1 ? '' : 's'} (
+                  {formatBytes(cleaned.reduce((total, entry) => total + entry.bytes, 0))}).
+                </strong>{' '}
+                {cleaned.length === 1 ? 'It was' : 'They were'} left by a repair that never finished.
+                <button className="ghost" style={{ marginLeft: 8 }} onClick={() => setCleaned([])}>
+                  Dismiss
+                </button>
               </div>
             ) : null}
 
@@ -1027,6 +1052,33 @@ export default function App(): React.JSX.Element {
             settings={settings}
             environment={environment}
             overrides={overrides}
+            canRemoveBackups={libraryRoots.length > 0}
+            removingBackups={removingBackups}
+            onRemoveAllBackups={() => {
+              void (async () => {
+                setRemovingBackups(true)
+                try {
+                  const { count, bytes } = await window.plexfixer.backups.summary(libraryRoots)
+                  if (count === 0) {
+                    window.alert('There are no backups under the scanned folders.')
+                    return
+                  }
+                  const ok = window.confirm(
+                    `Remove ${count} backup${count === 1 ? '' : 's'} (${formatBytes(bytes)})?\n\n` +
+                      'These are the originals PlexFixer kept when it replaced a file. The repaired files are ' +
+                      'not touched. Instant (cloned) backups share their data with the file, so removing them ' +
+                      'frees less space than their size suggests.'
+                  )
+                  if (!ok) return
+                  const { removed } = await window.plexfixer.backups.removeAll(libraryRoots)
+                  window.alert(`Removed ${removed} backup${removed === 1 ? '' : 's'}.`)
+                } catch (error) {
+                  window.alert(`Could not remove the backups: ${error instanceof Error ? error.message : String(error)}`)
+                } finally {
+                  setRemovingBackups(false)
+                }
+              })()
+            }}
             onSetMode={(path, mode) => void setMode(path, mode)}
             onAddFolderOverride={() => {
               void (async () => {

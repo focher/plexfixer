@@ -13,7 +13,7 @@
  */
 
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { open, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { open, mkdir, readdir, rename, rm, rmdir, stat } from 'node:fs/promises'
 import nodePath from 'node:path'
 import { promisify } from 'node:util'
 import type { AppSettings, VolumeInfo } from '@shared/types.js'
@@ -74,7 +74,16 @@ export interface Host {
   readRange: (path: string, offset: number, length: number) => Promise<Buffer>
   mkdirp: (path: string) => Promise<void>
   rename: (from: string, to: string) => Promise<void>
+  /**
+   * An instant copy that shares the original's data (an APFS clone), for a
+   * backup that costs no time and almost no space. Resolves false, having
+   * written nothing, wherever that is not possible: a real copy of a
+   * multi-gigabyte file is exactly what this exists to avoid.
+   */
+  cloneFile: (from: string, to: string) => Promise<boolean>
   remove: (path: string) => Promise<void>
+  /** Remove a directory only if it is empty; a folder with anything left in it stays. */
+  removeEmptyDirectory: (path: string) => Promise<void>
   exists: (path: string) => Promise<boolean>
   volume: (path: string) => Promise<VolumeInfo>
   /** Every media file under these paths, as absolute paths. */
@@ -163,8 +172,25 @@ export function localHost(): Host {
       await rename(from, to)
     },
 
+    async cloneFile(from, to) {
+      // Node's COPYFILE_FICLONE_FORCE is not implemented on macOS, and `cp -c`
+      // quietly falls back to a full copy when it cannot clone. So the clone
+      // is only attempted where it is certain to work: both ends on the same
+      // APFS volume — which a backup folder beside its file always is.
+      if (process.platform !== 'darwin') return false
+      const { describeVolume } = await import('./volumes.js')
+      const [source, target] = await Promise.all([describeVolume(from), describeVolume(to)])
+      if (source.type !== 'apfs' || source.device == null || source.device !== target.device) return false
+      await execFileAsync('/bin/cp', ['-c', '-p', from, to], { timeout: 60_000 })
+      return true
+    },
+
     async remove(path) {
       await rm(path, { force: true })
+    },
+
+    async removeEmptyDirectory(path) {
+      await rmdir(path)
     },
 
     async exists(path) {
@@ -328,8 +354,17 @@ export function remoteHost(target: SshTarget): Host {
       await run(shellCommand(['mv', '-f', '--', from, to]), { timeoutMs: 600_000 })
     },
 
+    async cloneFile() {
+      // In-place edits never run remotely, so there is nothing to back up here.
+      return false
+    },
+
     async remove(path) {
       await run(shellCommand(['rm', '-f', '--', path]), { timeoutMs: 60_000 })
+    },
+
+    async removeEmptyDirectory(path) {
+      await run(shellCommand(['rmdir', '--', path]), { timeoutMs: 20_000 })
     },
 
     async exists(path) {

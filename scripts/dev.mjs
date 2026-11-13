@@ -15,6 +15,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { ensureDevBundle } from './dev-bundle.mjs'
 
 const args = process.argv.slice(2)
 
@@ -22,6 +23,11 @@ const args = process.argv.slice(2)
 // as plain Node, and the app then fails importing BrowserWindow.
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
+
+// On macOS, launch a copy of Electron named PlexFixer, so the menu bar, Dock
+// and ⌘-Tab say PlexFixer rather than Electron (see dev-bundle.mjs).
+const branded = ensureDevBundle()
+if (branded) env.ELECTRON_EXEC_PATH = branded
 
 const command = process.platform === 'win32' ? 'electron-vite.cmd' : 'electron-vite'
 const child = spawn(command, ['dev', '--', ...args], { stdio: 'inherit', env, shell: process.platform === 'win32' })
