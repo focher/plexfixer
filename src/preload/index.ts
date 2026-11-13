@@ -73,6 +73,14 @@ const api = {
       return () => ipcRenderer.removeListener(IPC.scanComplete, handler)
     }
   },
+  backups: {
+    /** How many repair backups sit under these folders, and their size. */
+    summary: (roots: string[]): Promise<{ count: number; bytes: number }> =>
+      ipcRenderer.invoke(IPC.backupsSummary, roots),
+    /** Remove every repair backup under these folders. */
+    removeAll: (roots: string[]): Promise<{ removed: number; bytes: number }> =>
+      ipcRenderer.invoke(IPC.backupsRemoveAll, roots)
+  },
   jobs: {
     /** Leave `mode` out to use each file's own resolved mode. */
     enqueue: (requests: RepairRequest[], mode?: RepairMode): Promise<Job[]> =>
