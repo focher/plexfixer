@@ -67,7 +67,17 @@ export interface VideoStream extends BaseStream {
   /** Dolby Vision profile when a DV configuration record is present. */
   dolbyVisionProfile?: number
   dolbyVisionBlSignalCompatibilityId?: number
+  /**
+   * Reference frames the stream uses: `max_num_ref_frames` from its SPS when
+   * that could be read, otherwise ffprobe's own figure.
+   */
   refFrames?: number
+  /**
+   * H.264 only: the level in the MP4/Matroska `avcC` header, a separate copy
+   * of the one in the SPS. Tools such as Subler show this one; decoders and
+   * Plex read the SPS, which is `level`.
+   */
+  headerLevel?: number
   /** Non-square pixels (anamorphic). */
   sampleAspectRatio?: string
   isAnamorphic: boolean

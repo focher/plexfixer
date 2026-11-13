@@ -316,7 +316,7 @@ describe.runIf(enabled)('integration: H.264 level relabel', () => {
       '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=24:duration=2',
       '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
       '-map', '0:v', '-map', '1:a',
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-level', '4.2',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-level', '4.2', '-refs', '3',
       '-c:a', 'aac',
       '-movflags', '+faststart',
       '-metadata:s:v:0', 'language=eng',
@@ -325,6 +325,10 @@ describe.runIf(enabled)('integration: H.264 level relabel', () => {
     ])
 
     const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    // Read from the SPS itself, along with the avcC header's copy of the level.
+    const source = file.streams.find((s) => s.kind === 'video')
+    expect(source && 'refFrames' in source ? source.refFrames : undefined).toBe(3)
+    expect(source && 'headerLevel' in source ? source.headerLevel : undefined).toBe(42)
     const result = analyzeFile(file, DEFAULT_SETTINGS)
     expect(result.plan.videoLevel).toBe(41)
     expect(result.plan.strategy).toBe('remux')
@@ -336,6 +340,8 @@ describe.runIf(enabled)('integration: H.264 level relabel', () => {
     const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
     const stream = repaired.streams.find((s) => s.kind === 'video')
     expect(stream && 'level' in stream ? stream.level : undefined).toBe(41)
+    // Both copies changed: the stream's SPS, and the header Subler shows.
+    expect(stream && 'headerLevel' in stream ? stream.headerLevel : undefined).toBe(41)
     expect(analyzeFile(repaired, DEFAULT_SETTINGS).findings.map((f) => f.code)).not.toContain('video-level-too-high')
   }, 180_000)
 })
