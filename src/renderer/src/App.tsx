@@ -20,6 +20,14 @@ import RemoteBrowser from './components/RemoteBrowser.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
+import { pruneSelection } from '@shared/selection.js'
+import {
+  codecFilterActive,
+  countCodecs,
+  emptyCodecFilter,
+  filterByCodec,
+  type CodecFilter
+} from '@shared/plex/codecs.js'
 import {
   clearLibrary as clearStoredLibrary,
   entryFromResult,
@@ -54,7 +62,7 @@ function analyzeEntry(entry: LibraryEntry, settings: AppSettings): AnalysisResul
 
 /** The summary tiles, each also a filter. */
 const STATUS_TILES: { key: FileStatus; label: string; tone: string; hint: string }[] = [
-  { key: 'passed', label: 'Passed', tone: 'ok', hint: 'Show only files that passed every check' },
+  { key: 'passed', label: 'Passed', tone: 'ok', hint: 'Show only files with nothing to do' },
   { key: 'fixable', label: 'Fixable', tone: 'info', hint: 'Show only files a lossless remux fixes' },
   { key: 'reencode', label: 'Re-encode', tone: 'warn', hint: 'Show only files that need their video re-encoded' },
   { key: 'manual', label: 'Blocked', tone: 'fail', hint: 'Show only files no automatic repair can fix' }
@@ -119,6 +127,7 @@ export default function App(): React.JSX.Element {
   const [scanErrors, setScanErrors] = useState<ScanError[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
+  const [codecs, setCodecs] = useState<CodecFilter>(emptyCodecFilter)
   const [status, setStatus] = useState<FileStatus>()
   const [hidePassed, setHidePassed] = useState(() => readPref('hidePassed'))
   const [sort, setSort] = useState<SortState>(readSort)
@@ -586,13 +595,27 @@ export default function App(): React.JSX.Element {
     if (hidingPassed) rows = rows.filter((entry) => fileStatus(entry) !== 'passed')
     return rows
   }, [searched, status, hidingPassed])
-  const facetCounts = useMemo(() => countFacets(narrowed), [narrowed])
+  // Then the codec pickers, then the work chips, whose counts reflect the codecs.
+  const codecCounts = useMemo(() => countCodecs(narrowed, codecs), [narrowed, codecs])
+  const codecFiltered = useMemo(() => filterByCodec(narrowed, codecs), [narrowed, codecs])
+  const facetCounts = useMemo(() => countFacets(codecFiltered), [codecFiltered])
   // Sorted last, so the filters above decide *which* rows and this decides
   // only their order.
   const visibleResults = useMemo(
-    () => sortResults(filterResults(narrowed, facets), sort),
-    [narrowed, facets, sort]
+    () => sortResults(filterResults(codecFiltered, facets), sort),
+    [codecFiltered, facets, sort]
   )
+
+  // A selected file that is re-scanned or repaired into something the filters
+  // hide leaves the selection. Changing the filters themselves does not.
+  const previousLibraryRef = useRef(library)
+  useEffect(() => {
+    const before = previousLibraryRef.current
+    previousLibraryRef.current = library
+    if (before === library) return
+    const visible = new Set(visibleResults.map((entry) => entry.file.path))
+    setSelected((previous) => pruneSelection(previous, before, library, visible))
+  }, [library, visibleResults])
 
   if (!settings || !libraryLoaded) {
     return (
@@ -606,6 +629,7 @@ export default function App(): React.JSX.Element {
   }
 
   const selectedPaths = [...selected].filter((path) => library.has(path))
+  const chipFiltersActive = facets.size > 0 || codecFilterActive(codecs)
 
   return (
     <div
@@ -662,6 +686,11 @@ export default function App(): React.JSX.Element {
             {results.length > 0 ? (
               <>
                 <span className="muted nowrap">{selectedPaths.length} selected</span>
+                {selected.size > 0 ? (
+                  <button onClick={() => setSelected(new Set())} title="Unselect every file, including any a filter is hiding">
+                    Clear selection
+                  </button>
+                ) : null}
                 <button
                   disabled={selectedPaths.length === 0}
                   onClick={() => void repair(selectedPaths)}
@@ -834,7 +863,7 @@ export default function App(): React.JSX.Element {
                     aria-label="Search files and folders"
                     spellCheck={false}
                   />
-                  {(query.trim() || status || hidingPassed) && facets.size === 0 ? (
+                  {(query.trim() || status || hidingPassed) && !chipFiltersActive ? (
                     <span className="muted nowrap">
                       {visibleResults.length} of {results.length}
                     </span>
@@ -870,6 +899,8 @@ export default function App(): React.JSX.Element {
                 <FilterBar
                   counts={facetCounts}
                   active={facets}
+                  codecCounts={codecCounts}
+                  codecs={codecs}
                   total={results.length}
                   shown={visibleResults.length}
                   onToggle={(facet) =>
@@ -880,14 +911,26 @@ export default function App(): React.JSX.Element {
                       return next
                     })
                   }
-                  onClear={() => setFacets(new Set())}
+                  onToggleCodec={(kind, codec) =>
+                    setCodecs((previous) => {
+                      const next = new Set(previous[kind])
+                      if (next.has(codec)) next.delete(codec)
+                      else next.add(codec)
+                      return { ...previous, [kind]: next }
+                    })
+                  }
+                  onClearCodecs={(kind) => setCodecs((previous) => ({ ...previous, [kind]: new Set() }))}
+                  onClear={() => {
+                    setFacets(new Set())
+                    setCodecs(emptyCodecFilter())
+                  }}
                 />
 
                 {visibleResults.length === 0 ? (
                   <div className="empty">
                     {query.trim() && searched.length === 0
                       ? `No file matches “${query.trim()}”.`
-                      : hidingPassed && !status && facets.size === 0
+                      : hidingPassed && !status && !chipFiltersActive
                         ? 'Every file here passed. Turn off Hide passed to see them.'
                         : 'No file matches the filters you have on. Clear one to see the rest.'}
                   </div>

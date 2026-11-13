@@ -6,7 +6,8 @@ import { fileStatus, type FileStatus } from '@shared/plex/facets.js'
 import { describeProgress } from '@shared/stages.js'
 import FileDetail from './FileDetail.js'
 import type { SortKey, SortState } from '@shared/sort.js'
-import { formatAgo, formatBytes, parentDirectory, shortenPath } from '../format.js'
+import { formatAgo, formatAudioCodec, formatBytes, formatVideoCodec, parentDirectory, shortenPath } from '../format.js'
+import { audioStreams, defaultAudioStream, videoStreams } from '@shared/plex/tracks.js'
 import { BoltIcon, RefreshIcon, WrenchIcon } from './icons.js'
 
 /** How an overridden mode shows in the row. */
@@ -18,7 +19,7 @@ const MODE_TONE: Record<RepairMode, string> = {
 
 /** The status column: what happens next for the file. */
 const STATUS_BADGE: Record<FileStatus, { label: string; tone: string; hint: string }> = {
-  passed: { label: 'passed', tone: 'ok', hint: 'Passed every check — direct plays as it is' },
+  passed: { label: 'passed', tone: 'ok', hint: 'Nothing to do — direct plays as it is (see details for any notes)' },
   fixable: { label: 'fixable', tone: 'info', hint: 'A lossless remux fixes this file' },
   reencode: { label: 're-encode', tone: 'warn', hint: 'Only a video re-encode fixes this file' },
   manual: { label: 'blocked', tone: 'fail', hint: 'No automatic repair fixes this — open the row for why, and what you can do' }
@@ -138,7 +139,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         <SortHeader label="File" column="name" sort={props.sort} onSort={props.onSort} />
         <SortHeader label="Why" column="reason" sort={props.sort} onSort={props.onSort} />
         <SortHeader label="Plan" column="plan" sort={props.sort} onSort={props.onSort} />
-        <SortHeader label="Size" column="size" sort={props.sort} onSort={props.onSort} className="numeric" />
+        <SortHeader label="Technical" column="size" sort={props.sort} onSort={props.onSort} />
         <SortHeader label="Scanned" column="scanned" sort={props.sort} onSort={props.onSort} />
         <span>Action</span>
       </div>
@@ -151,8 +152,23 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         const open = expanded.has(path)
         const reason = summarizeReason(result)
         const isRefreshing = props.refreshing.has(path)
-        const status = STATUS_BADGE[fileStatus(result)]
+        // The first real video track; cover art is not the film's codec.
+        const videoCodec = videoStreams(result.file)[0]?.codec
+        // The track that plays by default, then how many others there are.
+        const audioTracks = audioStreams(result.file)
+        const defaultAudio = defaultAudioStream(result.file)
+        const otherAudio = audioTracks.length - (defaultAudio ? 1 : 0)
+        const codecLine = `${formatVideoCodec(videoCodec)}, ${formatAudioCodec(defaultAudio?.codec)}${otherAudio > 0 ? ` +${otherAudio}` : ''}`
+        const audioDetail = audioTracks
+          .map((track) => `${formatAudioCodec(track.codec)}${track === defaultAudio ? ' (default)' : ''}`)
+          .join(', ')
+        const statusKey = fileStatus(result)
+        const status = STATUS_BADGE[statusKey]
         const plan = PLAN_BADGE[result.plan.strategy]
+        // "Needs you" shows in the plan too: "nothing to do" would read as
+        // finished. Any automatic part of the plan (a remux) still shows beside it.
+        const manual = statusKey === 'manual'
+        const showStrategy = !(manual && result.plan.strategy === 'none')
         const mode = resolveMode(path, props.overrides, props.defaultMode)
         const reportOnly = mode.mode === 'report'
 
@@ -213,20 +229,34 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 </span>
               </span>
               <span className="plan">
-                <span
-                  className={`badge ${plan.tone}`}
-                  title={result.plan.costNote ? `${plan.hint}. ${result.plan.costNote}` : plan.hint}
-                >
-                  {plan.label}
-                </span>
+                {showStrategy ? (
+                  <span
+                    className={`badge ${plan.tone}`}
+                    title={result.plan.costNote ? `${plan.hint}. ${result.plan.costNote}` : plan.hint}
+                  >
+                    {plan.label}
+                  </span>
+                ) : null}
+                {manual ? (
+                  <span
+                    className="badge fail"
+                    title="No automatic repair settles this — open the details to see what needs deciding"
+                  >
+                    manual
+                  </span>
+                ) : null}
                 {job && !jobActive ? (
                   <span className={`badge ${JOB_TONE[job.state]}`} title={job.message}>
                     {job.state}
                   </span>
                 ) : null}
               </span>
-              <span className="muted nowrap numeric" style={{ fontSize: 12 }}>
-                {formatBytes(result.file.sizeBytes)}
+              <span
+                className="technical"
+                title={`${result.file.sizeBytes.toLocaleString()} bytes · ${formatVideoCodec(videoCodec)} · Audio: ${audioDetail || 'none'}`}
+              >
+                <span>{formatBytes(result.file.sizeBytes)}</span>
+                <span className="muted">{codecLine}</span>
               </span>
               <span
                 className="muted nowrap"

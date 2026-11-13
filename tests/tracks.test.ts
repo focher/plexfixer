@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
-import { resolvePrimaryLanguage, resolveTracks } from '@shared/plex/tracks.js'
+import { defaultAudioStream, resolvePrimaryLanguage, resolveTracks } from '@shared/plex/tracks.js'
 import { audio, flags, mainAudio, mkv, subtitle, video } from './fixtures.js'
 
 const settings = DEFAULT_SETTINGS
@@ -177,5 +177,17 @@ describe('resolveTracks — subtitles', () => {
 
     expect(resolution.findings.map((f) => f.code)).toContain('forced-subtitle-not-flagged')
     expect(resolution.changes).toContainEqual(expect.objectContaining({ streamIndex: 2, setForced: true }))
+  })
+})
+
+describe('defaultAudioStream', () => {
+  it('picks the flagged track', () => {
+    const file = mkv([video(), audio({ index: 1, codec: 'ac3' }), mainAudio({ index: 2, codec: 'truehd' })])
+    expect(defaultAudioStream(file)?.index).toBe(2)
+  })
+
+  it('falls back to the first track, and to nothing with no audio', () => {
+    expect(defaultAudioStream(mkv([video(), audio({ index: 1 }), audio({ index: 2 })]))?.index).toBe(1)
+    expect(defaultAudioStream(mkv([video()]))).toBeUndefined()
   })
 })

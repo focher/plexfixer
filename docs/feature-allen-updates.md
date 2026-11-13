@@ -24,10 +24,10 @@ Every file has exactly **one** status, and it says what happens next:
 
 | Status | Meaning |
 |---|---|
-| **Passed** | No problems found. It plays directly in Plex as it is. |
+| **Passed** | Nothing to do. It plays directly in Plex as it is. Any advisory notes, such as *HEVC may not play on every client*, are in the details. |
 | **Fixable** | A lossless remux fixes it: the file is rewrapped, with no loss of quality. It's quick. |
 | **Re-encode** | Only re-encoding the video fixes it (slow, and changes the picture data). |
-| **Needs you** | Something no automatic repair can fix. Open the row's details to see what. |
+| **Needs you** | Something only you can settle: a problem no automatic repair fixes, or a question like *no English audio track* when the video is tagged English but every audio track is French. The Plan column says **manual**. Open the row's details to see what. |
 
 The four tiles at the top show these counts, which add up to your whole library. **Click a tile** to show only those files, and click it again to show everything.
 

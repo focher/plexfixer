@@ -1,11 +1,19 @@
 /**
  * ISO 639 language handling.
  *
- * Matroska stores ISO 639-2/B ("fre", "ger"), MP4 commonly stores 639-2/T
- * ("fra", "deu") or a BCP-47 tag ("en-US", "pt-BR"). Plex and most clients key
- * off whatever is in the container, so PlexFixer normalises everything to
- * 639-2/B for comparison and writes 639-2/B back out.
+ * About twenty languages have two ISO 639-2 codes: a bibliographic one (/B:
+ * "fre", "ger", "dut") and a terminology one (/T: "fra", "deu", "nld").
+ * Containers disagree on which to use. Matroska specifies /B. MP4 specifies /T
+ * in the `mdhd` box, and Apple's players read an MP4 holding "fre" as an
+ * unknown language. Files also turn up with BCP-47 tags ("en-US") or names.
+ *
+ * So PlexFixer normalises everything to /B *internally*, for comparing and
+ * displaying, and writes whichever form the output container expects
+ * (`languageForContainer`). Writing /B into an MP4 is what used to make
+ * French tracks show as unknown after a repair.
  */
+
+import type { ContainerFormat } from './types.js'
 
 export const UNDEFINED_LANGUAGE = 'und'
 
@@ -137,4 +145,35 @@ export function languageOptions(): { value: string; label: string }[] {
     .map((entry) => ({ value: entry.bib, label: entry.name }))
     .sort((a, b) => a.label.localeCompare(b.label))
     .concat({ value: UNDEFINED_LANGUAGE, label: 'Undefined' })
+}
+
+/**
+ * The form of a language code a container expects: ISO 639-2/T for MP4 (where
+ * it differs from /B), /B for Matroska. Codes this app does not know, and
+ * `und`, pass through as normalised.
+ */
+export function languageForContainer(tag: string | undefined | null, container: 'mp4' | 'mkv'): string {
+  const normalized = normalizeLanguage(tag)
+  const entry = BY_ANY.get(normalized)
+  if (!entry) return normalized
+  return container === 'mp4' ? (entry.term ?? entry.bib) : entry.bib
+}
+
+/**
+ * Whether a raw tag, as found in a file, is already the right code for that
+ * file's container — so rewriting it would change nothing a player cares
+ * about, or make things worse.
+ *
+ * An unknown three-letter code counts as canonical: it is left alone rather
+ * than guessed at. In a container that is neither MP4 nor Matroska, either
+ * ISO 639-2 form is accepted.
+ */
+export function isCanonicalFor(raw: string, container: ContainerFormat): boolean {
+  const lower = raw.trim().toLowerCase()
+  if (!/^[a-z]{3}$/.test(lower)) return false
+  const entry = BY_ANY.get(lower)
+  if (!entry) return true
+  if (container === 'mp4') return lower === (entry.term ?? entry.bib)
+  if (container === 'matroska') return lower === entry.bib
+  return lower === entry.bib || lower === entry.term
 }

@@ -16,6 +16,8 @@ import type {
   TrackPlanChange
 } from '@shared/types.js'
 import { canStreamCopyIntoMp4 } from '@shared/plex/rules.js'
+import { UNDEFINED_LANGUAGE, languageForContainer } from '@shared/languages.js'
+import { h264LevelLabel } from '@shared/plex/h264-level.js'
 import { isCoverArt } from '@shared/plex/tracks.js'
 
 /** Per-type output ordinal for a mapped stream. */
@@ -305,12 +307,20 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
 
   /* --- 3. Metadata, dispositions and languages -------------------------- */
 
+  const outputContainer = toMp4 ? 'mp4' : 'mkv'
+
   for (const entry of mapped) {
     const change = changeFor(plan, entry.source.index)
     const target = `${entry.specifier}:${entry.ordinal}`
 
-    if (change?.setLanguage) {
-      args.push(`-metadata:s:${target}`, `language=${change.setLanguage}`)
+    // ffmpeg copies each stream's language tag verbatim, so a code has to be
+    // written explicitly whenever the output container wants another form of
+    // it: MP4 wants ISO 639-2/T ("fra"), Matroska /B ("fre"). That covers a
+    // planned retag and a plain container change alike.
+    const language = languageForContainer(change?.setLanguage ?? entry.source.language, outputContainer)
+    const current = entry.source.rawLanguage?.trim().toLowerCase()
+    if (language !== UNDEFINED_LANGUAGE && (change?.setLanguage || language !== current)) {
+      args.push(`-metadata:s:${target}`, `language=${language}`)
     }
 
     // Dispositions are copied from the source by default, so only emit an
@@ -335,7 +345,7 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
     const spec = plan.addCompatibilityAudio
     args.push(
       `-metadata:s:a:${compatAudioOrdinal}`,
-      `language=${spec.language}`,
+      `language=${languageForContainer(spec.language, outputContainer)}`,
       `-metadata:s:a:${compatAudioOrdinal}`,
       `title=AAC ${spec.channels > 2 ? `${spec.channels}ch` : 'Stereo'} (PlexFixer)`,
       `-disposition:a:${compatAudioOrdinal}`,
@@ -351,6 +361,14 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
   if (plan.videoCodecTag) {
     const primary = mapped.find((entry) => entry.specifier === 'v')
     if (primary) args.push(`-tag:v:${primary.ordinal}`, plan.videoCodecTag)
+  }
+
+  // Rewrite the level in the stream's SPS — what players and Plex read — not
+  // just the copy in the MP4 header; the muxer rebuilds `avcC` from the SPS.
+  // Scoped to the real video track, like the tag, so artwork is untouched.
+  if (plan.videoLevel != null && !plan.videoTranscode) {
+    const primary = mapped.find((entry) => entry.specifier === 'v')
+    if (primary) args.push(`-bsf:v:${primary.ordinal}`, `h264_metadata=level=${h264LevelLabel(plan.videoLevel)}`)
   }
 
   if (toMp4) {
