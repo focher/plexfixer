@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import type { AppSettings, EnvironmentInfo, ModeOverrides, RemoteCheck, RepairMode } from '@shared/types.js'
 import { languageOptions } from '@shared/languages.js'
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
+import { RETENTION_CHOICES } from '@shared/backups.js'
 import { shortenPath } from '../format.js'
 
 interface FieldProps {
@@ -54,6 +55,12 @@ export interface SettingsPanelProps {
   onPickDirectory: () => void
   onPickBinary: (name: 'ffmpeg' | 'ffprobe') => void
   onRefreshEnvironment: () => void
+  /** Find every backup under the library, confirm, and remove them. */
+  onRemoveAllBackups: () => void
+  /** A backup search or removal is under way. */
+  removingBackups?: boolean
+  /** False when there is no library to look in. */
+  canRemoveBackups: boolean
 }
 
 export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Element {
@@ -330,6 +337,33 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
             onChange={(event) => set({ keepBackups: event.target.checked })}
           />
           <span className="muted">Keep a backup when replacing a file</span>
+        </Field>
+
+        <Field
+          label="Delete backups after"
+          hint="Long enough to notice a repair that went wrong. Backups are full-size copies, so they add up."
+        >
+          <select
+            value={String(settings.backupRetentionDays)}
+            disabled={!settings.keepBackups}
+            onChange={(event) => set({ backupRetentionDays: Number(event.target.value) })}
+          >
+            {/* A value set by hand still shows, rather than reading as "Never". */}
+            {RETENTION_CHOICES.some((choice) => choice.days === settings.backupRetentionDays) ? null : (
+              <option value={String(settings.backupRetentionDays)}>{settings.backupRetentionDays} days</option>
+            )}
+            {RETENTION_CHOICES.map((choice) => (
+              <option key={choice.days} value={String(choice.days)}>
+                {choice.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Backups on disk" hint="Every backup folder under the scanned library, including old ones.">
+          <button onClick={props.onRemoveAllBackups} disabled={!props.canRemoveBackups || props.removingBackups}>
+            {props.removingBackups ? 'Working…' : 'Remove all backups…'}
+          </button>
         </Field>
 
         <Field label="Files at once" hint="Higher values saturate a slow disk or network share.">

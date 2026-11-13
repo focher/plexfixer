@@ -389,6 +389,8 @@ export interface AppSettings {
   outputDirectory: string
   /** Keep the original file alongside/aside when writing in place. */
   keepBackups: boolean
+  /** Days a backup is kept before it is removed automatically; 0 keeps it until removed by hand. */
+  backupRetentionDays: number
   /** Suffix used for sibling output. */
   outputSuffix: string
 
@@ -511,6 +513,8 @@ export interface VolumeInfo {
   kind: 'local' | 'network' | 'unknown'
   /** Device id from stat(2); equal ids mean a move is a rename, not a copy. */
   device?: number
+  /** Filesystem type on macOS, e.g. `apfs`, `hfs`, `exfat`, `smbfs`. */
+  type?: string
 }
 
 /**
@@ -643,6 +647,8 @@ export interface ScanCompleteEvent {
   foundPaths: string[]
   /** True when the scan was cancelled part-way: files not reached say nothing. */
   cancelled: boolean
+  /** Leftover repair temporary files the scan found and removed. */
+  cleaned?: { path: string; bytes: number }[]
 }
 
 /**

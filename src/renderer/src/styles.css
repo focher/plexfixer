@@ -1129,14 +1129,11 @@ button.expander:hover:not(:disabled) {
   opacity: 0.7;
 }
 
-.codec-menu {
+/* A dropdown under its trigger; the parent is `position: relative`. */
+.popover {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
   z-index: 20;
-  min-width: 170px;
-  max-height: 320px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 4px;
@@ -1144,6 +1141,74 @@ button.expander:hover:not(:disabled) {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.codec-menu {
+  left: 0;
+  min-width: 170px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* ---------- toolbar: the selection and its Bulk menu ---------- */
+
+/* Fixed width, so the toolbar does not shift as the count gains a digit. */
+.selection-count {
+  min-width: 9ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bulk-menu {
+  position: relative;
+}
+
+.bulk-menu > button .caret {
+  margin-left: 6px;
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+/* The toolbar sits at the right edge, so the menu opens leftwards. */
+.bulk-menu-popover {
+  right: 0;
+  width: 280px;
+  gap: 2px;
+}
+
+.bulk-menu-popover .bulk-item,
+.bulk-menu-popover .bulk-item:hover:not(:disabled) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+}
+
+.bulk-menu-popover .bulk-item:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.bulk-menu-popover .bulk-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.bulk-menu-popover .bulk-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.bulk-menu-popover .bulk-hint {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-faint);
+  white-space: normal;
 }
 
 .codec-menu .codec-any {

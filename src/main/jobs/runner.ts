@@ -25,6 +25,7 @@ import { FfmpegError, runFfmpeg } from '../ffmpeg/run.js'
 import { probeFile } from '../ffmpeg/probe.js'
 import { buildRepairCommand, buildSubtitleExtractCommands } from './command.js'
 import {
+  cloneToBackup,
   discardTemporary,
   promoteOutput,
   redirectOutput,
@@ -33,6 +34,7 @@ import {
 } from './output.js'
 import { TaskQueue } from './queue.js'
 import { REFUSAL_REASON, inPlaceVerdict } from '@shared/plex/inplace.js'
+import type { BackupRecord } from '@shared/backups.js'
 import { languageForContainer, sameLanguage } from '@shared/languages.js'
 import { applyPatches, packLanguage, readMp4Tracks, revertPatches, type BytePatch } from './mp4-patch.js'
 
@@ -63,6 +65,29 @@ export class RepairRunner {
     private host: Host = localHost()
   ) {
     this.queue = new TaskQueue(concurrency)
+  }
+
+  /**
+   * The temporary files of repairs that are queued or running, which a scan
+   * must not mistake for leftovers.
+   */
+  activeTemporaryPaths(): Set<string> {
+    const paths = new Set<string>()
+    for (const job of this.jobs.values()) {
+      if (job.state === 'queued' || job.state === 'running') paths.add(temporaryPathFor(job.outputPath, this.host))
+    }
+    return paths
+  }
+
+  /** Told about every backup a repair makes, so it can be expired later. */
+  onBackup?: (record: BackupRecord) => void
+
+  private noteBackup(path: string, original: string, clone = false): void {
+    try {
+      this.onBackup?.({ path, original, createdAt: Date.now(), host: this.host.label, ...(clone ? { clone } : {}) })
+    } catch {
+      /* the record is housekeeping; it never fails a repair */
+    }
   }
 
   setBinaries(binaries: RunnerBinaries): void {
@@ -409,15 +434,40 @@ export class RepairRunner {
     if (!job) return false
     this.update({ ...job, state: 'running', stage: 'planning', startedAt: Date.now(), command: [] })
     this.log(id, 'info', 'Planned actions', describePlan(result))
+    // An instant clone before the edit, where the volume can make one: it
+    // shares the file's data, so it costs no time and almost no space.
+    let backupPath: string | undefined
+    try {
+      backupPath = await cloneToBackup(result.file.path, settings, this.host)
+    } catch (error) {
+      this.log(id, 'warn', 'Could not make an instant backup; editing without one', String(error))
+    }
+    if (backupPath) {
+      this.noteBackup(backupPath, result.file.path, true)
+      this.log(
+        id,
+        'info',
+        'Instant backup (APFS clone)',
+        `${backupPath}\n\nThe clone shares the original's data on disk, so it was made instantly and uses ` +
+          'almost no space until the file changes.'
+      )
+    }
+
     this.log(
       id,
       'info',
       `Editing ${patches.length} field${patches.length === 1 ? '' : 's'} in place`,
       `${patches.map((p) => p.description).join('\n')}\n\n` +
         'These are fixed-width fields in the file header, so nothing is copied and no ' +
-        'other byte is touched. No backup is kept, because the original is not being ' +
-        'replaced — the before and after of every field is listed above, and the edit ' +
-        'is undone automatically if the file does not read back correctly.'
+        'other byte is touched. ' +
+        (backupPath
+          ? 'The original is kept as an instant clone (above). '
+          : settings.keepBackups
+            ? 'No backup is kept: this volume cannot make an instant copy, and a full copy would ' +
+              'cost far more than the edit. '
+            : 'Backups are turned off. ') +
+        'The before and after of every field is listed above, and the edit is undone ' +
+        'automatically if the file does not read back correctly.'
     )
 
     try {
@@ -472,7 +522,9 @@ export class RepairRunner {
         stage: 'finished',
         outputPath: result.file.path,
         progress: { ...finished.progress, fraction: 1 },
-        message: 'edited in place — nothing copied',
+        message: backupPath
+          ? `edited in place — nothing copied; original kept in ${join(BACKUP_LABEL, basename(backupPath))}`
+          : 'edited in place — nothing copied',
         finishedAt: Date.now(),
         log: [...finished.log, { at: Date.now(), level: 'info', text: `Done in ${seconds}s` }]
       })
@@ -648,13 +700,15 @@ export class RepairRunner {
 
       this.setStage(id, 'promoting')
       const promoteStarted = performance.now()
-      const { finalPath, backupPath } = await promoteOutput(
+      const { finalPath, backupPath, otherBackups } = await promoteOutput(
         temporaryPath,
         outputPath,
         result.file.path,
         settings,
         this.host
       )
+      if (backupPath) this.noteBackup(backupPath, result.file.path)
+      for (const other of otherBackups) this.noteBackup(other, outputPath)
       this.addPhase(id, 'promote', performance.now() - promoteStarted, {
         bytes: outputBytes,
         note: backupPath ? 'moved the original into the backup folder, then the output into place' : undefined
