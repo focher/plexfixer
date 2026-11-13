@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fitsH264Level, h264LevelLabel } from '@shared/plex/h264-level.js'
+import { fitsH264Level, h264LevelFit, h264LevelLabel } from '@shared/plex/h264-level.js'
 import { video } from './fixtures.js'
 
 describe('fitsH264Level', () => {
@@ -32,6 +32,37 @@ describe('fitsH264Level', () => {
     expect(fitsH264Level(video({ level: 41, bitRate: undefined }), 41, 40)).toBe(false)
     expect(fitsH264Level(video({ level: 41, bitRate: 8_000_000 }), 41, 40)).toBe(true)
     expect(fitsH264Level(video({ level: 41, bitRate: 30_000_000 }), 41, 40)).toBe(false)
+  })
+})
+
+describe('reference frames', () => {
+  // Waterworld (1995): 1920×1040 at 23.976 fps, labelled 5.0. Level 4.1's
+  // frame buffer holds 4 frames at that size (32768 ÷ 7800 macroblocks).
+  const waterworld = { width: 1920, height: 1040, frameRate: 24000 / 1001, level: 50, bitRate: 2_046_634 }
+
+  it('relabels a stream labelled 5.0 that really uses 4 reference frames', () => {
+    // Refused before the count was read: 5.0 allows 14 at this size, so the
+    // worst case never fit.
+    expect(h264LevelFit(video({ ...waterworld, refFrames: 4 }), 50, 41)).toEqual({ fits: true })
+  })
+
+  it('refuses one that uses 5, and says so', () => {
+    expect(h264LevelFit(video({ ...waterworld, refFrames: 5 }), 50, 41)).toEqual({
+      fits: false,
+      reason: 'uses 5 reference frames, and Level 4.1 allows 4 at 1920×1040'
+    })
+  })
+
+  it('assumes the worst when the count could not be read', () => {
+    const fit = h264LevelFit(video({ ...waterworld, refFrames: undefined }), 50, 41)
+    expect(fit.fits).toBe(false)
+    expect(fit.reason).toContain('could not be read')
+  })
+
+  it('names the limit a fast stream breaks', () => {
+    expect(h264LevelFit(video({ level: 42, frameRate: 59.94, refFrames: 2 }), 42, 41).reason).toBe(
+      'is 1920×1080 at 59.94 fps, faster than Level 4.1 decodes'
+    )
   })
 })
 

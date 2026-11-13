@@ -35,6 +35,36 @@ export function kindOfFilesystem(filesystem: string | undefined): VolumeInfo['ki
 }
 
 /**
+ * Filesystem types by mount point, from macOS `mount`, whose lines read
+ * `/dev/disk15s1 on /Volumes/Video10e (apfs, local, nodev, …)`.
+ */
+export function parseMountTypes(output: string): Map<string, string> {
+  const types = new Map<string, string>()
+  for (const line of output.split('\n')) {
+    const match = /^.+? on (.+) \(([^,)]+)/.exec(line.trim())
+    if (match) types.set(match[1], match[2].trim().toLowerCase())
+  }
+  return types
+}
+
+let mountTypes: Promise<Map<string, string>> | undefined
+
+/** The filesystem type of a mount point; macOS only, looked up once per run. */
+async function filesystemType(mount: string | undefined): Promise<string | undefined> {
+  if (!mount || process.platform !== 'darwin') return undefined
+  mountTypes ??= execFileAsync('/sbin/mount', [], { timeout: 4000 })
+    .then(({ stdout }) => parseMountTypes(stdout))
+    .catch(() => new Map<string, string>())
+  const types = await mountTypes
+  // A volume mounted after the first lookup is not in the cached table yet.
+  if (!types.has(mount)) {
+    mountTypes = undefined
+    return undefined
+  }
+  return types.get(mount)
+}
+
+/**
  * Parse `df -P`, whose output is two lines: a header and the filesystem the
  * path is on. The mount point is the last field and the device the first;
  * everything between is sizes, which vary by platform and are not wanted here.
@@ -73,7 +103,7 @@ export async function describeVolume(path: string): Promise<VolumeInfo> {
     try {
       const { stdout } = await execFileAsync('df', ['-P', directory], { timeout: 4000 })
       const { filesystem, mount } = parseDf(stdout)
-      info = { ...info, filesystem, mount, kind: kindOfFilesystem(filesystem) }
+      info = { ...info, filesystem, mount, kind: kindOfFilesystem(filesystem), type: await filesystemType(mount) }
     } catch {
       /* df is missing or refused: the device id alone still answers "same volume?" */
     }

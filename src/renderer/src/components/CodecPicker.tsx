@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
 import type { CodecKind } from '@shared/plex/codecs.js'
 import { formatAudioCodec, formatVideoCodec } from '../format.js'
+import { usePopover } from '../usePopover.js'
 
 export interface CodecPickerProps {
   kind: CodecKind
@@ -19,25 +19,8 @@ const KIND_LABEL: Record<CodecKind, string> = { video: 'Video', audio: 'Audio' }
  * codecs, and these are a second axis next to the work chips, not the main one.
  */
 export default function CodecPicker(props: CodecPickerProps): React.JSX.Element | null {
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
+  const { open, toggle, rootRef } = usePopover()
   const format = props.kind === 'video' ? formatVideoCodec : formatAudioCodec
-
-  useEffect(() => {
-    if (!open) return
-    const onMouseDown = (event: MouseEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onMouseDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onMouseDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open])
 
   // A ticked codec stays listed even at zero, so it can still be unticked.
   const options = [...new Set([...props.counts.keys(), ...props.active])]
@@ -59,7 +42,7 @@ export default function CodecPicker(props: CodecPickerProps): React.JSX.Element 
     <div className="codec-picker" ref={rootRef}>
       <button
         className={`chip${on ? ' on' : ''}`}
-        onClick={() => setOpen((previous) => !previous)}
+        onClick={toggle}
         aria-expanded={open}
         aria-haspopup="listbox"
         title={`Show only files with these ${props.kind} codecs`}
@@ -70,7 +53,7 @@ export default function CodecPicker(props: CodecPickerProps): React.JSX.Element 
         </span>
       </button>
       {open ? (
-        <div className="codec-menu" role="listbox" aria-multiselectable="true" aria-label={`${KIND_LABEL[props.kind]} codecs`}>
+        <div className="popover codec-menu" role="listbox" aria-multiselectable="true" aria-label={`${KIND_LABEL[props.kind]} codecs`}>
           <button className="ghost codec-any" onClick={props.onClear} disabled={!on}>
             Any {props.kind} codec
           </button>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { VideoStream } from '@shared/types.js'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import type { AppSettings } from '@shared/types.js'
@@ -438,5 +439,31 @@ describe('analyzeFile — H.264 level above the ceiling', () => {
     expect(result.findings.find((f) => f.code === 'video-level-too-high')?.remedy).toBe('transcode')
     expect(result.plan.videoLevel).toBeUndefined()
     expect(result.plan.strategy).toBe('transcode-video')
+  })
+
+  // Waterworld (1995): the avcC header says 4.1 (what Subler shows), the SPS
+  // says 5.0, and the stream uses 5 reference frames where 4.1 allows 4.
+  const waterworld = (overrides: Partial<VideoStream> = {}) =>
+    jackpot({ width: 1920, height: 1040, frameRate: 24000 / 1001, level: 50, headerLevel: 41, refFrames: 5, bitRate: 2_046_634, ...overrides })
+
+  it('says why a stream that only nearly fits has to be re-encoded', () => {
+    const result = analyzeFile(waterworld(), base)
+    const finding = result.findings.find((f) => f.code === 'video-level-too-high')
+    expect(finding?.remedy).toBe('transcode')
+    expect(finding?.detail).toContain('uses 5 reference frames, and Level 4.1 allows 4 at 1920×1040')
+    expect(result.plan.videoLevel).toBeUndefined()
+  })
+
+  it('points out that the header Subler shows is not the level players read', () => {
+    const finding = analyzeFile(waterworld(), base).findings.find((f) => f.code === 'video-level-too-high')
+    expect(finding?.detail).toContain('The MP4 header says Level 4.1')
+    expect(finding?.detail).toContain('the level inside the stream, which players and Plex read, is 5.0')
+  })
+
+  it('relabels the same film when it uses no more than 4 reference frames', () => {
+    const result = analyzeFile(waterworld({ refFrames: 4 }), base)
+    expect(result.findings.find((f) => f.code === 'video-level-too-high')?.remedy).toBe('lossless')
+    expect(result.plan.videoLevel).toBe(41)
+    expect(result.plan.strategy).toBe('remux')
   })
 })

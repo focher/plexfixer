@@ -39,6 +39,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   outputPlacement: 'in-place',
   outputDirectory: '',
   keepBackups: true,
+  // A week to notice a repair that went wrong, then the space comes back.
+  backupRetentionDays: 7,
   outputSuffix: '.plexfixed',
 
   hardwareEncoder: 'auto',

@@ -58,41 +58,79 @@ function maxRefFrames(limits: LevelLimits, frameMbs: number): number {
   return Math.min(16, Math.floor(limits.maxDpbMbs / frameMbs))
 }
 
+export interface LevelFit {
+  fits: boolean
+  /** Why not, in a sentence fragment that reads after "the stream …". */
+  reason?: string
+}
+
+const formatRate = (rate: number): string => (Number.isInteger(rate) ? String(rate) : rate.toFixed(3).replace(/0+$/, ''))
+
+/**
+ * Whether a stream valid at `sourceLevel` is also within every limit of
+ * `targetLevel`, so its level can be relabelled without re-encoding — and if
+ * not, which limit it breaks.
+ */
+export function h264LevelFit(stream: VideoStream, sourceLevel: number, targetLevel: number): LevelFit {
+  const source = H264_LEVEL_LIMITS[sourceLevel]
+  const target = H264_LEVEL_LIMITS[targetLevel]
+  const label = h264LevelLabel(targetLevel)
+  if (!source || !target) return { fits: false, reason: `has a level (${sourceLevel}) this app does not know the limits of` }
+  if (stream.isInterlaced) return { fits: false, reason: 'is interlaced, which the level check does not cover' }
+  if (!(stream.width > 0) || !(stream.height > 0) || !(stream.frameRate && stream.frameRate > 0)) {
+    return { fits: false, reason: 'has a frame size or frame rate that could not be read' }
+  }
+
+  const size = `${stream.width}×${stream.height}`
+  const widthMbs = Math.ceil(stream.width / 16)
+  const heightMbs = Math.ceil(stream.height / 16)
+  const frameMbs = widthMbs * heightMbs
+
+  const maxSide = Math.sqrt(8 * target.maxFs)
+  if (frameMbs > target.maxFs || widthMbs > maxSide || heightMbs > maxSide) {
+    return { fits: false, reason: `is ${size}, a bigger frame than Level ${label} allows` }
+  }
+
+  if (frameMbs * stream.frameRate > target.maxMbps) {
+    return { fits: false, reason: `is ${size} at ${formatRate(stream.frameRate)} fps, faster than Level ${label} decodes` }
+  }
+
+  // The frame buffer holds fewer frames the bigger each one is. The stream's
+  // own reference-frame count decides it when the SPS could be read; without
+  // it, assume the stream may use everything its current level allows.
+  const allowed = maxRefFrames(target, frameMbs)
+  if (stream.refFrames != null) {
+    if (stream.refFrames > allowed) {
+      return {
+        fits: false,
+        reason: `uses ${stream.refFrames} reference frames, and Level ${label} allows ${allowed} at ${size}`
+      }
+    }
+  } else if (allowed < maxRefFrames(source, frameMbs)) {
+    return {
+      fits: false,
+      reason: `may use up to ${maxRefFrames(source, frameMbs)} reference frames (the count could not be read), and Level ${label} allows ${allowed} at ${size}`
+    }
+  }
+
+  if (target.maxBrKbps < source.maxBrKbps) {
+    if (!(stream.bitRate && stream.bitRate > 0)) {
+      return { fits: false, reason: `has no measured bitrate to check against Level ${label}'s ceiling` }
+    }
+    if (stream.bitRate > target.maxBrKbps * 1000 * 0.8) {
+      return { fits: false, reason: `runs at a higher bitrate than Level ${label} allows` }
+    }
+  }
+
+  return { fits: true }
+}
+
 /**
  * True when a stream valid at `sourceLevel` is also within every limit of
  * `targetLevel`, so its level can be relabelled without re-encoding.
  */
 export function fitsH264Level(stream: VideoStream, sourceLevel: number, targetLevel: number): boolean {
-  const source = H264_LEVEL_LIMITS[sourceLevel]
-  const target = H264_LEVEL_LIMITS[targetLevel]
-  if (!source || !target) return false
-  // Interlaced coding counts macroblocks differently; leave it to a re-encode.
-  if (stream.isInterlaced) return false
-  if (!(stream.width > 0) || !(stream.height > 0) || !(stream.frameRate && stream.frameRate > 0)) return false
-
-  const widthMbs = Math.ceil(stream.width / 16)
-  const heightMbs = Math.ceil(stream.height / 16)
-  const frameMbs = widthMbs * heightMbs
-
-  // Frame size, including the spec's limit on either dimension alone.
-  const maxSide = Math.sqrt(8 * target.maxFs)
-  if (frameMbs > target.maxFs || widthMbs > maxSide || heightMbs > maxSide) return false
-
-  // Throughput.
-  if (frameMbs * stream.frameRate > target.maxMbps) return false
-
-  // Reference frames: an encoder conforming to the source level may have used
-  // as many as the source allowed at this size; the target must allow as many.
-  if (maxRefFrames(target, frameMbs) < maxRefFrames(source, frameMbs)) return false
-
-  // Bitrate: fine if the ceiling does not drop; otherwise the measured rate
-  // has to sit well under the new one, since an average hides the peaks.
-  if (target.maxBrKbps < source.maxBrKbps) {
-    if (!(stream.bitRate && stream.bitRate > 0)) return false
-    if (stream.bitRate > target.maxBrKbps * 1000 * 0.8) return false
-  }
-
-  return true
+  return h264LevelFit(stream, sourceLevel, targetLevel).fits
 }
 
 /** 41 -> "4.1", the form ffmpeg's h264_metadata filter and people both read. */

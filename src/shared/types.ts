@@ -67,7 +67,17 @@ export interface VideoStream extends BaseStream {
   /** Dolby Vision profile when a DV configuration record is present. */
   dolbyVisionProfile?: number
   dolbyVisionBlSignalCompatibilityId?: number
+  /**
+   * Reference frames the stream uses: `max_num_ref_frames` from its SPS when
+   * that could be read, otherwise ffprobe's own figure.
+   */
   refFrames?: number
+  /**
+   * H.264 only: the level in the MP4/Matroska `avcC` header, a separate copy
+   * of the one in the SPS. Tools such as Subler show this one; decoders and
+   * Plex read the SPS, which is `level`.
+   */
+  headerLevel?: number
   /** Non-square pixels (anamorphic). */
   sampleAspectRatio?: string
   isAnamorphic: boolean
@@ -379,6 +389,8 @@ export interface AppSettings {
   outputDirectory: string
   /** Keep the original file alongside/aside when writing in place. */
   keepBackups: boolean
+  /** Days a backup is kept before it is removed automatically; 0 keeps it until removed by hand. */
+  backupRetentionDays: number
   /** Suffix used for sibling output. */
   outputSuffix: string
 
@@ -501,6 +513,8 @@ export interface VolumeInfo {
   kind: 'local' | 'network' | 'unknown'
   /** Device id from stat(2); equal ids mean a move is a rename, not a copy. */
   device?: number
+  /** Filesystem type on macOS, e.g. `apfs`, `hfs`, `exfat`, `smbfs`. */
+  type?: string
 }
 
 /**
@@ -633,6 +647,8 @@ export interface ScanCompleteEvent {
   foundPaths: string[]
   /** True when the scan was cancelled part-way: files not reached say nothing. */
   cancelled: boolean
+  /** Leftover repair temporary files the scan found and removed. */
+  cleaned?: { path: string; bytes: number }[]
 }
 
 /**
