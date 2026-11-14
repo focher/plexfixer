@@ -13,9 +13,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.js'
 import { analyzeFile } from '../src/shared/plex/analyze.js'
-import { RepairRunner } from '../src/main/jobs/runner.js'
-import { localHost } from '../src/main/host.js'
-import type { Host } from '../src/main/host.js'
+import { RepairRunner } from '@shared/plex/runner.js'
+import { localHost } from './node-host.js'
+import type { Host } from './node-host.js'
 import type { Job } from '../src/shared/types.js'
 import { mainAudio, mkv, video } from './fixtures.js'
 
@@ -86,7 +86,8 @@ describe('what a running job reports', () => {
     const runner = new RepairRunner(
       { ffmpegPath: await slowFfmpeg(), ffprobePath: await slowFfmpeg() },
       1,
-      (job) => updates.push(job)
+      (job) => updates.push(job),
+      localHost()
     )
     const before = Date.now()
     runner.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'report' })
@@ -103,7 +104,8 @@ describe('what a running job reports', () => {
     const runner = new RepairRunner(
       { ffmpegPath: await slowFfmpeg(), ffprobePath: await slowFfmpeg() },
       1,
-      () => undefined
+      () => undefined,
+      localHost()
     )
     const job = runner.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
     await settle(250)
@@ -116,7 +118,7 @@ describe('what a running job reports', () => {
   })
 
   it('marks a job that never ran as finished, with nothing to show', async () => {
-    const runner = new RepairRunner({ ffmpegPath: 'x', ffprobePath: 'x' }, 1, () => undefined)
+    const runner = new RepairRunner({ ffmpegPath: 'x', ffprobePath: 'x' }, 1, () => undefined, localHost())
     const skipped = runner.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'report' })
     expect(skipped.state).toBe('skipped')
     expect(skipped.stage).toBe('finished')

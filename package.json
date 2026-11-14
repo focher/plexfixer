@@ -1,36 +1,32 @@
 {
   "name": "plexfixer",
-  "version": "0.1.18",
+  "version": "0.2.0",
   "description": "Analyze and fix MKV/M4V media files for reliable Plex direct play",
   "author": "Timothy Weaver",
   "license": "MIT",
   "private": true,
-  "main": "./out/main/index.js",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
-    "start": "electron-vite preview",
-    "build": "npm run typecheck && electron-vite build",
+    "dev": "cargo tauri dev",
+    "build": "npm run typecheck && npm run renderer:build",
+    "dist": "cargo tauri build && node scripts/dmg-add-unblock.mjs src-tauri/target/release/bundle/dmg/*.dmg",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
-    "dist:mac": "npm run build && electron-builder --mac --publish never",
-    "dist:win": "npm run build && electron-builder --win --publish never",
-    "dist": "npm run build && electron-builder --mac --win --publish never"
+    "renderer:dev": "vite --config vite.tauri.config.ts",
+    "renderer:build": "vite build --config vite.tauri.config.ts",
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs"
   },
   "dependencies": {
-    "electron-updater": "^6.3.9"
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-opener": "^2.7.3"
   },
   "devDependencies": {
-    "@electron/notarize": "^3.0.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.3.0",
-    "electron": "^45.0.0",
-    "electron-builder": "^26.0.0",
-    "electron-vite": "^6.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^7.0.2",

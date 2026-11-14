@@ -8,6 +8,8 @@ release/
 
 # Secrets
 plexfixer.env
+# Signs update packages; losing it means no client can verify an update.
+plexfixer-updater.key
 .env
 .env.*
 

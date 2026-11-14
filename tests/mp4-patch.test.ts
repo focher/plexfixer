@@ -7,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { localHost } from './node-host.js'
 import { execFile } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -19,7 +20,7 @@ import {
   revertPatches,
   unpackLanguage,
   type BytePatch
-} from '../src/main/jobs/mp4-patch.js'
+} from '@shared/plex/mp4-patch.js'
 
 const run = promisify(execFile)
 
@@ -92,7 +93,7 @@ describe('language packing', () => {
 
 whenFfmpeg('readMp4Tracks', () => {
   it('lists tracks in the order ffprobe numbers its streams', async () => {
-    const tracks = await readMp4Tracks(await sample())
+    const tracks = await readMp4Tracks(await sample(), localHost())
     expect(tracks?.map((t) => t.handler)).toEqual(['vide', 'soun', 'sbtl', 'sbtl', 'sbtl'])
     expect(tracks?.map((t) => t.language)).toEqual(['und', 'und', 'ces', 'deu', 'eng'])
   })
@@ -100,7 +101,7 @@ whenFfmpeg('readMp4Tracks', () => {
   it('returns nothing for a file that is not an MP4', async () => {
     const path = join(dir, 'not.mp4')
     await writeFile(path, Buffer.alloc(4096, 0x41))
-    expect(await readMp4Tracks(path)).toBeUndefined()
+    expect(await readMp4Tracks(path, localHost())).toBeUndefined()
   })
 })
 
@@ -116,10 +117,10 @@ whenFfmpeg('applyPatches', () => {
   it('rewrites a language tag without changing anything else', async () => {
     const path = await sample()
     const before = await readFile(path)
-    const tracks = (await readMp4Tracks(path))!
+    const tracks = (await readMp4Tracks(path, localHost()))!
     const czech = tracks[2]
 
-    await applyPatches(path, [languagePatch(czech.languageOffset, 'ces', 'cze')])
+    await applyPatches(path, [languagePatch(czech.languageOffset, 'ces', 'cze')], localHost())
 
     expect(await probeLanguages(path)).toEqual(['und', 'und', 'cze', 'deu', 'eng'])
 
@@ -132,10 +133,12 @@ whenFfmpeg('applyPatches', () => {
   it('refuses to write when the file does not hold what was expected', async () => {
     const path = await sample()
     const before = await readFile(path)
-    const tracks = (await readMp4Tracks(path))!
+    const tracks = (await readMp4Tracks(path, localHost()))!
 
     // Claim the Czech track is currently German.
-    await expect(applyPatches(path, [languagePatch(tracks[2].languageOffset, 'deu', 'cze')])).rejects.toThrow(
+    await expect(
+      applyPatches(path, [languagePatch(tracks[2].languageOffset, 'deu', 'cze')], localHost())
+    ).rejects.toThrow(
       /does not hold the expected bytes/
     )
     expect(await readFile(path)).toEqual(before)
@@ -144,13 +147,17 @@ whenFfmpeg('applyPatches', () => {
   it('leaves the file untouched when a later patch in the batch is wrong', async () => {
     const path = await sample()
     const before = await readFile(path)
-    const tracks = (await readMp4Tracks(path))!
+    const tracks = (await readMp4Tracks(path, localHost()))!
 
     await expect(
-      applyPatches(path, [
-        languagePatch(tracks[2].languageOffset, 'ces', 'cze'),
-        languagePatch(tracks[3].languageOffset, 'eng', 'ger') // deu, not eng
-      ])
+      applyPatches(
+        path,
+        [
+          languagePatch(tracks[2].languageOffset, 'ces', 'cze'),
+          languagePatch(tracks[3].languageOffset, 'eng', 'ger') // deu, not eng
+        ],
+        localHost()
+      )
     ).rejects.toThrow(/does not hold the expected bytes/)
 
     expect(await readFile(path)).toEqual(before)
@@ -160,34 +167,38 @@ whenFfmpeg('applyPatches', () => {
   it('puts the original bytes back on revert', async () => {
     const path = await sample()
     const before = await readFile(path)
-    const tracks = (await readMp4Tracks(path))!
+    const tracks = (await readMp4Tracks(path, localHost()))!
     const patches = [languagePatch(tracks[2].languageOffset, 'ces', 'cze')]
 
-    await applyPatches(path, patches)
+    await applyPatches(path, patches, localHost())
     expect(await probeLanguages(path)).toEqual(['und', 'und', 'cze', 'deu', 'eng'])
 
-    await revertPatches(path, patches)
+    await revertPatches(path, patches, localHost())
     expect(await readFile(path)).toEqual(before)
   })
 
   it('clears the default flag that ffprobe reports', async () => {
     const path = await sample()
-    const tracks = (await readMp4Tracks(path))!
+    const tracks = (await readMp4Tracks(path, localHost()))!
     const audio = tracks[1]
     expect(audio.enabled).toBe(true)
 
     const handle = await readFile(path)
     const current = handle.readUInt8(audio.enabledFlagOffset)
-    await applyPatches(path, [
-      {
-        offset: audio.enabledFlagOffset,
-        expected: Buffer.from([current]),
-        replacement: Buffer.from([current & ~0x01]),
-        description: 'audio default off'
-      }
-    ])
+    await applyPatches(
+      path,
+      [
+        {
+          offset: audio.enabledFlagOffset,
+          expected: Buffer.from([current]),
+          replacement: Buffer.from([current & ~0x01]),
+          description: 'audio default off'
+        }
+      ],
+      localHost()
+    )
 
-    const reread = (await readMp4Tracks(path))!
+    const reread = (await readMp4Tracks(path, localHost()))!
     expect(reread[1].enabled).toBe(false)
   })
 })

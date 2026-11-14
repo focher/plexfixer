@@ -13,10 +13,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { explainSshFailure, shellCommand, shellQuote, sshArgs } from '../src/main/remote/ssh.js'
-import { checkScript, parseCheck, REQUIRED_UTILITIES } from '../src/main/remote/check.js'
-import { parseLsLong, parseStatLine, remoteHost, hostFor, remoteTargetFor } from '../src/main/host.js'
-import { keyMaterial, keysMatch, knownHostsName, parseFingerprints } from '../src/main/remote/hostkey.js'
+import { explainSshFailure, shellCommand, shellQuote, sshArgs } from '@shared/plex/ssh.js'
+import { checkScript, parseCheck, REQUIRED_UTILITIES } from '@shared/plex/remote-check.js'
+import { parseLsLong, parseStatLine, remoteHost } from '@shared/plex/remote-host.js'
+import { hostFor, localHost, remoteTargetFor } from './node-host.js'
+import { keyMaterial, keysMatch, knownHostsName, parseFingerprints } from '@shared/plex/hostkey.js'
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.js'
 
 describe('shellQuote', () => {
@@ -225,7 +226,7 @@ describe('the remote host, over a stand-in ssh', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  const host = (): ReturnType<typeof remoteHost> => remoteHost({ host: 'stand-in' })
+  const host = (): ReturnType<typeof remoteHost> => remoteHost({ host: 'stand-in' }, localHost())
 
   it('lists a directory, sizes and all', async () => {
     await mkdir(join(dir, 'Season 1'))
@@ -250,8 +251,10 @@ describe('the remote host, over a stand-in ssh', () => {
   it('reads an arbitrary byte range, which is what MP4 box walking needs', async () => {
     const file = join(dir, 'bytes.bin')
     await writeFile(file, Buffer.from('0123456789abcdef'))
-    expect((await host().readRange(file, 0, 4)).toString()).toBe('0123')
-    expect((await host().readRange(file, 10, 6)).toString()).toBe('abcdef')
+    // A Uint8Array now, not a Buffer: the same code runs in a webview.
+    const text = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
+    expect(text(await host().readRange(file, 0, 4))).toBe('0123')
+    expect(text(await host().readRange(file, 10, 6))).toBe('abcdef')
   })
 
   it('finds media files, skipping backups and the wrong extensions', async () => {

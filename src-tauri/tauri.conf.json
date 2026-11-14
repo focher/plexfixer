@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PlexFixer",
+  "version": "0.2.0",
+  "identifier": "com.timothyweaver.plexfixer",
+  "build": {
+    "frontendDist": "../out/tauri/renderer",
+    "devUrl": "http://localhost:5174",
+    "beforeDevCommand": "npm run renderer:dev",
+    "beforeBuildCommand": "npm run renderer:build",
+    "beforeBundleCommand": "node scripts/tauri-resources.mjs"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "PlexFixer",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 940,
+        "minHeight": 640,
+        "backgroundColor": "#14161c",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "dragDropEnabled": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "copyright": "Copyright © 2026 Timothy Weaver",
+    "category": "Utility",
+    "shortDescription": "Plex direct-play repair",
+    "longDescription": "Checks whether MKV/M4V files will direct play to remote Plex clients, and repairs what it can without re-encoding.",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "../build/entitlements.mac.plist",
+      "dmg": {
+        "windowSize": {
+          "width": 540,
+          "height": 480
+        },
+        "appPosition": {
+          "x": 130,
+          "y": 220
+        },
+        "applicationFolderPosition": {
+          "x": 410,
+          "y": 220
+        }
+      }
+    },
+    "resources": [
+      "resources/bin"
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQzOUFCOEEyODlCNzM0RkQKUldUOU5MZUpvcmlhUTlFQ1hvamsrUEpId1BZZStReEVnRDgzc0RxbWliVHVYNDlGRzdyZWxER04K",
+      "endpoints": [
+        "https://github.com/focher/plexfixer/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

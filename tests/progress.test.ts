@@ -13,7 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runFfmpeg } from '../src/main/ffmpeg/run.js'
+import { runFfmpeg } from '@shared/plex/ffmpeg-run.js'
+import { localHost } from './node-host.js'
 
 let dir: string
 
@@ -54,6 +55,7 @@ async function collect(
   await runFfmpeg({
     ffmpegPath: await fakeFfmpeg(blocks),
     args: [],
+    spawn: (command, commandArgs) => localHost().spawnProcess(command, commandArgs),
     onProgress: (p) => seen.push({ fraction: p.fraction, bytesWritten: p.bytesWritten, speed: p.speed }),
     ...options
   })

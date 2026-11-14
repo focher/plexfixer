@@ -91,7 +91,7 @@ export function aboutRows(about: AboutInfo, environment?: EnvironmentInfo): Abou
       label: 'Platform',
       value: `${platformName(about.platform)} ${about.systemVersion} · ${about.arch}`
     },
-    { label: 'Electron', value: `${about.electron} · Chromium ${about.chrome} · Node ${about.node}` },
+    { label: 'Runtime', value: `Tauri ${about.tauri} · ${about.webview}` },
     {
       label: 'FFmpeg',
       value: environment?.ffmpegVersion

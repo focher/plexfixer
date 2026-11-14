@@ -130,7 +130,7 @@ correct on every build; the encode, which dominates the cost, runs on the GPU.
 ### About
 
 **About** — in the app menu, or the button at the right of the title bar — reports
-the version, the Electron and Chromium under it, which ffmpeg is in use and where
+the version, the Tauri and webview under it, which ffmpeg is in use and where
 that binary came from, the hardware encoders that were actually detected, and the
 folder settings live in. **Copy details** puts the same lines on the clipboard, which
 is what a useful bug report starts with; the version now appears in the per-file and
@@ -227,7 +227,12 @@ there, or name a platform (`linux-x64`) to fetch one we do not ship.
 
 Windows and Linux use FFmpeg's *shared* builds, so the folder holds two small
 executables plus the libav* libraries they load from beside them — half the
-size of bundling two static binaries that each embed the whole library.
+size of bundling two static binaries that each embed the whole library. Both
+macOS builds are static, and the two architectures come from different
+upstreams: arm64 from Vodes/ffmpeg-mt, which has libplacebo with Vulkan and
+MoltenVK linked in, and x64 from shaka-project, which does not. libplacebo is
+the only thing in ffmpeg that can read a Dolby Vision RPU, so an Intel Mac
+reports the profile 5 conversion as unavailable instead of doing it wrong.
 
 The fetch refuses a build configured `--enable-nonfree`, which may be used but
 not redistributed; `--allow-nonfree` overrides that for local use, and the
@@ -289,19 +294,18 @@ npm run dist
 
 | Artifact | Platform |
 | --- | --- |
-| `PlexFixer-<version>-arm64.dmg` / `-arm64-mac.zip` | macOS, Apple Silicon |
-| `PlexFixer-<version>-x64.dmg` / `-mac.zip` | macOS, Intel |
-| `PlexFixer-<version>-Setup.exe` | Windows x64 |
+| `PlexFixer_<version>_aarch64.dmg` | macOS, Apple Silicon |
+| `PlexFixer_<version>_x64.dmg` | macOS, Intel |
+| `PlexFixer_<version>_x64-setup.exe` | Windows x64 |
 
-Each build embeds only its own platform's ffmpeg, so `npm run fetch:ffmpeg --
---all` has to run first. An `afterPack` hook fails the build if the binaries did
-not land where the app looks for them, rather than shipping an installer that
-cannot probe anything.
+Each build embeds only its own platform's ffmpeg: a `beforeBundleCommand` hook
+stages the right folder and fails the build if it is empty, rather than
+shipping an installer that cannot probe anything.
 
-Building the **Windows** installer from macOS needs Wine, which electron-builder
-downloads itself (pinned to Wine 11 in `electron-builder.yml`). That build is
-x86_64, so on Apple Silicon it needs Rosetta 2:
-`softwareupdate --install-rosetta`.
+**Windows is built on Windows.** Tauri compiles a native binary and does not
+cross-compile, so unlike the electron-builder setup this replaced there is no
+Wine trick that produces a Windows installer from a Mac. Run `npm run dist` on
+a Windows machine, or on a Windows CI runner.
 
 macOS builds are signed if a Developer ID certificate is in your keychain. They
 are **not notarized** — notarization needs a paid Apple Developer account, and
@@ -351,15 +355,24 @@ src/
     plex/rules.ts   The compatibility tables
     plex/tracks.ts  Default/forced track resolution
     plex/analyze.ts Findings and repair planning
-  main/             Electron main process
-    ffmpeg/         Binary discovery, ffprobe parsing, ffmpeg execution
-    jobs/           Command building, output placement, queue, runner
-    remote/         The ssh transport and the connection check
-    host.ts         Local or remote: where files live and binaries run
-    scan/           Filesystem walking
-  preload/          The renderer's only bridge to the main process
+    plex/probe.ts   ffprobe output, normalised
+    plex/command.ts The ffmpeg arguments a plan becomes
+    plex/runner.ts  Running repairs: queue, progress, promotion, backups
+    plex/ssh.ts     The ssh transport, and the host that speaks it
+    host.ts         What the code needs from a machine, local or remote
   renderer/         React UI
+    bridge/         `window.plexfixer`, over Tauri commands
+src-tauri/          The native side, in Rust
+  src/host.rs       Files and the filesystem walk
+  src/process.rs    Long-running ffmpeg, streamed and stoppable
+  src/settings.rs   The settings file
+  src/environment.rs What this machine's ffmpeg can actually do
 ```
+
+**Rust does only what a native process must** — spawn ffmpeg, walk a
+filesystem, open a dialog, write a file — and TypeScript keeps every decision.
+The analysis engine, the compatibility rules and the repair planner run in the
+webview, which is why they are also the part with the tests.
 
 The analysis is deliberately pure: probe output in, findings and a plan out.
 That is what makes it testable, and what lets the UI show exactly which ffmpeg
@@ -371,8 +384,14 @@ command will run before anything touches the disk.
   Plex-published matrix. Settings exist for the two that most often differ:
   whether HEVC counts as compatible (on by default), and the H.264 level
   ceiling.
-- Dolby Vision profile 5 and 7 are reported, not repaired — converting them
-  correctly needs tooling beyond ffmpeg.
+- Dolby Vision profile 5 can be converted to plain HDR10, which is off by
+  default (Settings → Compatibility). It is a full re-encode through
+  libplacebo, and the Dolby Vision layer is deliberately dropped: profile 5
+  has no HDR10 base layer, so relabelling it 8.1 leaves a file that still
+  renders with the wrong colours. The conversion is only offered where the
+  active ffmpeg can actually run libplacebo, which PlexFixer checks by running
+  it rather than by reading the filter list. Profile 7 is still reported and
+  not repaired — its enhancement layer is a different job.
 - The bundled ffmpeg binaries are **GPL** builds (that is what carries NVENC and
   libx264); PlexFixer's own code is MIT. They are shipped as separate
   executables and invoked as subprocesses, never linked. Sources and versions are

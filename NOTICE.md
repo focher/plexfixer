@@ -27,7 +27,7 @@ first.
 | --- | --- | --- |
 | Windows x64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | `ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip` |
 | Linux x64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | `ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz` (not shipped; fetched by name only) |
-| macOS arm64 | [shaka-project/static-ffmpeg-binaries](https://github.com/shaka-project/static-ffmpeg-binaries) | release tag `n8.1.2-2`, `ffmpeg-osx-arm64` / `ffprobe-osx-arm64` |
+| macOS arm64 | [Vodes/ffmpeg-mt](https://github.com/Vodes/ffmpeg-mt) | release tag `v9.0.2-r1`, `ffmpeg-9.0.2-macos-arm64.tar.zst` (GPL v3, static, libplacebo + MoltenVK) |
 | macOS x64 | [shaka-project/static-ffmpeg-binaries](https://github.com/shaka-project/static-ffmpeg-binaries) | release tag `n8.1.2-2`, `ffmpeg-osx-x64` / `ffprobe-osx-x64` |
 
 Both macOS architectures come from one upstream build, configured
@@ -75,9 +75,10 @@ quoted URL it stopped at the quote and reported a GPL build as LGPL. A line
 truncated a little earlier would have been reported as shippable, which is
 precisely the mistake this is here to catch.
 
-## Electron
+## Tauri
 
-The application runs on [Electron](https://github.com/electron/electron) (MIT),
-which embeds Chromium (BSD-style) and Node.js (MIT). Their full license texts are
-included in every packaged build under `Resources/LICENSES.chromium.html` and
-`Resources/LICENSE.electron.txt`.
+The application is built with [Tauri](https://github.com/tauri-apps/tauri)
+(MIT/Apache-2.0) and renders in the operating system's own webview — WKWebView
+on macOS, WebView2 on Windows — so no browser engine is bundled with it. The
+Rust crates it links are MIT or Apache-2.0; `cargo tree` in `src-tauri` lists
+them for a given build.

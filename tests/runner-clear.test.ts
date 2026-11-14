@@ -8,12 +8,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { localHost } from './node-host.js'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.js'
 import { analyzeFile } from '../src/shared/plex/analyze.js'
-import { RepairRunner } from '../src/main/jobs/runner.js'
+import { RepairRunner } from '@shared/plex/runner.js'
 import type { Job } from '../src/shared/types.js'
 import { mainAudio, mkv, video } from './fixtures.js'
 
@@ -46,7 +47,8 @@ async function runner(concurrency = 1): Promise<{ instance: RepairRunner; update
   const instance = new RepairRunner(
     { ffmpegPath: await slowFfmpeg(), ffprobePath: await slowFfmpeg() },
     concurrency,
-    (job) => updates.push(job)
+    (job) => updates.push(job),
+    localHost()
   )
   return { instance, updates }
 }

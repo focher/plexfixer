@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import type { EncoderCapabilities } from '@shared/types.js'
-import { buildRepairCommand, buildSubtitleExtractCommands, chooseVideoEncoder } from '../src/main/jobs/command.js'
+import { buildRepairCommand, buildSubtitleExtractCommands, chooseVideoEncoder } from '@shared/plex/command.js'
 import { audio, coverArt, flags, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
 const OUT = '/out/Example (2020).mp4'
@@ -209,7 +209,8 @@ describe('buildRepairCommand — video re-encode', () => {
     nvenc: true,
     videotoolbox: false,
     qsv: false,
-    amf: false
+    amf: false,
+    libplacebo: false
   }
 
   it('uses NVENC with constant-quality VBR when it is available', () => {
@@ -272,7 +273,8 @@ describe('chooseVideoEncoder', () => {
       nvenc: true,
       videotoolbox: false,
       qsv: false,
-      amf: false
+      amf: false,
+      libplacebo: false
     }
     const choice = chooseVideoEncoder('h264', 21, { ...DEFAULT_SETTINGS, hardwareEncoder: 'none' }, caps)
     expect(choice.encoder).toBe('libx264')
@@ -287,7 +289,8 @@ describe('chooseVideoEncoder', () => {
       nvenc: false,
       videotoolbox: false,
       qsv: false,
-      amf: false
+      amf: false,
+      libplacebo: false
     }
     expect(chooseVideoEncoder('h264', 21, { ...DEFAULT_SETTINGS, hardwareEncoder: 'nvenc' }, caps).encoder).toBe('libx264')
   })
@@ -299,7 +302,8 @@ describe('chooseVideoEncoder', () => {
       nvenc: false,
       videotoolbox: true,
       qsv: false,
-      amf: false
+      amf: false,
+      libplacebo: false
     }
     const choice = chooseVideoEncoder('h264', 21, DEFAULT_SETTINGS, caps)
     expect(choice.encoder).toBe('h264_videotoolbox')

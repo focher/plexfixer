@@ -1,12 +1,21 @@
 {
-  "include": ["electron.vite.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "tests/**/*", "scripts/**/*"],
+  "include": [
+    "vite.tauri.config.ts",
+    "src/shared/**/*",
+    "scripts/**/*",
+    "tests/**/*"
+  ],
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2023"],
-    "types": ["node"],
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -16,6 +25,13 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "paths": { "@shared/*": ["./src/shared/*"] }
-  }
+    "paths": {
+      "@shared/*": [
+        "./src/shared/*"
+      ]
+    }
+  },
+  "exclude": [
+    "tests/tauri-host.test.ts"
+  ]
 }

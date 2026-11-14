@@ -59,6 +59,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   remoteKeyPath: '',
   remoteFfmpegPath: '',
   remoteFfprobePath: '',
+  remoteDefaultPath: '',
+
+  // Off by default: converting is a full re-encode that throws the Dolby
+  // Vision layer away, and that is a choice to make deliberately rather than
+  // one to find already made.
+  dolbyVision5: 'keep',
 
   mediaExtensions: ['mkv', 'm4v', 'mp4'],
   recursive: true

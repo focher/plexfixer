@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the PlexFixer window is allowed to ask the native side for.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:event:default",
+    "dialog:allow-open",
+    "dialog:allow-message",
+    "dialog:allow-confirm",
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
+    "os:allow-platform",
+    "os:allow-version",
+    "os:allow-arch",
+    "updater:default"
+  ]
+}

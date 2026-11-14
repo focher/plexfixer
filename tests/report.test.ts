@@ -48,6 +48,7 @@ describe('buildJobReport', () => {
           nvenc: true,
           qsv: false,
           amf: false,
+          libplacebo: false,
           videotoolbox: false
         }
       },

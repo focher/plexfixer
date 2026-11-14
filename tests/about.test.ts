@@ -5,9 +5,8 @@ import { aboutRows, buildAboutText, platformName, shortFfmpegVersion, versionLin
 const about: AboutInfo = {
   version: '0.1.10',
   packaged: true,
-  electron: '45.0.1',
-  chrome: '140.0.7339.5',
-  node: '22.21.0',
+  tauri: '2.11.3',
+  webview: 'WebKit 620.1.16',
   platform: 'darwin',
   arch: 'arm64',
   systemVersion: '15.1',
@@ -21,7 +20,7 @@ const environment: EnvironmentInfo = {
   ffmpegSource: 'bundled',
   ffprobeSource: 'bundled',
   ffmpegVersion: '7.1',
-  capabilities: { platform: 'darwin', available: ['h264_videotoolbox'], nvenc: false, videotoolbox: true, qsv: false, amf: false }
+  capabilities: { platform: 'darwin', available: ['h264_videotoolbox'], nvenc: false, videotoolbox: true, qsv: false, amf: false, libplacebo: false }
 }
 
 function valueOf(rows: ReturnType<typeof aboutRows>, label: string): string | undefined {

@@ -15,10 +15,10 @@ import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import type { BackupRecord } from '@shared/backups.js'
 import type { Job } from '@shared/types.js'
-import { probeFile } from '../src/main/ffmpeg/probe.js'
-import { RepairRunner } from '../src/main/jobs/runner.js'
-import { localHost } from '../src/main/host.js'
-import { parseMountTypes } from '../src/main/volumes.js'
+import { probeFile } from '@shared/plex/probe.js'
+import { RepairRunner } from '@shared/plex/runner.js'
+import { localHost } from './node-host.js'
+import { parseMountTypes } from './node-volumes.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -42,13 +42,18 @@ afterAll(async () => {
 })
 
 async function repair(path: string, ffmpegPath: string): Promise<{ job: Job; backups: BackupRecord[] }> {
-  const probed = await probeFile(path, { ffprobePath: FFPROBE! })
+  const probed = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
   const result = analyzeFile(probed, DEFAULT_SETTINGS)
   const backups: BackupRecord[] = []
   let finished: Job | undefined
-  const runner = new RepairRunner({ ffmpegPath, ffprobePath: FFPROBE! }, 1, (job) => {
-    if (job.state === 'done' || job.state === 'failed' || job.state === 'skipped') finished = job
-  })
+  const runner = new RepairRunner(
+    { ffmpegPath, ffprobePath: FFPROBE! },
+    1,
+    (job) => {
+      if (job.state === 'done' || job.state === 'failed' || job.state === 'skipped') finished = job
+    },
+    localHost()
+  )
   runner.onBackup = (record) => backups.push(record)
   runner.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
   for (let waited = 0; !finished && waited < 15_000; waited += 50) {

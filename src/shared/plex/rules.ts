@@ -68,6 +68,24 @@ export const HEVC_SAFE_PROFILES = new Set(['main', 'main 10'])
 export const DOLBY_VISION_SAFE_PROFILES = new Set([8, 84, 81])
 
 /**
+ * The filter that turns Dolby Vision profile 5 into plain HDR10.
+ *
+ * `apply_dolbyvision` is the only way to read an RPU in ffmpeg: it reshapes
+ * the IPT-PQ-C2 base layer into BT.2020 PQ, which is what makes the picture
+ * correct rather than merely relabelled. The rest of the options state the
+ * output explicitly, because libplacebo will otherwise keep whatever the
+ * source claimed.
+ *
+ * The capability probe runs this exact string rather than a simpler one. A
+ * build can have libplacebo and still refuse an option this chain needs, and
+ * the cost of finding that out during a repair is an hour of encoding and a
+ * file whose colours are wrong.
+ */
+export const DOLBY_VISION_HDR10_FILTER =
+  'libplacebo=apply_dolbyvision=true:colorspace=bt2020nc:color_primaries=bt2020:' +
+  'color_trc=smpte2084:format=yuv420p10le'
+
+/**
  * The codec tag HEVC should carry in MP4, given the tag it has now.
  *
  * Apple clients accept HEVC in MP4 only when the parameter sets live in the

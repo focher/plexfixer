@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Download static ffmpeg/ffprobe binaries into `resources/bin/<platform>-<arch>/`
- * so electron-builder can bundle them.
+ * so the bundler can ship them.
  *
  * Sources, all from the projects' own release artifacts:
  *   - Windows / Linux: BtbN/FFmpeg-Builds, the n8.1 release branch. These are
@@ -11,11 +11,19 @@
  *     of codecs twice. Shared, the two executables come to under a megabyte
  *     between them and the libraries are carried once — 315 MB down to 190 MB
  *     on Windows, with nothing lost.
- *   - macOS (arm64 + x64): shaka-project/static-ffmpeg-binaries, pinned to a
- *     release tag. BtbN does not build for macOS, and evermeet.cx (the
- *     long-standing macOS source) now returns HTTP 410. One upstream covers
- *     both architectures, which is the point: 0.1.1 took arm64 and x64 from
- *     two different projects and only one of them was redistributable.
+ *   - macOS x64: shaka-project/static-ffmpeg-binaries, pinned to a release
+ *     tag. BtbN does not build for macOS, and evermeet.cx (the long-standing
+ *     macOS source) now returns HTTP 410.
+ *   - macOS arm64: Vodes/ffmpeg-mt, pinned to a release tag. The shaka build
+ *     is minimal — no libplacebo — and libplacebo is the only thing in ffmpeg
+ *     that can read a Dolby Vision RPU, so without it a Mac cannot convert
+ *     profile 5 at all. This build has it, with Vulkan and MoltenVK linked in
+ *     statically so there is nothing to install alongside. It only exists for
+ *     arm64, which is why the two architectures now come from two upstreams
+ *     again — the difference from 0.1.1 is that both are checked for
+ *     `--enable-nonfree` before they are allowed anywhere near an installer.
+ *     An Intel Mac keeps the shaka build and reports the conversion as
+ *     unavailable rather than doing it wrong.
  *
  * `npm run fetch:ffmpeg` fetches this machine's platform; `-- --all` fetches
  * every platform, which is what building installers needs. `-- --force`
@@ -43,11 +51,20 @@ const BTBN = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest'
 /** Platforms `--all` fetches: the ones `npm run dist` actually builds. */
 const SHIPPED = ['darwin-arm64', 'darwin-x64', 'win32-x64']
 /**
- * Pinned release of the macOS static builds — FFmpeg 8.1.2, the same release
- * line BtbN ships for Windows, built GPL v3 with libx264, libx265 and
- * VideoToolbox. The tag suffix (`-2`) is the packaging revision.
+ * Pinned release of the macOS x64 static build — FFmpeg 8.1.2, the same
+ * release line BtbN ships for Windows, built GPL v3 with libx264, libx265 and
+ * VideoToolbox. The tag suffix (`-2`) is the packaging revision. arm64 comes
+ * from VODES below instead, for libplacebo.
  */
 const SHAKA = 'https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-2'
+
+/**
+ * Pinned release of the macOS arm64 build with libplacebo — FFmpeg 9.0.2,
+ * GPL v3, statically linked including MoltenVK. The `-r1` tag is the free
+ * build; `-r1-nonfree` is the same thing with undistributable extras, and
+ * `assertDistributable` would refuse it.
+ */
+const VODES = 'https://github.com/Vodes/ffmpeg-mt/releases/download/v9.0.2-r1'
 
 /**
  * `archive` targets download one bundle and are searched for the binaries.
@@ -70,12 +87,9 @@ const TARGETS = {
     libraries: /\.so(\.\d+)*$/
   },
   'darwin-arm64': {
-    kind: 'files',
-    gzip: false,
-    urls: {
-      ffmpeg: `${SHAKA}/ffmpeg-osx-arm64`,
-      ffprobe: `${SHAKA}/ffprobe-osx-arm64`
-    }
+    kind: 'archive',
+    url: `${VODES}/ffmpeg-9.0.2-macos-arm64.tar.zst`,
+    format: 'tar'
   },
   'darwin-x64': {
     kind: 'files',
@@ -242,7 +256,9 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
       return
     }
 
-    const archivePath = join(workDir, `archive.${target.format}`)
+    // Named after the real file: tar picks its decompressor from the content,
+    // but a zstd archive called `.tar` is a trap for anyone reading the code.
+    const archivePath = join(workDir, basename(new URL(target.url).pathname))
     await download(target.url, archivePath)
 
     const extractDir = join(workDir, 'extracted')

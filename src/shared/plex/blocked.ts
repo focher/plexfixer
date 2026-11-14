@@ -41,8 +41,8 @@ const BY_CODE: Partial<Record<FindingCode, Explanation>> = {
     youCan: 'Check the file plays at all. If it is audio-only, it does not belong in a video library; if it does not play, it is damaged.'
   },
   'video-dolby-vision-profile': {
-    why: 'Converting this Dolby Vision profile to one that degrades gracefully (8.1) means rewriting the RPU metadata, which ffmpeg alone cannot do. A plain re-encode would silently drop the Dolby Vision layer and shift every colour in the picture.',
-    youCan: 'Convert it deliberately with Dolby Vision tooling (dovi_tool and friends), re-encode it to plain HDR10, or keep it and accept that only DV-capable clients render it correctly.'
+    why: 'Profile 5 keeps its picture in IPT-PQ-C2 with no HDR10 base layer, so no amount of relabelling helps — a file rewritten as 8.1 still shows the wrong colours. Only rebuilding the picture fixes it, and that is a full re-encode. Profile 7 instead carries an enhancement layer, which is a different job and not one ffmpeg does.',
+    youCan: 'For profile 5, set Dolby Vision profile 5 to "Convert to HDR10" under Compatibility and repair the file in Force transcode; it needs an ffmpeg with a working libplacebo, which Settings will tell you about. Otherwise keep the file and accept that only Dolby Vision clients render it correctly.'
   },
   'video-resolution-high': {
     why: 'The only way to change this is to re-encode the picture smaller, which throws away detail permanently. PlexFixer will not do that to chase a bandwidth warning, and Force transcode will not either — the plan for this file is a stream copy.',

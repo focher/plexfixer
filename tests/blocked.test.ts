@@ -34,11 +34,14 @@ describe('isBlocked', () => {
 })
 
 describe('blockedReasons', () => {
-  it('explains Dolby Vision in terms of what a re-encode would destroy', () => {
+  it('explains why relabelling profile 5 is not a fix, and points at the one that is', () => {
     const [reason] = blockedReasons(dolbyVision)
     expect(reason?.code).toBe('video-dolby-vision-profile')
-    expect(reason?.why).toContain('RPU metadata')
-    expect(reason?.youCan).toContain('dovi_tool')
+    // The trap this text exists to head off: a file rewritten as 8.1 looks
+    // fixed and is not.
+    expect(reason?.why).toContain('8.1')
+    expect(reason?.why).toContain('re-encode')
+    expect(reason?.youCan).toContain('HDR10')
   })
 
   it('does not block on a warning only a re-encode would clear', () => {

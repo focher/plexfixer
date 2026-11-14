@@ -1,11 +1,19 @@
 {
-  "include": ["src/renderer/src/**/*", "src/preload/index.d.ts", "src/shared/**/*"],
+  "include": [
+    "src/renderer/src/**/*",
+    "src/shared/**/*",
+    "tests/tauri-host.test.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "noUnusedLocals": true,
@@ -14,6 +22,13 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "paths": { "@shared/*": ["./src/shared/*"], "@renderer/*": ["./src/renderer/src/*"] }
+    "paths": {
+      "@shared/*": [
+        "./src/shared/*"
+      ],
+      "@renderer/*": [
+        "./src/renderer/src/*"
+      ]
+    }
   }
 }

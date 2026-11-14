@@ -12,10 +12,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { localHost } from './node-host.js'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
-import { probeFile, hasFaststart } from '../src/main/ffmpeg/probe.js'
-import { buildRepairCommand } from '../src/main/jobs/command.js'
+import { probeFile } from '@shared/plex/probe.js'
+import { hasFaststart } from './node-faststart.js'
+import { buildRepairCommand } from '@shared/plex/command.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -77,7 +79,7 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
       '-disposition:a:1', '0'
     ])
 
-    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
     expect(file.container).toBe('matroska')
 
     const video = file.streams.find((s) => s.kind === 'video')
@@ -102,7 +104,7 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
       '-disposition:a:0', 'default'
     ])
 
-    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
     const result = analyzeFile(file, DEFAULT_SETTINGS)
 
     expect(result.primaryLanguage).toBe('jpn')
@@ -113,7 +115,7 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
     const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath })
     await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 120_000 })
 
-    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE!, host: localHost() })
     const repairedAudio = repaired.streams.filter((s) => s.kind === 'audio')
 
     expect(repaired.container).toBe('mp4')
@@ -144,7 +146,7 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
 
     expect(await hasFaststart(path)).toBe(false)
 
-    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
     const result = analyzeFile(file, DEFAULT_SETTINGS)
     expect(result.findings.map((f) => f.code)).toContain('mp4-not-faststart')
     expect(result.plan.strategy).toBe('remux')
@@ -167,7 +169,7 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
       '-disposition:a:0', 'default'
     ])
 
-    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
     const result = analyzeFile(file, DEFAULT_SETTINGS)
     expect(result.plan.strategy).toBe('transcode-audio')
     expect(result.plan.addCompatibilityAudio?.sourceStreamIndex).toBe(1)
@@ -177,7 +179,7 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
     const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath })
     await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 120_000 })
 
-    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE!, host: localHost() })
     const codecs = repaired.streams.filter((s) => s.kind === 'audio').map((s) => s.codec)
     expect(codecs).toContain('aac')
     expect(codecs).toContain('flac')
@@ -198,7 +200,7 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
       '-disposition:a:0', 'default'
     ])
 
-    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
     const video = file.streams.find((s) => s.kind === 'video')
     expect(video?.kind === 'video' && video.bitDepth).toBe(10)
 
@@ -211,7 +213,7 @@ describe.runIf(enabled)('integration: probe + analyze + repair', () => {
     const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath })
     await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 300_000 })
 
-    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE!, host: localHost() })
     const repairedVideo = repaired.streams.find((s) => s.kind === 'video')
     expect(repairedVideo?.kind === 'video' && repairedVideo.bitDepth).toBe(8)
     expect(analyzeFile(repaired, DEFAULT_SETTINGS).plan.requiresTranscode).toBe(false)
@@ -248,7 +250,7 @@ describe.runIf(enabled)('integration: embedded cover art', () => {
       '-disposition:v:1', 'attached_pic'
     ])
 
-    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
     // The poster really is a video stream as far as the probe is concerned.
     expect(file.streams.filter((s) => s.kind === 'video')).toHaveLength(2)
 
@@ -263,7 +265,7 @@ describe.runIf(enabled)('integration: embedded cover art', () => {
     // This is the call that used to fail outright.
     await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 120_000 })
 
-    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE!, host: localHost() })
     const video = repaired.streams.filter((s) => s.kind === 'video')
     // Two video streams again: the real one, retagged, and the poster beside it.
     expect(video).toHaveLength(2)
@@ -292,7 +294,7 @@ describe.runIf(enabled)('integration: language codes', () => {
       '-disposition:a:0', 'default'
     ])
 
-    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
     const result = analyzeFile(file, DEFAULT_SETTINGS)
     expect(result.plan.targetContainer).toBe('mp4')
 
@@ -300,7 +302,7 @@ describe.runIf(enabled)('integration: language codes', () => {
     const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath })
     await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 120_000 })
 
-    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE!, host: localHost() })
     const french = repaired.streams.find((s) => s.kind === 'audio')
     expect(french?.rawLanguage).toBe('fra')
 
@@ -324,7 +326,7 @@ describe.runIf(enabled)('integration: H.264 level relabel', () => {
       '-disposition:a:0', 'default'
     ])
 
-    const file = await probeFile(path, { ffprobePath: FFPROBE! })
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
     // Read from the SPS itself, along with the avcC header's copy of the level.
     const source = file.streams.find((s) => s.kind === 'video')
     expect(source && 'refFrames' in source ? source.refFrames : undefined).toBe(3)
@@ -337,7 +339,7 @@ describe.runIf(enabled)('integration: H.264 level relabel', () => {
     const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath })
     await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 120_000 })
 
-    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE! })
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE!, host: localHost() })
     const stream = repaired.streams.find((s) => s.kind === 'video')
     expect(stream && 'level' in stream ? stream.level : undefined).toBe(41)
     // Both copies changed: the stream's SPS, and the header Subler shows.

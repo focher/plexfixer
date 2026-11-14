@@ -546,13 +546,16 @@ export default function App(): React.JSX.Element {
 
   /* --- drag and drop ---------------------------------------------------- */
 
-  const onDrop = useCallback(
-    async (event: React.DragEvent) => {
-      event.preventDefault()
+  /**
+   * Paths dropped on the window.
+   *
+   * The drop itself is handled natively — the page never sees a `drop` event
+   * carrying files — so the paths arrive through the same channel as the ones
+   * given on the command line.
+   */
+  const onDroppedPaths = useCallback(
+    async (paths: string[]) => {
       setDragging(false)
-      const paths = Array.from(event.dataTransfer.files)
-        .map((file) => window.plexfixer.pathForFile(file))
-        .filter(Boolean)
       // A dropped file is a path on this machine; in remote mode that path
       // means nothing on the far end, and scanning it would fail file by file.
       if (settingsRef.current?.remoteEnabled) {
@@ -568,6 +571,10 @@ export default function App(): React.JSX.Element {
     },
     [startScan]
   )
+
+  // The highlight under a dragged file, and the drop itself.
+  useEffect(() => window.plexfixer.app.onDragState(setDragging), [])
+  useEffect(() => window.plexfixer.app.onDroppedPaths((paths) => void onDroppedPaths(paths)), [onDroppedPaths])
 
   /* --- derived ---------------------------------------------------------- */
 
@@ -663,12 +670,7 @@ export default function App(): React.JSX.Element {
   return (
     <div
       className="app"
-      onDragOver={(event) => {
-        event.preventDefault()
-        setDragging(true)
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={onDrop}
+
     >
       <div className="titlebar">
         PlexFixer
@@ -1150,6 +1152,8 @@ export default function App(): React.JSX.Element {
       {browsingRemote ? (
         <RemoteBrowser
           host={settings.remoteHost || 'the remote host'}
+          defaultPath={settings.remoteDefaultPath}
+          onSetDefault={(path) => void updateSettings({ remoteDefaultPath: path })}
           onClose={() => setBrowsingRemote(false)}
           onScan={(path) => {
             setBrowsingRemote(false)

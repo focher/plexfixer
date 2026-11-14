@@ -264,6 +264,15 @@ export interface VideoTranscodeSpec {
   scaleHeight?: number
   /** Force 8-bit 4:2:0 output (needed for High 10 and 4:2:2/4:4:4 sources). */
   forceYuv420p: boolean
+  /**
+   * Apply the Dolby Vision RPU and write plain BT.2020 PQ HDR10.
+   *
+   * Only ever set for profile 5, and only when the active ffmpeg has a working
+   * libplacebo. The Dolby Vision layer is deliberately gone from the output:
+   * the alternative is a file whose colours are wrong on everything that
+   * cannot decode DV.
+   */
+  dolbyVisionToHdr10?: boolean
   /** Constant-quality target. */
   quality: number
 }
@@ -428,6 +437,24 @@ export interface AppSettings {
   /** Remote binaries; blank means look on the remote PATH. */
   remoteFfmpegPath: string
   remoteFfprobePath: string
+  /**
+   * Where the remote browser opens.
+   *
+   * Blank means the account's home directory. A library is rarely there — it
+   * is usually several levels down a mount point — so walking to it from home
+   * every time is most of the browsing.
+   */
+  remoteDefaultPath: string
+
+  /**
+   * What to do with Dolby Vision profile 5, which has no HDR10 base layer.
+   *
+   * `keep` leaves it alone and reports it, which is what every earlier version
+   * did. `hdr10` re-encodes it to plain HDR10 through libplacebo: the picture
+   * is rebuilt, the Dolby Vision layer is dropped on purpose, and the colours
+   * come out right on every client instead of only on DV-capable ones.
+   */
+  dolbyVision5: 'keep' | 'hdr10'
 
   /** Extensions treated as media when walking folders. */
   mediaExtensions: string[]
@@ -683,10 +710,12 @@ export interface AboutInfo {
   version: string
   /** False in a dev run, where the version is the working tree's, not a build's. */
   packaged: boolean
-  electron: string
-  chrome: string
-  node: string
-  platform: NodeJS.Platform
+  /** The Tauri version the app is built on. */
+  tauri: string
+  /** The system webview rendering it: WKWebView on macOS, WebView2 on Windows. */
+  webview: string
+  /** Node's name for the platform — `darwin`, `win32`, `linux`. */
+  platform: string
   arch: string
   /** The OS version: macOS `15.1`, Windows `10.0.22631`. */
   systemVersion: string
@@ -753,12 +782,22 @@ export interface RemoteListing {
 }
 
 export interface EncoderCapabilities {
-  platform: NodeJS.Platform
+  /** Node's name for it — `darwin`, `win32`, `linux` — whichever machine it is. */
+  platform: string
   /** Encoder names ffmpeg reports as available, e.g. `h264_nvenc`. */
   available: string[]
   nvenc: boolean
   videotoolbox: boolean
   qsv: boolean
   amf: boolean
+  /**
+   * The `libplacebo` filter, proven by running it rather than by being listed.
+   *
+   * It is the only thing in ffmpeg that can apply a Dolby Vision RPU, which is
+   * what converting profile 5 to HDR10 needs. It also needs a Vulkan device,
+   * so a build that has the filter on a machine with no Vulkan driver still
+   * cannot use it — which is why this is a test run, not a list lookup.
+   */
+  libplacebo: boolean
   ffmpegVersion?: string
 }

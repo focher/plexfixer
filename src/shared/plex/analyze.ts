@@ -62,6 +62,11 @@ interface VideoVerdict {
   needsDeinterlace: boolean
   /** The source is >8-bit or non-4:2:0 and must be converted. */
   needsPixelFormatChange: boolean
+  /**
+   * Re-encode through libplacebo, applying the Dolby Vision RPU and writing
+   * plain HDR10. Only ever set for profile 5, and only when asked for.
+   */
+  convertDolbyVision: boolean
   /** Downscale target, when the source exceeds the configured ceiling. */
   scaleHeight?: number
   /**
@@ -78,6 +83,7 @@ function analyzeVideo(stream: VideoStream, file: MediaFile, settings: AppSetting
   let relabelLevel: number | undefined
   let needsDeinterlace = false
   let needsPixelFormatChange = false
+  let convertDolbyVision = false
   let scaleHeight: number | undefined
 
   const codec = stream.codec.toLowerCase()
@@ -220,16 +226,31 @@ function analyzeVideo(stream: VideoStream, file: MediaFile, settings: AppSetting
   }
 
   if (stream.dolbyVisionProfile != null && !DOLBY_VISION_SAFE_PROFILES.has(stream.dolbyVisionProfile)) {
+    // Profile 5 is the one with a conversion that actually works: libplacebo
+    // applies the RPU and writes the picture out as HDR10. Rewriting the
+    // metadata alone would relabel the file 8.1 and leave every colour wrong,
+    // because the base layer is IPT-PQ-C2 rather than BT.2020. Profile 7's
+    // problem is an enhancement layer — a different job, and not one ffmpeg
+    // does — so it stays a manual fix whatever this setting says.
+    const converting = stream.dolbyVisionProfile === 5 && settings.dolbyVision5 === 'hdr10'
+    if (converting) {
+      needsTranscode = true
+      convertDolbyVision = true
+    }
     findings.push({
       code: 'video-dolby-vision-profile',
       severity: 'blocker',
-      remedy: 'manual',
+      remedy: converting ? 'transcode' : 'manual',
       title: `Dolby Vision profile ${stream.dolbyVisionProfile} without an HDR10 fallback`,
       detail:
         stream.dolbyVisionProfile === 5
           ? 'Profile 5 is single-layer Dolby Vision with no HDR10 base layer. Clients that cannot decode Dolby ' +
             'Vision render it with badly skewed colours (the familiar green/purple cast) rather than falling ' +
-            'back gracefully. Converting to profile 8.1 or to plain HDR10 is the reliable fix.'
+            'back gracefully. ' +
+            (converting
+              ? 'A repair re-encodes it to plain HDR10 through libplacebo: the Dolby Vision layer goes, and ' +
+                'the picture looks right everywhere.'
+              : 'Converting to plain HDR10 is the reliable fix — turn it on under Compatibility.')
           : 'This Dolby Vision profile carries an enhancement layer that most clients ignore or mis-handle. ' +
             'Profiles 8.1 and 8.4 degrade cleanly; this one does not.',
       streamIndexes: [stream.index]
@@ -304,7 +325,16 @@ function analyzeVideo(stream: VideoStream, file: MediaFile, settings: AppSetting
     })
   }
 
-  return { findings, needsTranscode, needsTagFix, needsDeinterlace, needsPixelFormatChange, scaleHeight, relabelLevel }
+  return {
+    findings,
+    needsTranscode,
+    needsTagFix,
+    needsDeinterlace,
+    needsPixelFormatChange,
+    convertDolbyVision,
+    scaleHeight,
+    relabelLevel
+  }
 }
 
 interface AudioVerdict {
@@ -524,7 +554,14 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
 
   const videoVerdict: VideoVerdict = video[0]
     ? analyzeVideo(video[0], file, settings)
-    : { findings: [], needsTranscode: false, needsTagFix: false, needsDeinterlace: false, needsPixelFormatChange: false }
+    : {
+        findings: [],
+        needsTranscode: false,
+        needsTagFix: false,
+        needsDeinterlace: false,
+        needsPixelFormatChange: false,
+        convertDolbyVision: false
+      }
   findings.push(...videoVerdict.findings)
 
   const audioVerdict = analyzeAudio(audio, settings)
@@ -696,13 +733,23 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
 
   if (videoVerdict.needsTranscode) {
     strategy = 'transcode-video'
-    const target = settings.transcodeVideoCodec === 'hevc' ? 'HEVC Main 10' : 'H.264 High @ 8-bit'
-    actions.push({
-      label: `Re-encode video to ${target}`,
-      detail:
-        `The current video stream cannot be direct played. Re-encoding to ${target} makes it play natively on ` +
-        'every client, at the cost of one encode now.'
-    })
+    if (videoVerdict.convertDolbyVision) {
+      actions.push({
+        label: 'Convert Dolby Vision profile 5 to HDR10',
+        detail:
+          'The Dolby Vision RPU is applied to the picture and the result is written as HEVC Main 10 in BT.2020 ' +
+          'PQ. The Dolby Vision layer is not carried over — that is the point: an HDR10 file looks right on ' +
+          'every client, where profile 5 only looks right on a Dolby Vision one.'
+      })
+    } else {
+      const target = settings.transcodeVideoCodec === 'hevc' ? 'HEVC Main 10' : 'H.264 High @ 8-bit'
+      actions.push({
+        label: `Re-encode video to ${target}`,
+        detail:
+          `The current video stream cannot be direct played. Re-encoding to ${target} makes it play natively on ` +
+          'every client, at the cost of one encode now.'
+      })
+    }
   } else if (audioVerdict.needsCompatibilityTrack || audioVerdict.incompatible.length > 0) {
     strategy = 'transcode-audio'
   } else if (
@@ -835,19 +882,26 @@ export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisRes
           ? 'Stream copy — limited by disk speed'
           : 'Nothing to do'
 
+  // HDR10 is 10-bit BT.2020 PQ, which H.264 cannot carry: converting Dolby
+  // Vision to it and then flattening the result to 8-bit would throw away the
+  // very thing the conversion is for. So the conversion names its own codec
+  // and keeps the depth, whatever the transcode setting says.
+  const convertDolbyVision = videoVerdict.convertDolbyVision
   const videoTranscode: VideoTranscodeSpec | undefined =
     videoVerdict.needsTranscode && video[0]
       ? {
           sourceStreamIndex: video[0].index,
-          codec: settings.transcodeVideoCodec,
+          codec: convertDolbyVision ? 'hevc' : settings.transcodeVideoCodec,
           deinterlace: videoVerdict.needsDeinterlace,
           scaleHeight: videoVerdict.scaleHeight,
           // HEVC Main 10 can carry 10-bit; H.264 cannot, so anything above
           // 8-bit has to be converted when targeting H.264.
           forceYuv420p:
-            videoVerdict.needsPixelFormatChange ||
-            settings.transcodeVideoCodec === 'h264' ||
-            (video[0].bitDepth ?? 8) > 10,
+            !convertDolbyVision &&
+            (videoVerdict.needsPixelFormatChange ||
+              settings.transcodeVideoCodec === 'h264' ||
+              (video[0].bitDepth ?? 8) > 10),
+          dolbyVisionToHdr10: convertDolbyVision || undefined,
           quality: settings.videoQuality
         }
       : undefined

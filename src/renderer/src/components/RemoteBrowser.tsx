@@ -6,6 +6,10 @@
  * can hold thousands of files, and nothing here needs them all at once — and
  * the thing being chosen is the folder you are standing in, which is how a
  * scan is started everywhere else in the app.
+ *
+ * It opens in the default folder from Settings, or the account's home when
+ * there is none. The folder on screen can be made the default from here, which
+ * beats typing a remote path into Settings from memory.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -14,12 +18,18 @@ import { formatBytes } from '../format.js'
 
 export default function RemoteBrowser({
   host,
+  defaultPath,
   onScan,
+  onSetDefault,
   onClose
 }: {
   /** Shown in the title, so it is clear whose filesystem this is. */
   host: string
+  /** The folder browsing opens in; blank means the account's home. */
+  defaultPath: string
   onScan: (path: string) => void
+  /** Remember this folder as the one to open in. */
+  onSetDefault: (path: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const [listing, setListing] = useState<RemoteListing>()
@@ -52,6 +62,9 @@ export default function RemoteBrowser({
   }, [onClose])
 
   const mediaCount = listing?.entries.filter((entry) => entry.isMedia).length ?? 0
+  // Setting the default from here saves typing a path into Settings blind:
+  // you are already standing in the folder you mean.
+  const isDefault = !!listing && listing.path === defaultPath.trim()
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -106,6 +119,20 @@ export default function RemoteBrowser({
               : 'Scanning a folder includes everything beneath it.'}
           </span>
           <span className="spacer" />
+          <button
+            className="ghost"
+            disabled={!listing || loading || isDefault}
+            title={
+              isDefault
+                ? 'Browsing already starts in this folder'
+                : 'Open the browser in this folder from now on'
+            }
+            onClick={() => {
+              if (listing) onSetDefault(listing.path)
+            }}
+          >
+            {isDefault ? 'Starts here' : 'Start here next time'}
+          </button>
           <button onClick={onClose}>Cancel</button>
           <button
             className="primary"

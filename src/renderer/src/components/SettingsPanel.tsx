@@ -274,7 +274,7 @@ function ModesSection(props: SettingsPanelProps): React.JSX.Element {
 }
 
 function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
-  const { settings } = props
+  const { settings, environment } = props
   const set = props.onChange
 
   return (
@@ -311,6 +311,25 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
           onChange={(event) => set({ allowHevc: event.target.checked })}
         />
         <span className="muted">Treat HEVC as compatible</span>
+      </Field>
+
+      <Field
+        label="Dolby Vision profile 5"
+        hint="Profile 5 has no HDR10 base layer, so anything that cannot decode Dolby Vision shows it with skewed colours."
+      >
+        <select
+          value={settings.dolbyVision5}
+          onChange={(event) => set({ dolbyVision5: event.target.value as AppSettings['dolbyVision5'] })}
+        >
+          <option value="keep">Keep it — report it and leave the file alone</option>
+          <option value="hdr10">Convert to HDR10 — re-encode, Dolby Vision is dropped</option>
+        </select>
+        {settings.dolbyVision5 === 'hdr10' && environment?.capabilities && !environment.capabilities.libplacebo ? (
+          <span className="muted">
+            This ffmpeg has no working libplacebo, so the conversion cannot run here. It needs a build with the
+            filter and a Vulkan device for it to run on.
+          </span>
+        ) : null}
       </Field>
 
       <Field label="Maximum H.264 level" hint="Older Apple TVs, Rokus and smart TVs commonly cap at 4.1.">
@@ -746,6 +765,19 @@ function RemoteSection({
                 </button>
               ) : null}
             </div>
+          </Field>
+
+          <Field
+            label="Default folder"
+            hint="Where Browse opens. Blank starts in the account's home folder, which is rarely the library."
+          >
+            <input
+              type="text"
+              value={settings.remoteDefaultPath}
+              placeholder="/mnt/media"
+              spellCheck={false}
+              onChange={(event) => onChange({ remoteDefaultPath: event.target.value })}
+            />
           </Field>
 
           <Field label="Remote ffmpeg" hint="Blank means whatever is on the remote PATH.">

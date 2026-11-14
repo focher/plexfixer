@@ -7,13 +7,14 @@ import { mkdtemp, readFile, rm, writeFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { localHost } from './node-host.js'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import {
   BACKUP_DIRECTORY,
   promoteOutput,
   redirectOutput,
   resolveOutputPath
-} from '../src/main/jobs/output.js'
+} from '@shared/plex/output.js'
 
 let dir: string
 
@@ -29,8 +30,8 @@ const settings = (patch = {}) => ({ ...DEFAULT_SETTINGS, ...patch })
 describe('resolveOutputPath', () => {
   it('defaults to replacing the original', () => {
     expect(DEFAULT_SETTINGS.outputPlacement).toBe('in-place')
-    expect(resolveOutputPath('/m/Movie.mkv', 'mp4', settings())).toBe('/m/Movie.mp4')
-    expect(resolveOutputPath('/m/Movie.mp4', 'mp4', settings())).toBe('/m/Movie.mp4')
+    expect(resolveOutputPath('/m/Movie.mkv', 'mp4', settings(), localHost())).toBe('/m/Movie.mp4')
+    expect(resolveOutputPath('/m/Movie.mp4', 'mp4', settings(), localHost())).toBe('/m/Movie.mp4')
   })
 })
 
@@ -42,7 +43,7 @@ describe('promoteOutput — in place', () => {
     await writeFile(source, 'ORIGINAL')
     await writeFile(temporary, 'REPAIRED')
 
-    const { finalPath, backupPath } = await promoteOutput(temporary, output, source, settings())
+    const { finalPath, backupPath } = await promoteOutput(temporary, output, source, settings(), localHost())
 
     expect(finalPath).toBe(output)
     expect(await readFile(output, 'utf8')).toBe('REPAIRED')
@@ -61,7 +62,7 @@ describe('promoteOutput — in place', () => {
     await writeFile(output, 'PRE-EXISTING MP4')
     await writeFile(temporary, 'REPAIRED')
 
-    await promoteOutput(temporary, output, source, settings())
+    await promoteOutput(temporary, output, source, settings(), localHost())
 
     expect(await readFile(output, 'utf8')).toBe('REPAIRED')
     const backups = await readdir(join(dir, BACKUP_DIRECTORY))
@@ -76,7 +77,7 @@ describe('promoteOutput — in place', () => {
     await writeFile(source, 'ORIGINAL')
     await writeFile(temporary, 'REPAIRED')
 
-    const { backupPath } = await promoteOutput(temporary, output, source, settings({ keepBackups: false }))
+    const { backupPath } = await promoteOutput(temporary, output, source, settings({ keepBackups: false }), localHost())
 
     expect(backupPath).toBeUndefined()
     expect(await readdir(dir)).toEqual(['Movie.mp4'])
@@ -92,7 +93,7 @@ describe('promoteOutput — sibling', () => {
     await writeFile(output, 'SOMETHING ELSE')
     await writeFile(temporary, 'REPAIRED')
 
-    const { finalPath } = await promoteOutput(temporary, output, source, settings({ outputPlacement: 'sibling' }))
+    const { finalPath } = await promoteOutput(temporary, output, source, settings({ outputPlacement: 'sibling' }), localHost())
 
     expect(finalPath).not.toBe(output)
     expect(await readFile(output, 'utf8')).toBe('SOMETHING ELSE')
@@ -103,16 +104,16 @@ describe('promoteOutput — sibling', () => {
 
 describe('resolveOutputPath — extensions', () => {
   it('keeps .m4v, which is already an MP4 container', () => {
-    expect(resolveOutputPath('/m/Episode.m4v', 'mp4', settings())).toBe('/m/Episode.m4v')
+    expect(resolveOutputPath('/m/Episode.m4v', 'mp4', settings(), localHost())).toBe('/m/Episode.m4v')
   })
 
   it('keeps an upper-case extension as the user spelled it', () => {
-    expect(resolveOutputPath('/m/Episode.M4V', 'mp4', settings())).toBe('/m/Episode.M4V')
+    expect(resolveOutputPath('/m/Episode.M4V', 'mp4', settings(), localHost())).toBe('/m/Episode.M4V')
   })
 
   it('still changes the extension when the container really changes', () => {
-    expect(resolveOutputPath('/m/Episode.mkv', 'mp4', settings())).toBe('/m/Episode.mp4')
-    expect(resolveOutputPath('/m/Episode.m4v', 'mkv', settings())).toBe('/m/Episode.mkv')
+    expect(resolveOutputPath('/m/Episode.mkv', 'mp4', settings(), localHost())).toBe('/m/Episode.mp4')
+    expect(resolveOutputPath('/m/Episode.m4v', 'mkv', settings(), localHost())).toBe('/m/Episode.mkv')
   })
 })
 
