@@ -279,38 +279,96 @@ It uses PlexFixer's bundled ffprobe when it can find one, otherwise ffprobe from
 ## Building installers
 
 ```bash
-npm run fetch:ffmpeg -- --all
-```
-
-`--all` fetches the platforms `npm run dist` builds: macOS arm64, macOS x64 and
-Windows x64.
-
-```bash
 npm run dist
 ```
 
-`npm run dist:mac` and `npm run dist:win` build one platform. Installers land in
-`release/`:
+That builds for the machine it runs on. Other targets are named:
+
+| Command | Builds |
+| --- | --- |
+| `npm run dist:mac-arm` | macOS, Apple Silicon |
+| `npm run dist:mac-intel` | macOS, Intel |
+| `npm run dist:mac` | both Macs, one after the other |
+| `npm run dist:mac-universal` | one Mac app with both architectures in it |
+| `npm run dist:win` | Windows x64 — **only on Windows** |
+
+Artifacts land in `release/`:
 
 | Artifact | Platform |
 | --- | --- |
 | `PlexFixer_<version>_aarch64.dmg` | macOS, Apple Silicon |
 | `PlexFixer_<version>_x64.dmg` | macOS, Intel |
 | `PlexFixer_<version>_x64-setup.exe` | Windows x64 |
+| `PlexFixer_<version>_<arch>.app.tar.gz` + `.sig` | macOS update packages |
+| `PlexFixer_<version>_x64-setup.nsis.zip` + `.sig` | Windows update package |
 
-Each build embeds only its own platform's ffmpeg: a `beforeBundleCommand` hook
-stages the right folder and fails the build if it is empty, rather than
-shipping an installer that cannot probe anything.
+The ffmpeg binaries for the target are downloaded if they are not already
+there, so no separate fetch step is needed; `npm run fetch:ffmpeg -- --all`
+still gets all three platforms at once if you would rather have them up front.
+Each build embeds only its own platform's: a `beforeBundleCommand` hook stages
+the right folder and fails the build if it is empty, rather than shipping an
+installer that cannot probe anything.
 
-**Windows is built on Windows.** Tauri compiles a native binary and does not
-cross-compile, so unlike the electron-builder setup this replaced there is no
-Wine trick that produces a Windows installer from a Mac. Run `npm run dist` on
-a Windows machine, or on a Windows CI runner.
+The build signs macOS apps with the single Developer ID certificate in your
+keychain, naming it so the log says which one was used. `--no-sign` skips it,
+and `--identity="Developer ID Application: …"` picks one on a machine that has
+several. Update packages are signed with `TAURI_SIGNING_PRIVATE_KEY`, which the
+build insists on rather than quietly producing a release no client can update
+to; `--no-updater` is the way to build without it.
 
-macOS builds are signed if a Developer ID certificate is in your keychain. They
-are **not notarized** — notarization needs a paid Apple Developer account, and
+### One Mac builds both Macs
+
+Xcode carries the SDKs for both macOS architectures, so an Apple Silicon Mac
+builds the Intel app and the other way round. The only thing needed is the Rust
+target, which `scripts/dist.mjs` installs itself.
+
+`dist:mac-universal` is the other way to cover both: a single app with both
+slices, which also has to carry both ffmpeg builds, so its DMG is roughly the
+two separate ones added together. Two downloads are usually the better trade.
+
+### Windows is built on Windows
+
+Tauri compiles a native binary and needs the MSVC toolchain, so unlike the
+electron-builder setup this replaced there is no Wine trick that produces a
+Windows installer from a Mac. `npm run dist:win` refuses to run anywhere else
+rather than producing something broken.
+
+Two ways to get one:
+
+- Run `npm run dist:win` on a Windows machine with Rust, Node and the Visual
+  Studio build tools. The same script runs there.
+- Push a tag: `.github/workflows/release.yml` builds macOS (both
+  architectures) and Windows on their own runners, then uploads everything to
+  that tag as a **draft** release. Run it from the Actions tab without a tag to
+  test a build without publishing anything.
+
+The workflow needs `TAURI_SIGNING_PRIVATE_KEY` as a repository secret, or the
+build fails on the update packages. macOS signing in CI is optional and off
+unless `APPLE_CERTIFICATE` (a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD` and
+`APPLE_SIGNING_IDENTITY` are set; without them the runner produces an unsigned
+build, which is worth knowing before publishing one.
+
+### The updater manifest
+
+The updater reads one `latest.json` covering every platform, so it can only be
+written once all the builds exist in one place:
+
+```bash
+node scripts/release-manifest.mjs --tag v0.2.1
+```
+
+It reads `release/`, pairs each update package with its `.sig`, and writes
+`release/latest.json`. Platforms that are not there are left out — an entry
+whose download 404s is worse than no entry — and it says which ones those were.
+The release workflow runs this after collecting every runner's artifacts.
+
+### Signing, and not notarizing
+
+macOS builds are signed if a Developer ID certificate is available. They are
+**not notarized** — notarization needs a paid Apple Developer account, and
 PlexFixer does not have one. That is a deliberate, settled choice, not a gap
-waiting to be filled.
+waiting to be filled, and the build clears any stray Apple credentials from the
+environment so it cannot happen by accident.
 
 The consequence is that macOS blocks the app on first launch, and since Sequoia
 Control-clicking it no longer offers a way past. The DMG therefore ships
@@ -326,12 +384,8 @@ xattr -dr com.apple.quarantine /Applications/PlexFixer.app
 or System Settings → Privacy & Security → Open Anyway. macOS quarantines the
 `.command` too, so a Mac that blocks the script as well needs one of those two.
 
-`scripts/notarize.mjs` runs after signing and is a no-op unless Apple
-credentials are present in the environment — either `APPLE_ID` +
-`APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`, or an App Store Connect API
-key (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`). It stays in the
-build so that a fork with its own developer account gets notarized releases
-without touching the build config; nothing needs to be done with it here.
+Windows builds are unsigned, so SmartScreen shows "Windows protected your PC"
+on first run; More info → Run anyway is the way past.
 
 ## Tests
 

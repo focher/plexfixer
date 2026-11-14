@@ -18,11 +18,12 @@
 import { execFile } from 'node:child_process'
 import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
-const ROOT = new URL('..', import.meta.url).pathname
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const SCRIPT = join(ROOT, 'build', 'Allow PlexFixer to open.command')
 
 async function addTo(dmgPath) {

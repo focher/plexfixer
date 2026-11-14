@@ -1,0 +1,182 @@
+# Build the installers PlexFixer ships.
+#
+# Tauri compiles a native binary, so each platform is built on its own runner.
+# The one exception is macOS: Xcode carries both architectures' SDKs, so a
+# single macOS runner builds Apple Silicon and Intel.
+#
+# Pushing a tag like v0.2.1 builds everything and uploads it to that tag's
+# release as a draft; "Run workflow" builds without publishing anything, which
+# is the way to check a Windows build before tagging.
+#
+# Secrets, all optional — a missing one degrades the build rather than failing
+# it, except the updater key:
+#   TAURI_SIGNING_PRIVATE_KEY           signs update packages (required)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its passphrase
+#   APPLE_CERTIFICATE                   base64 of a Developer ID .p12
+#   APPLE_CERTIFICATE_PASSWORD          its password
+#   APPLE_SIGNING_IDENTITY              e.g. "Developer ID Application: … (TEAMID)"
+#
+# Nothing here notarizes. PlexFixer is signed but deliberately not notarized;
+# the DMG's "Allow PlexFixer to open.command" is the answer to Gatekeeper.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Space-separated targets, or "all"'
+        default: all
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # The suite is platform-independent, so it runs once on the cheapest runner
+  # rather than three times. Catching a broken build here costs two minutes;
+  # catching it after three 20-minute installer builds costs an hour.
+  check:
+    name: Typecheck and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  build:
+    name: ${{ matrix.name }}
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One platform failing should not throw away another platform's build —
+      # they take 20 minutes each.
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon + Intel)
+            runner: macos-14
+            targets: mac-arm mac-intel
+            rust: aarch64-apple-darwin,x86_64-apple-darwin
+          - name: Windows x64
+            runner: windows-latest
+            targets: win
+            rust: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Add Rust targets
+        run: rustup target add ${{ matrix.rust }}
+        shell: bash
+
+      # tauri-cli takes several minutes to compile, so it is cached on its own
+      # key rather than with the project's build artifacts.
+      - name: Cache tauri-cli
+        id: tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-2-${{ runner.os }}
+
+      - name: Install tauri-cli
+        if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # The ffmpeg binaries are 70–190 MB a platform and come from other
+      # projects' releases; caching them keeps a re-run off those servers.
+      - name: Cache ffmpeg binaries
+        uses: actions/cache@v4
+        with:
+          path: resources/bin
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('scripts/fetch-ffmpeg.mjs') }}
+
+      - name: Build
+        shell: bash
+        run: |
+          targets="$RUNNER_TARGETS"
+          requested="$REQUESTED_TARGETS"
+          if [ -n "$requested" ] && [ "$requested" != "all" ]; then
+            # Keep only the targets this runner can actually build.
+            kept=""
+            for one in $requested; do
+              case " $targets " in *" $one "*) kept="$kept $one";; esac
+            done
+            if [ -z "$kept" ]; then
+              echo "nothing for this runner in \"$requested\" — skipping"
+              exit 0
+            fi
+            targets="$kept"
+          fi
+          echo "building:$targets"
+          node scripts/dist.mjs $targets
+        env:
+          # Through the environment rather than interpolated into the script:
+          # a dispatch input is text someone typed, and `run:` would run it.
+          RUNNER_TARGETS: ${{ matrix.targets }}
+          REQUESTED_TARGETS: ${{ github.event.inputs.targets }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ runner.os }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      # One manifest covering every platform. Built from the artifacts that
+      # actually arrived, so a platform whose build failed is left out rather
+      # than offered as an update that 404s.
+      - name: Build the updater manifest
+        run: node scripts/release-manifest.mjs --tag "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}"
+
+      - name: Upload
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --draft --title "${GITHUB_REF_NAME}" --notes "" \
+            || echo "release already exists"
+          gh release upload "${GITHUB_REF_NAME}" release/* --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

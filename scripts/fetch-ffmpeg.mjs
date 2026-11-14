@@ -34,14 +34,15 @@ import { createWriteStream } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises'
 import { createGunzip } from 'node:zlib'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { licenseOf } from './lib/ffmpeg-license.mjs'
 
 const execFileAsync = promisify(execFile)
-const ROOT = new URL('..', import.meta.url).pathname
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const BIN_ROOT = join(ROOT, 'resources', 'bin')
 const WANTED = ['ffmpeg', 'ffprobe']
 

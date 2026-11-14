@@ -9,13 +9,19 @@
   "scripts": {
     "dev": "cargo tauri dev",
     "build": "npm run typecheck && npm run renderer:build",
-    "dist": "cargo tauri build && node scripts/dmg-add-unblock.mjs src-tauri/target/release/bundle/dmg/*.dmg",
+    "dist": "node scripts/dist.mjs",
+    "dist:mac": "node scripts/dist.mjs mac-arm mac-intel",
+    "dist:mac-arm": "node scripts/dist.mjs mac-arm",
+    "dist:mac-intel": "node scripts/dist.mjs mac-intel",
+    "dist:mac-universal": "node scripts/dist.mjs mac-universal",
+    "dist:win": "node scripts/dist.mjs win",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "renderer:dev": "vite --config vite.tauri.config.ts",
     "renderer:build": "vite build --config vite.tauri.config.ts",
-    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs"
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
+    "release:manifest": "node scripts/release-manifest.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
