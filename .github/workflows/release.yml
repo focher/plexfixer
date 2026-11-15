@@ -117,30 +117,50 @@ jobs:
           path: resources/bin
           key: ffmpeg-${{ runner.os }}-${{ hashFiles('scripts/fetch-ffmpeg.mjs') }}
 
-      - name: Build
+      # Which of this runner's targets the run actually asked for. A dispatch
+      # can name targets belonging to the other runner, which is not an error
+      # — it just leaves this one with nothing to do, and the steps below are
+      # skipped rather than failing on an empty release/.
+      - name: Pick targets
+        id: pick
         shell: bash
         run: |
           targets="$RUNNER_TARGETS"
-          requested="$REQUESTED_TARGETS"
-          if [ -n "$requested" ] && [ "$requested" != "all" ]; then
-            # Keep only the targets this runner can actually build.
+          if [ -n "$REQUESTED_TARGETS" ] && [ "$REQUESTED_TARGETS" != "all" ]; then
             kept=""
-            for one in $requested; do
-              case " $targets " in *" $one "*) kept="$kept $one";; esac
+            for one in $REQUESTED_TARGETS; do
+              case " $targets " in *" $one "*) kept="${kept:+$kept }$one";; esac
             done
-            if [ -z "$kept" ]; then
-              echo "nothing for this runner in \"$requested\" — skipping"
-              exit 0
-            fi
             targets="$kept"
           fi
-          echo "building:$targets"
-          node scripts/dist.mjs $targets
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          if [ -z "$targets" ]; then
+            echo "nothing for this runner in \"$REQUESTED_TARGETS\""
+          else
+            echo "building: $targets"
+          fi
         env:
           # Through the environment rather than interpolated into the script:
           # a dispatch input is text someone typed, and `run:` would run it.
           RUNNER_TARGETS: ${{ matrix.targets }}
           REQUESTED_TARGETS: ${{ github.event.inputs.targets }}
+
+      - name: Build
+        if: steps.pick.outputs.targets != ''
+        shell: bash
+        run: |
+          # A run that publishes nothing can be built without the update
+          # signing key, which is what makes it possible to prove a platform
+          # builds before that key goes anywhere near CI. A tag still fails
+          # without it rather than publishing a release nobody can update to.
+          extra=""
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "no TAURI_SIGNING_PRIVATE_KEY — building without update packages"
+            extra="--no-updater"
+          fi
+          node scripts/dist.mjs $BUILD_TARGETS $extra
+        env:
+          BUILD_TARGETS: ${{ steps.pick.outputs.targets }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -149,6 +169,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
+        if: steps.pick.outputs.targets != ''
         with:
           name: installers-${{ runner.os }}
           path: release/*
