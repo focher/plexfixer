@@ -55,6 +55,7 @@ const TARGETS = {
     host: 'darwin',
     rust: ['aarch64-apple-darwin'],
     label: 'aarch64',
+    env: { platform: 'macos', arch: 'aarch64' },
   },
   'mac-intel': {
     triple: 'x86_64-apple-darwin',
@@ -62,6 +63,7 @@ const TARGETS = {
     host: 'darwin',
     rust: ['x86_64-apple-darwin'],
     label: 'x64',
+    env: { platform: 'macos', arch: 'x86_64' },
   },
   'mac-universal': {
     triple: 'universal-apple-darwin',
@@ -69,18 +71,21 @@ const TARGETS = {
     host: 'darwin',
     rust: ['aarch64-apple-darwin', 'x86_64-apple-darwin'],
     label: 'universal',
+    env: { platform: 'macos', arch: 'universal' },
   },
   win: {
     triple: 'x86_64-pc-windows-msvc',
     ffmpeg: ['win32-x64'],
     host: 'win32',
     rust: ['x86_64-pc-windows-msvc'],
+    env: { platform: 'windows', arch: 'x86_64' },
   },
   linux: {
     triple: 'x86_64-unknown-linux-gnu',
     ffmpeg: ['linux-x64'],
     host: 'linux',
     rust: ['x86_64-unknown-linux-gnu'],
+    env: { platform: 'linux', arch: 'x86_64' },
   },
 }
 
@@ -196,6 +201,29 @@ function ensureFfmpeg(target) {
 }
 
 /**
+ * Stage the target's ffmpeg binaries before cargo is called.
+ *
+ * `beforeBundleCommand` stages them as well, but that hook runs once the
+ * crate has compiled, and tauri-build checks that every `resources` path
+ * exists *while* compiling. The staging directory is not in the repository,
+ * so on a fresh clone the build fails before the hook has ever run — which is
+ * why this only showed itself on a machine that had never built before.
+ *
+ * The platform and architecture are passed rather than inferred, so a
+ * cross-build stages the architecture it is building for and not the one it
+ * is building on.
+ */
+function stageResources(target) {
+  run(process.execPath, [join(ROOT, 'scripts', 'tauri-resources.mjs')], {
+    env: {
+      ...process.env,
+      TAURI_ENV_PLATFORM: target.env.platform,
+      TAURI_ENV_ARCH: target.env.arch,
+    },
+  })
+}
+
+/**
  * The Developer ID identity to sign with, or undefined to leave the build
  * unsigned.
  *
@@ -285,6 +313,7 @@ function buildTarget(name) {
 
   ensureRustTargets(target)
   ensureFfmpeg(target)
+  stageResources(target)
 
   const env = { ...process.env }
   if (target.host === 'darwin') {
@@ -315,9 +344,17 @@ function buildTarget(name) {
     )
   }
 
+  const bundle = join(ROOT, 'src-tauri', 'target', target.triple, 'release', 'bundle')
+  // Emptied first. The bundler writes into this directory without clearing
+  // it, so anything an earlier build left — an update package from before
+  // `--no-updater`, an installer carrying an older version number — would be
+  // collected as though this build had produced it. Only bundler output is
+  // removed; the compiled objects beside it are untouched, so this costs a
+  // re-bundle and not a rebuild.
+  rmSync(bundle, { recursive: true, force: true })
+
   run('cargo', buildArgs, { env })
 
-  const bundle = join(ROOT, 'src-tauri', 'target', target.triple, 'release', 'bundle')
   const artifacts = artifactsIn(bundle)
   if (artifacts.length === 0) throw new Error(`no artifacts under ${bundle}`)
 

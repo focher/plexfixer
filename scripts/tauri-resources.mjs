@@ -53,10 +53,14 @@ for (const folder of folders) {
   staged.push({ folder, source, count: contents.length })
 }
 
-// Cleared first, so a build after switching targets cannot ship the binaries
-// the previous one staged.
-await rm(STAGE, { recursive: true, force: true })
+// The platform folders are cleared first, so a build after switching targets
+// cannot ship the binaries the previous one staged. The staging directory
+// itself stays: it is tracked, by way of a .gitkeep, because tauri-build
+// checks the path exists while the crate compiles — before this hook runs.
 await mkdir(STAGE, { recursive: true })
+for (const entry of await readdir(STAGE, { withFileTypes: true })) {
+  if (entry.isDirectory()) await rm(join(STAGE, entry.name), { recursive: true, force: true })
+}
 for (const { folder, source } of staged) {
   await cp(source, join(STAGE, folder), { recursive: true })
 }
