@@ -33,6 +33,11 @@
  * is signed but deliberately not notarized, and the DMG's unblock script is
  * the answer to that.
  *
+ * Credentials — the update signing key, the GitHub repository — are read from
+ * `plexfixer.env` at the root of the clone if it is there. That file is
+ * gitignored and is never written to, so copying it to a second machine is all
+ * that is needed to build a signed release there.
+ *
  * `--publish` is the step that makes a build other people can get hold of, so
  * it is opt-in and never implied: a build is routinely run to check a change
  * compiles, and that must not touch a release. It needs the GitHub CLI, which
@@ -43,9 +48,14 @@ import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadEnv } from './lib/env.mjs'
 import { repository } from './lib/github.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
+// Before anything reads the environment: the signing key and the repository
+// both come from here when the machine has not been set up another way.
+const loaded = loadEnv(ROOT)
 
 /** The version the bundler will stamp on the artifacts. */
 function version() {
@@ -376,10 +386,13 @@ function buildTarget(name) {
   if (flags.has('--no-updater')) {
     buildArgs.push('--config', JSON.stringify({ bundle: { createUpdaterArtifacts: false } }))
   } else if (!env.TAURI_SIGNING_PRIVATE_KEY && !env.TAURI_SIGNING_PRIVATE_KEY_PATH) {
+    // Said as a file to put in place rather than as a shell command, because
+    // the shell differs by platform and the file does not.
     throw new Error(
       'TAURI_SIGNING_PRIVATE_KEY is not set, so the signed update artifacts cannot be built.\n' +
-        '  Load it with:  set -a && . ./plexfixer.env && set +a\n' +
-        '  Or build without update artifacts:  --no-updater',
+        `  Copy plexfixer.env from a machine that has it to ${ROOT}\n` +
+        '  (it is gitignored, so it will not be committed), then run this again.\n' +
+        '  Or build the installer without an in-app update:  --no-updater',
     )
   }
 
@@ -505,6 +518,12 @@ function refreshManifest(repo, tag) {
 try {
   for (const name of wanted) checkHost(name)
   checkDependencies()
+
+  // Names only. One of these is a signing key and another is a token, and a
+  // build log is pasted into chats and issues without a second thought.
+  if (loaded.length > 0) {
+    console.log(`Loaded from plexfixer.env: ${loaded.join(', ')}`)
+  }
 
   if (!flags.has('--keep')) {
     rmSync(join(ROOT, 'release'), { recursive: true, force: true })

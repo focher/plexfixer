@@ -24,9 +24,13 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadEnv } from './lib/env.mjs'
 import { repository as repositoryOf } from './lib/github.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
+// For GH_REPO, so this works the same run on its own as it does from dist.mjs.
+loadEnv(ROOT)
 
 const args = process.argv.slice(2)
 function option(name, fallback) {

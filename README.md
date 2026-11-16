@@ -376,8 +376,26 @@ result.
 
 A platform only reaches the updater if its update package was signed, which
 needs `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
-in the environment of the machine that builds it. Build with `--no-updater`
-and the installer still publishes; it just is not offered as an update.
+on the machine that builds it. Build with `--no-updater` and the installer
+still publishes; it just is not offered as an update.
+
+### Setting up a second build machine
+
+Windows is built on Windows, so the signing key has to be there too. It lives
+in `plexfixer.env` at the root of the clone, which the build scripts read on
+their own — there is no shell command to remember, and nothing to set up that
+survives a reboot:
+
+1. Copy `plexfixer.env` from the machine that already has it. It is
+   gitignored, so it is not in the clone and will not be committed. Any way of
+   moving a file works; it never needs to go through a service.
+2. Put it beside `package.json` in the clone.
+3. `npm ci`, then `npm run release:win`.
+
+The build prints the names of what it loaded and never the values, so its
+output can be pasted into an issue. Anything already set in the environment
+wins over the file, which is how CI keeps using its own secrets. If the file
+is not there, the build says so and names the file to copy.
 
 ### The updater manifest
 
