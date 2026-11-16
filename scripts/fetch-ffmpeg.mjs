@@ -10,7 +10,8 @@
  *     each embed the whole of libav*, so bundling both shipped the same 150 MB
  *     of codecs twice. Shared, the two executables come to under a megabyte
  *     between them and the libraries are carried once — 315 MB down to 190 MB
- *     on Windows, with nothing lost.
+ *     on Windows, with nothing lost. Pinned to a month-end build, which BtbN
+ *     keeps for two years; the daily ones are deleted after a fortnight.
  *   - macOS x64: shaka-project/static-ffmpeg-binaries, pinned to a release
  *     tag. BtbN does not build for macOS, and evermeet.cx (the long-standing
  *     macOS source) now returns HTTP 410.
@@ -24,6 +25,12 @@
  *     `--enable-nonfree` before they are allowed anywhere near an installer.
  *     An Intel Mac keeps the shaka build and reports the conversion as
  *     unavailable rather than doing it wrong.
+ *
+ * Every download is held to a pinned SHA-256 and discarded if it does not
+ * match. These binaries go inside a signed installer, so what ships has to be
+ * what was chosen rather than what happened to be at a URL that day. To move
+ * to a newer build, change the tag and the checksum together — GitHub lists a
+ * `digest` for every release asset.
  *
  * `npm run fetch:ffmpeg` fetches this machine's platform; `-- --all` fetches
  * every platform, which is what building installers needs. `-- --force`
@@ -40,6 +47,7 @@ import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { assertChecksum, hashingTap } from './lib/checksum.mjs'
 import { licenseOf } from './lib/ffmpeg-license.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -47,8 +55,14 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const BIN_ROOT = join(ROOT, 'resources', 'bin')
 const WANTED = ['ffmpeg', 'ffprobe']
 
-/** BtbN's rolling pointer at the n8.1 release branch. */
-const BTBN = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest'
+/**
+ * BtbN's build of the n8.1 release branch, pinned to one autobuild.
+ *
+ * Not `latest`: that tag is re-pointed every day, so it cannot be held to a
+ * checksum and a build made tomorrow would ship something nobody had looked
+ * at. A month-end autobuild is used because those are the ones BtbN keeps.
+ */
+const BTBN = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59'
 
 /** Platforms `--all` fetches: the ones `npm run dist` actually builds. */
 const SHIPPED = ['darwin-arm64', 'darwin-x64', 'win32-x64']
@@ -72,25 +86,30 @@ const VODES = 'https://github.com/Vodes/ffmpeg-mt/releases/download/v9.0.2-r1'
  * `archive` targets download one bundle and are searched for the binaries.
  * `files` targets download each binary separately, gunzipping as they go.
  *
- * @type {Record<string, {kind: 'archive', url: string, format: 'zip'|'tar'} |
- *                       {kind: 'files', urls: Record<string, string>, gzip: boolean}>}
+ * `sha256` is of the file as downloaded, before anything is unpacked.
+ *
+ * @type {Record<string, {kind: 'archive', url: string, sha256: string, format: 'zip'|'tar'} |
+ *                       {kind: 'files', urls: Record<string, string>, sha256: Record<string, string>, gzip: boolean}>}
  */
 const TARGETS = {
   'win32-x64': {
     kind: 'archive',
-    url: `${BTBN}/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip`,
+    url: `${BTBN}/ffmpeg-n8.1.3-27-g8dca1586f4-win64-gpl-shared-8.1.zip`,
+    sha256: '3adc00b67118a8c4bdd6624a000e139df283b1eeb8b126fcec4849bd5b778dd4',
     format: 'zip',
     libraries: /\.dll$/i
   },
   'linux-x64': {
     kind: 'archive',
-    url: `${BTBN}/ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz`,
+    url: `${BTBN}/ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-shared-8.1.tar.xz`,
+    sha256: '202fe67679a0860b155817a0907ffcc5c1ea82e186acaa21cb87d307f54fd59a',
     format: 'tar',
     libraries: /\.so(\.\d+)*$/
   },
   'darwin-arm64': {
     kind: 'archive',
     url: `${VODES}/ffmpeg-9.0.2-macos-arm64.tar.zst`,
+    sha256: 'e7ed65ac085531e99e5421342bee50c9ca53b3bf10f54f5b024d7cd80ca17386',
     format: 'tar'
   },
   'darwin-x64': {
@@ -99,6 +118,10 @@ const TARGETS = {
     urls: {
       ffmpeg: `${SHAKA}/ffmpeg-osx-x64`,
       ffprobe: `${SHAKA}/ffprobe-osx-x64`
+    },
+    sha256: {
+      ffmpeg: '241c8d5718ceb8b6741887cc13b70cf2b07bf5393356407c83fafe798d0b0930',
+      ffprobe: 'c5a93f563e7b3e27b73af99aaa1b06db4140c6ed2ae0e1baa2819f648b0dc87e'
     }
   }
 }
@@ -124,12 +147,33 @@ async function openStream(url) {
   return response.body
 }
 
-async function download(url, destination, { gzip = false } = {}) {
-  process.stdout.write(`  fetching ${basename(new URL(url).pathname)}\n`)
+/**
+ * Download a file, and keep it only if it is the one that was pinned.
+ *
+ * The checksum is of the bytes as they arrive — before any gunzip — because
+ * that is what the release page lists and what can be compared against it.
+ */
+async function download(url, destination, { gzip = false, sha256 } = {}) {
+  const name = basename(new URL(url).pathname)
+  // Before the request, not after it: a source with nothing pinned should not
+  // cost a 90 MB download to find out.
+  assertChecksum(name, sha256, sha256)
+
+  process.stdout.write(`  fetching ${name}\n`)
   const body = await openStream(url)
   const sink = createWriteStream(destination)
-  if (gzip) await pipeline(body, createGunzip(), sink)
-  else await pipeline(body, sink)
+  const { tap, digest } = hashingTap()
+  if (gzip) await pipeline(body, tap, createGunzip(), sink)
+  else await pipeline(body, tap, sink)
+
+  try {
+    assertChecksum(name, digest(), sha256)
+  } catch (error) {
+    // Not left lying in the work directory for the extraction step to find.
+    await rm(destination, { force: true })
+    throw error
+  }
+  process.stdout.write(`  checksum matches ${sha256.slice(0, 12)}…\n`)
 }
 
 async function extract(archivePath, format, intoDir) {
@@ -266,7 +310,7 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
         // Download to a scratch path first so an interrupted fetch cannot leave
         // a truncated binary sitting where the app would try to run it.
         const scratch = join(workDir, exeName(platformKey, name))
-        await download(url, scratch, { gzip: target.gzip })
+        await download(url, scratch, { gzip: target.gzip, sha256: target.sha256?.[name] })
         await assertDistributable(scratch, platformKey, allowNonfree)
         await move(scratch, finalPaths[name])
         if (!platformKey.startsWith('win32')) await chmod(finalPaths[name], 0o755)
@@ -278,7 +322,7 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
     // Named after the real file: tar picks its decompressor from the content,
     // but a zstd archive called `.tar` is a trap for anyone reading the code.
     const archivePath = join(workDir, basename(new URL(target.url).pathname))
-    await download(target.url, archivePath)
+    await download(target.url, archivePath, { sha256: target.sha256 })
 
     const extractDir = join(workDir, 'extracted')
     await mkdir(extractDir, { recursive: true })
