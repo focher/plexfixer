@@ -26,6 +26,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadEnv } from './lib/env.mjs'
 import { repository as repositoryOf } from './lib/github.mjs'
+import { platformsFor, preferred } from './lib/update-artifacts.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -58,32 +59,6 @@ function repository() {
     console.error(error.message)
     process.exit(1)
   }
-}
-
-/**
- * The updater's platform keys for an update package.
- *
- * A universal build covers both Macs from one file, which is the only reason
- * this returns a list rather than a single key.
- */
-function platformsFor(name) {
-  if (name.endsWith('.app.tar.gz')) {
-    if (name.includes('_universal')) return ['darwin-aarch64', 'darwin-x86_64']
-    if (name.includes('aarch64') || name.includes('arm64')) return ['darwin-aarch64']
-    if (name.includes('x64') || name.includes('x86_64')) return ['darwin-x86_64']
-    return []
-  }
-  if (name.endsWith('-setup.nsis.zip')) return ['windows-x86_64']
-  if (name.endsWith('.msi.zip')) return ['windows-x86_64']
-  if (name.endsWith('.AppImage.tar.gz')) return ['linux-x86_64']
-  return []
-}
-
-/** NSIS is what PlexFixer ships on Windows, so it wins over the MSI. */
-function preferred(existing, candidate) {
-  if (!existing) return true
-  if (existing.endsWith('.msi.zip') && candidate.endsWith('-setup.nsis.zip')) return true
-  return false
 }
 
 if (!existsSync(dir)) {
