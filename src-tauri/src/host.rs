@@ -11,6 +11,7 @@
 //! it by accident is the kind of thing nobody notices. It runs the located
 //! ffmpeg and ffprobe, and nothing else.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -276,7 +277,24 @@ fn is_media(path: &Path, extensions: &[String]) -> bool {
         .unwrap_or(false)
 }
 
-fn walk(dir: &Path, extensions: &[String], recursive: bool, depth: usize, found: &mut Vec<PathBuf>) {
+/// Walk a directory, collecting the media files under it.
+///
+/// `entered` holds the canonical path of every directory already walked, which
+/// is what makes it safe to follow links. A library keeps seasons, whole
+/// drives or a second copy of a collection behind a link as a matter of
+/// course — and on Windows a junction is a link too, so refusing to follow one
+/// silently loses whole folders someone has asked to scan. Following them
+/// needs only that nowhere is entered twice: a link pointing back up the tree
+/// stops on its second arrival rather than looping, and a cross-linked season
+/// folder is walked once rather than reported under both paths.
+fn walk(
+    dir: &Path,
+    extensions: &[String],
+    recursive: bool,
+    depth: usize,
+    found: &mut Vec<PathBuf>,
+    entered: &mut HashSet<PathBuf>,
+) {
     if depth > DEFAULT_MAX_DEPTH {
         return;
     }
@@ -295,21 +313,29 @@ fn walk(dir: &Path, extensions: &[String], recursive: bool, depth: usize, found:
         }
         let path = entry.path();
 
-        // `symlink_metadata` rather than `metadata`: symlinked directories are
-        // not followed, which avoids loops and keeps a library with
-        // cross-linked season folders from being walked twice.
-        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+        // `metadata` rather than `symlink_metadata`: a link is followed to
+        // whatever it points at, and judged on that. A linked folder full of
+        // films is a folder full of films.
+        let Ok(meta) = std::fs::metadata(&path) else {
+            // A link with nothing at the end of it, or an entry that went away
+            // between being listed and being asked about.
             continue;
         };
-        if meta.file_type().is_symlink() {
-            continue;
-        }
 
         if meta.is_dir() {
             if !recursive || SKIP_DIRECTORIES.contains(&name.as_str()) {
                 continue;
             }
-            walk(&path, extensions, recursive, depth + 1, found);
+            // Where this really is, so that arriving by two different routes
+            // counts as arriving once. A directory that cannot be resolved is
+            // left alone rather than guessed at.
+            let Ok(real) = std::fs::canonicalize(&path) else {
+                continue;
+            };
+            if !entered.insert(real) {
+                continue;
+            }
+            walk(&path, extensions, recursive, depth + 1, found, entered);
         } else if meta.is_file() && is_media(&path, extensions) {
             found.push(path);
         }
@@ -332,10 +358,20 @@ pub async fn find_media(
     // it goes to the blocking pool rather than stalling the async runtime.
     let found = tokio::task::spawn_blocking(move || {
         let mut found: Vec<PathBuf> = Vec::new();
+        // Shared across the roots: two chosen folders that overlap, or one
+        // that is reachable from inside another, are walked once between them.
+        let mut entered: HashSet<PathBuf> = HashSet::new();
         for root in &roots {
             let path = PathBuf::from(root);
             match std::fs::metadata(&path) {
-                Ok(meta) if meta.is_dir() => walk(&path, &extensions, recursive, 0, &mut found),
+                Ok(meta) if meta.is_dir() => {
+                    if let Ok(real) = std::fs::canonicalize(&path) {
+                        if !entered.insert(real) {
+                            continue;
+                        }
+                    }
+                    walk(&path, &extensions, recursive, 0, &mut found, &mut entered)
+                }
                 Ok(meta) if meta.is_file() && is_media(&path, &extensions) => found.push(path),
                 // A path that is gone or unreadable is reported by the scan as
                 // an input that contributed nothing.
@@ -392,7 +428,8 @@ mod tests {
     fn walk_of(root: &Path, recursive: bool) -> Vec<String> {
         let extensions = vec!["mkv".to_string(), "m4v".to_string()];
         let mut found = Vec::new();
-        walk(root, &extensions, recursive, 0, &mut found);
+        let mut entered = HashSet::new();
+        walk(root, &extensions, recursive, 0, &mut found, &mut entered);
         let mut names: Vec<String> = found
             .iter()
             .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().into_owned())
@@ -438,13 +475,56 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn does_not_follow_a_symlinked_folder() {
-        // A library with cross-linked season folders would otherwise be walked
-        // twice, and a link pointing up the tree would loop.
+    fn follows_a_linked_folder() {
+        // A library keeps a season, a second drive or a whole collection
+        // behind a link routinely, and on Windows a junction is a link too.
+        // Skipping them lost entire folders someone had asked to scan.
         let root = tree("symlink");
-        std::os::unix::fs::symlink(root.join("Movies"), root.join("Linked")).unwrap();
+        let elsewhere = root.parent().unwrap().join(format!(
+            "plexfixer-linked-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("Linked.mkv"), b"x").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("Linked")).unwrap();
+
         let found = walk_of(&root, true);
-        assert!(!found.iter().any(|name| name.starts_with("Linked")));
+        assert!(
+            found.contains(&"Linked/Linked.mkv".to_string()),
+            "a linked folder's media should be found: {found:?}"
+        );
+        std::fs::remove_dir_all(&elsewhere).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walks_a_cross_linked_folder_only_once() {
+        // Following links is only safe because nowhere is entered twice. The
+        // film under `Movies` must not also be reported under the link.
+        let root = tree("crosslink");
+        std::os::unix::fs::symlink(root.join("Movies"), root.join("AlsoMovies")).unwrap();
+        let found = walk_of(&root, true);
+        let films: Vec<&String> = found.iter().filter(|name| name.ends_with("Alien.M4V")).collect();
+        assert_eq!(films.len(), 1, "expected one copy of the film, got {films:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_pointing_up_the_tree_terminates() {
+        // The case the old skip existed to prevent: without the record of
+        // where it has been, this walks until the depth limit stops it.
+        let root = tree("loop");
+        std::os::unix::fs::symlink(&root, root.join("Movies/Up")).unwrap();
+        let found = walk_of(&root, true);
+        assert!(found.contains(&"Top.mkv".to_string()));
+        assert!(
+            !found.iter().any(|name| name.matches("Up").count() > 1),
+            "the walk went round the loop: {found:?}"
+        );
     }
 
     #[tokio::test]
