@@ -31,12 +31,13 @@
  */
 
 import { createWriteStream } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises'
 import { createGunzip } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { licenseOf } from './lib/ffmpeg-license.mjs'
@@ -204,16 +205,33 @@ async function assertDistributable(path, platformKey, allowNonfree) {
   )
 }
 
-/** Cross-device rename fails on some CI runners; fall back to a copy. */
+/**
+ * Move a downloaded file into place, around the two ways this fails for real.
+ *
+ * A temp directory on another volume gives EXDEV, which CI runners do often.
+ * Windows gives EPERM, because a rename needs delete access to the source and
+ * something else is holding the file open: Defender scans an executable the
+ * moment it is closed, and a freshly extracted ffmpeg.exe is about the most
+ * interesting thing it will see all day. That scan ends in a moment, so the
+ * rename is retried before falling back to a copy — which needs only to read
+ * the source, and so goes through while the scan is still running.
+ */
 async function move(from, to) {
-  try {
-    await rename(from, to)
-  } catch (error) {
-    if (error.code !== 'EXDEV') throw error
-    const { copyFile } = await import('node:fs/promises')
-    await copyFile(from, to)
-    await rm(from, { force: true })
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      await rename(from, to)
+      return
+    } catch (error) {
+      if (error.code === 'EXDEV') break
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error
+      if (attempt === 5) break
+      await delay(100 * 2 ** attempt)
+    }
   }
+  await copyFile(from, to)
+  // The source sits in a temp directory that is removed wholesale afterwards,
+  // so a lock that outlives the copy is not worth failing the fetch over.
+  await rm(from, { force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
 }
 
 async function fetchTarget(platformKey, { force, allowNonfree }) {
@@ -292,7 +310,11 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
       console.log(`  → ${libraries.length} shared libraries (${(bytes / 1048576).toFixed(0)} MB)`)
     }
   } finally {
-    await rm(workDir, { recursive: true, force: true })
+    // Retries for the same reason `move` has them: a scanner still holding one
+    // of the files it just unpacked would otherwise fail a fetch that worked.
+    await rm(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(
+      (error) => console.warn(`  ! could not remove ${workDir}: ${error.message}`),
+    )
   }
 }
 
