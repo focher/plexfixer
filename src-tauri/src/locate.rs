@@ -60,10 +60,16 @@ fn bundled_dirs(app: &AppHandle) -> Vec<PathBuf> {
         candidates.push(resources.join("resources/bin").join(&platform_dir));
     }
 
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("resources/bin").join(&platform_dir));
-        if let Some(parent) = cwd.parent() {
-            candidates.push(parent.join("resources/bin").join(&platform_dir));
+    // The working directory is the repository in a dev run and somebody else's
+    // folder in a packaged one — wherever the app was started from, or the
+    // folder of a file opened with it. A build that ships its own binaries has
+    // no business running one it found lying there instead.
+    if cfg!(debug_assertions) {
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join("resources/bin").join(&platform_dir));
+            if let Some(parent) = cwd.parent() {
+                candidates.push(parent.join("resources/bin").join(&platform_dir));
+            }
         }
     }
 

@@ -77,7 +77,11 @@ async fn run(binary: &str, args: &[&str]) -> Option<String> {
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // The timeout below abandons the wait; this is what makes it abandon
+        // the process too. A GPU driver that hangs on a test encode would
+        // otherwise leave an ffmpeg running for every probe.
+        .kill_on_drop(true);
 
     #[cfg(windows)]
     {

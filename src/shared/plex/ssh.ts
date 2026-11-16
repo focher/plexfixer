@@ -68,6 +68,23 @@ export function shellCommand(parts: string[]): string {
 }
 
 /**
+ * Refuse a host that ssh would read as one of its own options.
+ *
+ * The host is typed into Settings and handed to `ssh` as an argument, and an
+ * argument that begins with a dash is an option wherever it appears:
+ * `-oProxyCommand=…` in the host field would run a command on this machine.
+ * No real host name or `Host` alias starts with one, so nothing is lost by
+ * refusing it — and refusing is clearer than relying on every ssh tool to
+ * treat `--` the same way.
+ */
+export function assertHost(host: string): string {
+  if (!host.trim() || host.trim().startsWith('-')) {
+    throw new Error(`"${host}" is not a host name. Enter user@host, or a Host from your ssh config.`)
+  }
+  return host
+}
+
+/**
  * The ssh arguments for running one command line on the far end.
  *
  * `-T` because none of this wants a terminal, and `-n` would close stdin,
@@ -84,7 +101,7 @@ export function sshArgs(target: SshTarget, remoteCommand: string): string[] {
     'ServerAliveInterval=20',
     ...(target.identityFile ? ['-i', target.identityFile, '-o', 'IdentitiesOnly=yes'] : []),
     ...(target.port ? ['-p', String(target.port)] : []),
-    target.host,
+    assertHost(target.host),
     remoteCommand
   ]
 }
@@ -126,6 +143,20 @@ export interface SshRunOptions {
   /** ffprobe JSON for a long file is large; the default is generous. */
   maxBytes?: number
   signal?: AbortSignal
+}
+
+/**
+ * A literal string as a pattern for `pkill -f` and `pgrep -f`.
+ *
+ * Both read their argument as an extended regular expression, and the thing
+ * being looked for is a file path. `Movie (2019) [1080p].mkv` as a pattern
+ * means "Movie 2019 " followed by one character from a set — which is not what
+ * the command line says, so nothing matched and a cancelled remote repair went
+ * on running. Brackets and parentheses are how a Plex library is named, so
+ * that was most of them.
+ */
+export function literalPattern(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
 }
 
 /** Run a command line on the far end and collect its output. */

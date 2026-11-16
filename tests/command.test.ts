@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import type { EncoderCapabilities } from '@shared/types.js'
-import { buildRepairCommand, buildSubtitleExtractCommands, chooseVideoEncoder } from '@shared/plex/command.js'
+import {
+  buildRepairCommand,
+  buildSubtitleExtractCommands,
+  chooseVideoEncoder,
+  sidecarLanguage
+} from '@shared/plex/command.js'
 import { audio, coverArt, flags, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
 const OUT = '/out/Example (2020).mp4'
@@ -344,6 +349,30 @@ describe('buildSubtitleExtractCommands', () => {
     )
     const paths = buildSubtitleExtractCommands(result, '/out/Example').map((c) => c.outputPath)
     expect(new Set(paths).size).toBe(paths.length)
+  })
+  it('does not let a language tag choose where the sidecar is written', () => {
+    // The tag is read out of the file, and a file can say anything. An unknown
+    // tag is kept as written elsewhere, which here put it straight into a
+    // path: this one named a file four folders up, in /tmp.
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng' }),
+        mainAudio({ index: 1, language: 'eng' }),
+        subtitle({ index: 2, codec: 'ass', language: 'x/../../../../tmp/evil' })
+      ]),
+      DEFAULT_SETTINGS
+    )
+    const paths = buildSubtitleExtractCommands(result, '/media/Movie').map((c) => c.outputPath)
+
+    expect(paths).toEqual(['/media/Movie.und.srt'])
+  })
+
+  it.each(['..', 'a/b', 'a\\b', 'en.srt', '', 'e', 'abcdefghi', 'e n'])('writes %j as undetermined', (language) => {
+    expect(sidecarLanguage(language)).toBe('und')
+  })
+
+  it.each(['en', 'eng', 'fre', 'und', 'zxx'])('keeps the language code %s', (language) => {
+    expect(sidecarLanguage(language)).toBe(language)
   })
 })
 

@@ -679,13 +679,15 @@ function RemoteSection({
   const trust = useCallback(async () => {
     setTrusting(true)
     try {
-      setCheck(await window.plexfixer.remote.trustHost())
+      // The fingerprints on screen go with the request: what gets recorded is
+      // the key that was looked at, not whatever answers a moment later.
+      setCheck(await window.plexfixer.remote.trustHost(check?.fingerprints ?? []))
     } catch (error) {
       setCheck(asFailure(error))
     } finally {
       setTrusting(false)
     }
-  }, [asFailure])
+  }, [asFailure, check])
 
   return (
     <section>

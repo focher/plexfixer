@@ -166,11 +166,61 @@ export async function cloneToBackup(
 }
 
 /**
+ * A promotion that stopped half way and could not be put back.
+ *
+ * Everything else `promoteOutput` throws leaves the disk as it found it: the
+ * original where it was and the repaired file still in its temporary. This is
+ * the one case where that is not true, so it carries where both files are —
+ * and the caller must not tidy the temporary away, because it is now the only
+ * copy of the file in the folder it belongs in.
+ */
+export class PromoteError extends Error {
+  constructor(
+    message: string,
+    public readonly temporaryPath: string,
+    public readonly backupPath: string
+  ) {
+    super(message)
+    this.name = 'PromoteError'
+  }
+}
+
+export interface Promoted {
+  /** Where the repaired file ended up. */
+  finalPath: string
+  /** Where the original went, when it was kept. */
+  backupPath?: string
+  /**
+   * Set when the repaired file is in place but the original could not be
+   * moved or removed afterwards, with the reason. Both files exist; nothing
+   * was lost, and the repair is not a failure.
+   */
+  originalLeft?: string
+}
+
+/**
  * Promote the finished temporary file to its destination.
  *
- * In-place mode has to deal with the original first — moved aside when backups
- * are on, deleted when they are not — because a container change means the
- * output has a different name and would otherwise leave both files behind.
+ * The rule the ordering follows: **the original is never the first thing to
+ * go.** It used to be — moved aside or deleted, and only then was the repaired
+ * file renamed into place — so a rename that failed (a destination held open,
+ * a share that dropped) came after the point of no return, and the cleanup
+ * that followed removed the repaired file as well. With backups off that left
+ * nothing at all.
+ *
+ *   - Replacing a file under its own name with backups off is one rename,
+ *     which swaps the two atomically: there is no moment with neither.
+ *   - With backups on the original has to move first, since both cannot hold
+ *     the name. If the repaired file then will not go in, the original is put
+ *     straight back.
+ *   - When the container changes the two have different names, so the
+ *     repaired file goes in beside the original and the original is dealt
+ *     with afterwards. If that fails there are two files, not none.
+ *
+ * Nothing that was not asked about is touched. A different file already
+ * sitting at the destination — repairing `Movie.mkv` when a separate
+ * `Movie.mp4` exists — is left exactly where it is, and the repaired file takes
+ * the next free name. Replacing the original was asked for; that file was not.
  */
 export async function promoteOutput(
   temporaryPath: string,
@@ -178,38 +228,57 @@ export async function promoteOutput(
   sourcePath: string,
   settings: AppSettings,
   host: RepairHost
-): Promise<{ finalPath: string; backupPath?: string; otherBackups: string[] }> {
+): Promise<Promoted> {
   await host.mkdirp(host.paths.dirname(outputPath))
 
-  let backupPath: string | undefined
-  const otherBackups: string[] = []
-  const replacingOriginal = settings.outputPlacement === 'in-place'
-
-  if (replacingOriginal) {
-    if (settings.keepBackups) {
-      backupPath = await backupOriginal(sourcePath, settings, host)
-    } else if (await host.exists(sourcePath)) {
-      await host.remove(sourcePath)
-    }
-
-    // A container change means the destination has a different name from the
-    // source, so something unrelated can already be sitting there — e.g.
-    // repairing `Movie.mkv` when a separate `Movie.mp4` exists. Replacing the
-    // original was asked for; destroying its neighbour was not.
-    if (outputPath !== sourcePath && (await host.exists(outputPath))) {
-      if (settings.keepBackups) {
-        const moved = await backupOriginal(outputPath, settings, host)
-        if (moved) otherBackups.push(moved)
-      } else {
-        await host.remove(outputPath)
-      }
-    }
+  if (settings.outputPlacement !== 'in-place') {
+    // Never clobber an unrelated file that happens to sit at the destination.
+    const finalPath = await uniquePath(outputPath, host)
+    await host.rename(temporaryPath, finalPath)
+    return { finalPath }
   }
 
-  // Never clobber an unrelated file that happens to sit at the destination.
-  const finalPath = replacingOriginal ? outputPath : await uniquePath(outputPath, host)
+  if (outputPath === sourcePath) {
+    if (!settings.keepBackups) {
+      await host.rename(temporaryPath, outputPath)
+      return { finalPath: outputPath }
+    }
+
+    const backupPath = await backupOriginal(sourcePath, settings, host)
+    if (!backupPath) throw new Error(`Could not back up ${sourcePath}`)
+    try {
+      await host.rename(temporaryPath, outputPath)
+    } catch (error) {
+      try {
+        await host.rename(backupPath, sourcePath)
+      } catch {
+        const reason = error instanceof Error ? error.message : String(error)
+        throw new PromoteError(
+          `The repaired file could not be moved into place (${reason}), and the original could not be put back. ` +
+            `Nothing was deleted: the original is at ${backupPath} and the repaired file is at ${temporaryPath}.`,
+          temporaryPath,
+          backupPath
+        )
+      }
+      // The folder may have been created just now for nothing.
+      await host.removeEmptyDirectory(host.paths.dirname(backupPath)).catch(() => undefined)
+      throw error
+    }
+    return { finalPath: outputPath, backupPath }
+  }
+
+  const finalPath = await uniquePath(outputPath, host)
   await host.rename(temporaryPath, finalPath)
-  return { finalPath, backupPath, otherBackups }
+
+  try {
+    if (settings.keepBackups) {
+      return { finalPath, backupPath: await backupOriginal(sourcePath, settings, host) }
+    }
+    if (await host.exists(sourcePath)) await host.remove(sourcePath)
+    return { finalPath }
+  } catch (error) {
+    return { finalPath, originalLeft: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 /** Remove a partially written temporary file; failures here are not fatal. */

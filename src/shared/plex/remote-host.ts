@@ -15,7 +15,7 @@ import type { AppSettings } from '../types.js'
 import type { ExecOptions, HostEntry, HostStat, RepairHost } from '../host.js'
 import { pathsFor } from '../paths.js'
 import { kindOfFilesystem, parseDf } from './volumes.js'
-import { shellCommand, shellQuote, sshRun, sshSpawn, type SshTarget } from './ssh.js'
+import { literalPattern, shellCommand, shellQuote, sshRun, sshSpawn, type SshTarget } from './ssh.js'
 
 /** Directory names that never hold library media (and one of ours). */
 const SKIP_DIRECTORIES = new Set([
@@ -38,21 +38,27 @@ const remotePaths = pathsFor('linux')
  * Numeric owner and group (`-n`) keeps the column count fixed — a user or
  * group name with a space in it would otherwise shift the filename — and `-p`
  * puts a slash on directories, which is the only type flag we need. Symlinks
- * are dropped, exactly as the local walker drops them.
+ * are dropped: the remote scan uses `find` without `-L`, so it does not follow
+ * them either, and a browser that offered one would offer a folder the scan
+ * then finds nothing in.
+ *
+ * The name is taken as the rest of the line after the eight fixed columns,
+ * exactly as written. Splitting the whole line on whitespace and joining it
+ * back with single spaces turned `Two  Spaces.mkv` into a name that does not
+ * exist.
  */
 export function parseLsLong(output: string): HostEntry[] {
   const entries: HostEntry[] = []
   for (const line of output.split('\n')) {
     if (!line.trim() || line.startsWith('total ')) continue
-    const fields = line.split(/\s+/)
-    if (fields.length < 9) continue
+    // Eight columns, each followed by padding, then one separator and the name.
+    const columns = /^((?:\S+\s+){7}\S+)\s(.*)$/.exec(line)
+    if (!columns) continue
+    const fields = columns[1]!.split(/\s+/)
     const perms = fields[0] ?? ''
     if (perms.startsWith('l')) continue
     const sizeBytes = Number(fields[4])
-    // The name is everything after the eight fixed columns, spaces and all.
-    let name = line.split(/\s+/).slice(8).join(' ')
-    const arrow = name.indexOf(' -> ')
-    if (arrow >= 0) name = name.slice(0, arrow)
+    let name = columns[2]!
     const isDirectory = perms.startsWith('d') || name.endsWith('/')
     if (isDirectory) name = name.replace(/\/$/, '')
     if (!name || name === '.' || name === '..') continue
@@ -119,7 +125,9 @@ export function remoteHost(target: SshTarget, local: RepairHost): RepairHost {
       // `pkill -f` matches the whole command line, and the marker is the
       // temporary output path, which is unique to this job. A failure here is
       // reported by the job that asked, not thrown at it.
-      await sshRun(local, target, shellCommand(['pkill', '-f', '--', marker]), { timeoutMs: 10_000 }).catch(() => undefined)
+      await sshRun(local, target, shellCommand(['pkill', '-f', '--', literalPattern(marker)]), {
+        timeoutMs: 10_000
+      }).catch(() => undefined)
     },
 
     async stat(path) {
@@ -198,16 +206,25 @@ export function remoteHost(target: SshTarget, local: RepairHost): RepairHost {
           if (wanted.has(remotePaths.extname(root).slice(1).toLowerCase())) found.add(root)
           continue
         }
-        // `find` without -L, so symlinked directories are not followed — the
-        // same rule the local walker follows, for the same reasons.
+        // `find` without -L, so symlinked directories are not followed. The
+        // local walker does follow them now, remembering where it has been;
+        // doing the same here means deduplicating what `find -L` reports
+        // twice, which nobody has needed yet.
         const depth = recursive ? '' : ' -maxdepth 1'
         const output = await run(`find ${shellQuote(root)}${depth} -type f -print 2>/dev/null || true`, {
           timeoutMs: 600_000,
           maxBytes: 64 * 1024 * 1024
         })
-        for (const line of output.split('\n')) {
-          const path = line.trim()
-          if (!path) continue
+        // Everything `find` prints begins with the folder it was given. A line
+        // that does not is the tail of a file name with a newline in it — and
+        // a name is chosen by whoever made the file, so `x\n/etc/other.mkv`
+        // would otherwise put a path of their choosing on the list of files
+        // to repair.
+        const within = root.endsWith('/') ? root : `${root}/`
+        for (const path of output.split('\n')) {
+          // Not trimmed: a name may begin or end with a space, and a path with
+          // one taken off is a path to nothing.
+          if (!path || !path.startsWith(within)) continue
           const name = remotePaths.basename(path)
           if (name.startsWith('._')) continue
           if (!wanted.has(remotePaths.extname(path).slice(1).toLowerCase())) continue

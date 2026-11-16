@@ -10,14 +10,22 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { explainSshFailure, shellCommand, shellQuote, sshArgs } from '@shared/plex/ssh.js'
+import { explainSshFailure, literalPattern, shellCommand, shellQuote, sshArgs } from '@shared/plex/ssh.js'
 import { checkScript, parseCheck, REQUIRED_UTILITIES } from '@shared/plex/remote-check.js'
 import { parseLsLong, parseStatLine, remoteHost } from '@shared/plex/remote-host.js'
 import { hostFor, localHost, remoteTargetFor } from './node-host.js'
-import { keyMaterial, keysMatch, knownHostsName, parseFingerprints } from '@shared/plex/hostkey.js'
+import {
+  keyMaterial,
+  keysMatch,
+  knownHostsName,
+  parseFingerprints,
+  trustHost,
+  type HostKeyTools
+} from '@shared/plex/hostkey.js'
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.js'
 
 describe('shellQuote', () => {
@@ -59,6 +67,127 @@ describe('sshArgs', () => {
     // that rejects them fails slowly and for the wrong reason.
     expect(args).toContain('IdentitiesOnly=yes')
     expect(sshArgs({ host: 'nas' }, 'x')).not.toContain('-i')
+  })
+})
+
+describe('a host that is really an option', () => {
+  it('is refused before ssh ever sees it', () => {
+    // An argument beginning with a dash is an option wherever it appears, and
+    // this one would run a command on this machine.
+    expect(() => sshArgs({ host: '-oProxyCommand=touch /tmp/owned' }, 'true')).toThrow(/not a host name/)
+    expect(() => sshArgs({ host: '   ' }, 'true')).toThrow(/not a host name/)
+    expect(() => sshArgs({ host: 'plex@nas.local' }, 'true')).not.toThrow()
+  })
+})
+
+describe('literalPattern', () => {
+  it('makes a path match itself and nothing else', () => {
+    const path = '/media/.plexfixer-ab12-Movie (2019) [1080p].mp4'
+    const pattern = new RegExp(literalPattern(path))
+    expect(pattern.test(`ffmpeg -i in.mkv ${path}`)).toBe(true)
+    // What the unescaped path meant as a pattern: no parentheses, and any one
+    // of "1080p" where the brackets were.
+    expect(new RegExp(path).test(`ffmpeg -i in.mkv ${path}`)).toBe(false)
+    // A dot is a dot, not any character.
+    expect(new RegExp(literalPattern('a.mp4')).test('axmp4')).toBe(false)
+  })
+})
+
+/**
+ * `ssh-keyscan` and `ssh-keygen`, replaced.
+ *
+ * `scans` is what the host answers each time it is asked for its key, in
+ * order — the second answer being different from the first is the case that
+ * matters. The fingerprint is derived from the key, so a different key always
+ * shows as a different fingerprint, as it does for real.
+ */
+function keyTools(scans: string[], options: { fingerprintsWork?: boolean } = {}): HostKeyTools & { appended: string[] } {
+  const appended: string[] = []
+  let scan = 0
+  return {
+    appended,
+    exec: async (command, args, execOptions) => {
+      if (command === 'ssh-keyscan') return scans[Math.min(scan++, scans.length - 1)] ?? ''
+      if (command === 'ssh-keygen' && args[0] === '-lf') {
+        if (options.fingerprintsWork === false) throw new Error('(stdin) is not a public key file.')
+        return (execOptions?.input ?? '')
+          .split('\n')
+          .filter((line) => line.trim() && !line.startsWith('#'))
+          .map((line) => `256 SHA256:${line.split(/\s+/)[2]} nas (ED25519)`)
+          .join('\n')
+      }
+      // `ssh -G` and `ssh-keygen -F` both fail: no config, and no entry yet.
+      throw new Error('nothing')
+    },
+    knownHosts: {
+      read: async () => '',
+      append: async (lines) => void appended.push(lines),
+      location: async () => '~/.ssh/known_hosts'
+    }
+  }
+}
+
+describe('trusting a host', () => {
+  const real = 'nas ssh-ed25519 REALKEY'
+  const other = 'nas ssh-ed25519 SOMEONEELSE'
+  const shownReal = [{ type: 'ED25519', fingerprint: 'SHA256:REALKEY' }]
+
+  it('records the key that was shown', async () => {
+    const tools = keyTools([real])
+    const result = await trustHost(tools, { host: 'nas' }, shownReal)
+
+    expect(result.ok).toBe(true)
+    expect(tools.appended).toEqual([real])
+  })
+
+  it('refuses a key that is not the one that was shown, and records nothing', async () => {
+    // The fingerprint on screen was the real machine's. By the time the button
+    // is pressed something else answers — and that second answer is what used
+    // to be written to known_hosts, unseen.
+    const tools = keyTools([other])
+    const result = await trustHost(tools, { host: 'nas' }, shownReal)
+
+    expect(result.ok).toBe(false)
+    expect(result.problem).toMatch(/not the one you were shown/)
+    expect(result.fingerprints).toEqual([{ type: 'ED25519', fingerprint: 'SHA256:SOMEONEELSE' }])
+    expect(tools.appended).toEqual([])
+  })
+
+  it('refuses an extra key offered alongside the one that was shown', async () => {
+    const tools = keyTools([`${real}\n${other}`])
+    const result = await trustHost(tools, { host: 'nas' }, shownReal)
+
+    expect(result.ok).toBe(false)
+    expect(tools.appended).toEqual([])
+  })
+
+  it('refuses when nothing was shown at all', async () => {
+    const tools = keyTools([real])
+    expect((await trustHost(tools, { host: 'nas' }, [])).ok).toBe(false)
+    expect(tools.appended).toEqual([])
+  })
+
+  it('will not record a key whose fingerprint it cannot work out', async () => {
+    const tools = keyTools([real], { fingerprintsWork: false })
+    const result = await trustHost(tools, { host: 'nas' }, shownReal)
+
+    expect(result.ok).toBe(false)
+    expect(result.problem).toMatch(/could not be worked out/)
+    expect(tools.appended).toEqual([])
+  })
+
+  it('writes only the keys, not the scan\'s comments', async () => {
+    const tools = keyTools([`# nas:22 SSH-2.0-OpenSSH_9.6\n${real}\n`])
+    await trustHost(tools, { host: 'nas' }, shownReal)
+    expect(tools.appended).toEqual([real])
+  })
+
+  it('never reaches the scan with a host that is really an option', async () => {
+    const tools = keyTools([real])
+    const result = await trustHost(tools, { host: '-oProxyCommand=evil' }, shownReal)
+
+    expect(result.ok).toBe(false)
+    expect(tools.appended).toEqual([])
   })
 })
 
@@ -119,8 +248,23 @@ describe('parseLsLong', () => {
     expect(entries[1]?.sizeBytes).toBe(431648673)
   })
 
-  it('drops symlinks, as the local walker does', () => {
+  it('drops symlinks, which the remote scan does not follow either', () => {
     expect(parseLsLong(output).some((entry) => entry.name === 'shortcut')).toBe(false)
+  })
+
+  it('keeps a name exactly as written, runs of spaces included', () => {
+    // Split on whitespace and joined back with single spaces, this became a
+    // name that does not exist.
+    const listing = [
+      '-rw-r--r--  1 501 20 1 Nov 12 12:05 Two  Spaces.mkv',
+      '-rw-r--r--  1 501 20 1 Nov 12 12:05  leading space.mkv',
+      '-rw-r--r--  1 501 20 1 Nov 12 12:05 an -> arrow.mkv'
+    ].join('\n')
+    expect(parseLsLong(listing).map((entry) => entry.name)).toEqual([
+      'Two  Spaces.mkv',
+      ' leading space.mkv',
+      'an -> arrow.mkv'
+    ])
   })
 })
 
@@ -270,6 +414,47 @@ describe('the remote host, over a stand-in ssh', () => {
 
     const shallow = await host().findMedia([dir], ['mkv', 'mp4'], false)
     expect(shallow.map((path) => path.replace(`${dir}/`, ''))).toEqual(['movie.mp4'])
+  })
+
+  it('lists and finds a name with a run of spaces in it', async () => {
+    await writeFile(join(dir, 'Two  Spaces.mkv'), 'x')
+    await writeFile(join(dir, ' leading.mkv'), 'x')
+
+    expect((await host().list(dir)).map((entry) => entry.name).sort()).toEqual([' leading.mkv', 'Two  Spaces.mkv'])
+    const found = await host().findMedia([dir], ['mkv'], true)
+    expect(found.sort()).toEqual([join(dir, ' leading.mkv'), join(dir, 'Two  Spaces.mkv')])
+  })
+
+  it('does not let a newline in a name put another path on the list', async () => {
+    // `find` prints one path per line, and a name can contain a newline. This
+    // folder's name ends in one, so what is under it prints as a second line
+    // that reads as an absolute path somewhere else entirely.
+    await mkdir(join(dir, 'Season\n', 'etc'), { recursive: true })
+    await writeFile(join(dir, 'Season\n', 'etc', 'other.mkv'), 'x')
+    await writeFile(join(dir, 'honest.mkv'), 'x')
+
+    const found = await host().findMedia([dir], ['mkv'], true)
+
+    expect(found).toEqual([join(dir, 'honest.mkv')])
+    expect(found).not.toContain('/etc/other.mkv')
+  })
+
+  it('stops a process whose path is full of brackets', async () => {
+    // The marker is the repair's temporary file, named after the film — and
+    // films are named `Title (Year) [Quality]`. pkill reads its argument as a
+    // pattern, in which those are a group and a set, so nothing matched and a
+    // cancelled remote repair ran on to the end.
+    const marker = join(dir, '.plexfixer-ab12-Movie (2019) [1080p].mp4')
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', marker], { stdio: 'ignore' })
+    const ended = new Promise<string>((resolve) => child.once('exit', (_code, signal) => resolve(signal ?? 'exited')))
+    // Give it a moment to exist before it is looked for.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
+    await host().kill(marker)
+
+    const outcome = await Promise.race([ended, new Promise<string>((resolve) => setTimeout(() => resolve('still running'), 3000))])
+    child.kill('SIGKILL')
+    expect(outcome).toBe('SIGTERM')
   })
 
   it('makes, moves and removes, which is how a repair lands', async () => {

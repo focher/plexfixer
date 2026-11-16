@@ -14,7 +14,7 @@
  */
 
 import type { HostKeyFingerprint } from '../types.js'
-import type { SshTarget } from './ssh.js'
+import { assertHost, type SshTarget } from './ssh.js'
 
 /**
  * What recording a host key needs from the machine it is running on.
@@ -52,7 +52,7 @@ export async function resolveTarget(tools: HostKeyTools, target: SshTarget): Pro
   const fallbackHost = target.host.includes('@') ? target.host.split('@').pop()! : target.host
   const fallback = { hostname: fallbackHost, port: target.port ?? 22 }
   try {
-    const args = ['-G', ...(target.port ? ['-p', String(target.port)] : []), target.host]
+    const args = ['-G', ...(target.port ? ['-p', String(target.port)] : []), assertHost(target.host)]
     const stdout = await tools.exec('ssh', args, { timeoutMs: 10_000 })
     const read = (key: string): string | undefined =>
       stdout
@@ -122,7 +122,7 @@ export function keysMatch(known: string[], offered: string): boolean {
 export async function scanHostKeys(tools: HostKeyTools, resolved: ResolvedTarget): Promise<string> {
   return tools.exec(
     'ssh-keyscan',
-    ['-T', '5', ...(resolved.port !== 22 ? ['-p', String(resolved.port)] : []), resolved.hostname],
+    ['-T', '5', ...(resolved.port !== 22 ? ['-p', String(resolved.port)] : []), assertHost(resolved.hostname)],
     { timeoutMs: 15_000 }
   )
 }
@@ -159,14 +159,36 @@ export interface TrustResult {
   hint?: string
 }
 
+/** The lines of a scan that are keys, without its comments and blanks. */
+function keyLinesOf(scan: string): string {
+  return scan
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#') && keyMaterial(line) != null)
+    .join('\n')
+}
+
 /**
- * Record the host's key, after checking there is not already a different one.
+ * Record the host's key — the one that was shown, and no other.
  *
- * The existing-entry check is the whole safety of this: without it, pressing
+ * Two checks are the whole safety of this.
+ *
+ * An entry that already exists and does not match is never replaced: pressing
  * "Trust" on a host whose key has changed would paper over exactly the warning
  * SSH exists to give.
+ *
+ * And what is written is held against `shown`, the fingerprints that were on
+ * screen when the button was pressed. The host is asked for its key a second
+ * time here, and the answer is whatever answers at that address *now*. This
+ * used to record that second answer unseen — so the fingerprint someone had
+ * just checked against the machine was not necessarily the key that went into
+ * `known_hosts`. A key that was not shown is refused, and shown instead.
  */
-export async function trustHost(tools: HostKeyTools, target: SshTarget): Promise<TrustResult> {
+export async function trustHost(
+  tools: HostKeyTools,
+  target: SshTarget,
+  shown: HostKeyFingerprint[]
+): Promise<TrustResult> {
   const resolved = await resolveTarget(tools, target)
   const known = await knownHostEntries(tools, resolved)
 
@@ -205,7 +227,28 @@ export async function trustHost(tools: HostKeyTools, target: SshTarget): Promise
     }
   }
 
-  await tools.knownHosts.append(keyLines)
+  if (fingerprints.length === 0) {
+    return {
+      ok: false,
+      fingerprints,
+      problem: `The fingerprint of the key ${resolved.hostname} offered could not be worked out.`,
+      hint: 'PlexFixer will not record a key it cannot show you. Connect once from a terminal instead — `ssh <host>`.'
+    }
+  }
+
+  const confirmed = new Set(shown.map((key) => key.fingerprint))
+  if (confirmed.size === 0 || fingerprints.some((key) => !confirmed.has(key.fingerprint))) {
+    return {
+      ok: false,
+      fingerprints,
+      problem: `${resolved.hostname} is now offering a key that is not the one you were shown.`,
+      hint:
+        'Nothing was recorded. Test the connection again and check the fingerprint it shows — a key that ' +
+        'changes between two questions asked a moment apart is worth being suspicious of.'
+    }
+  }
+
+  await tools.knownHosts.append(keyLinesOf(keyLines))
 
   return { ok: true, fingerprints }
 }

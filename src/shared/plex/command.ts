@@ -431,6 +431,20 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
  * ------------------------------------------------------------------ */
 
 /**
+ * A track's language as it may appear in a file name.
+ *
+ * The tag is read out of the file, and a file can say anything: an unknown tag
+ * is kept as written everywhere else so that nothing is silently destroyed,
+ * which here would put it straight into a path. `x/../../../tmp/evil` as a
+ * language named a sidecar outside the folder the film is in. Plex only reads
+ * a language code in this position anyway, so anything that is not two to
+ * eight letters is written as undetermined.
+ */
+export function sidecarLanguage(language: string): string {
+  return /^[a-z]{2,8}$/.test(language) ? language : 'und'
+}
+
+/**
  * Build one ffmpeg invocation per subtitle track to extract as a sidecar.
  *
  * Separate invocations rather than one multi-output command: a single bad
@@ -444,7 +458,7 @@ export function buildSubtitleExtractCommands(
   const used = new Set<string>()
 
   for (const entry of result.plan.extractSubtitles) {
-    const parts = [entry.language]
+    const parts = [sidecarLanguage(entry.language)]
     if (entry.forced) parts.push('forced')
     let suffix = parts.join('.')
     // Plex matches sidecars by `<stem>.<lang>[.forced].srt`; keep them unique.

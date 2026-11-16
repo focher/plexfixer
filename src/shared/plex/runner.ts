@@ -23,6 +23,7 @@ import { FfmpegError, runFfmpeg } from './ffmpeg-run.js'
 import { probeFile } from './probe.js'
 import { buildRepairCommand, buildSubtitleExtractCommands } from './command.js'
 import {
+  PromoteError,
   cloneToBackup,
   discardTemporary,
   promoteOutput,
@@ -30,6 +31,7 @@ import {
   resolveOutputPath,
   temporaryPathFor
 } from './output.js'
+import { outputProblem } from './verify.js'
 import { TaskQueue } from './queue.js'
 import { REFUSAL_REASON, inPlaceVerdict } from './inplace.js'
 import type { BackupRecord } from '../backups.js'
@@ -584,6 +586,10 @@ export class RepairRunner {
     let lastProgressAt = 0
     let finaliseFrom: number | undefined
     let lastSpeed: string | undefined
+    // Set once the repaired file is in place. A failure after that is a
+    // failure with the repair already done, and must not be reported — or
+    // cleaned up after — as though nothing had been touched.
+    let promotedTo: string | undefined
 
     try {
       await runFfmpeg({
@@ -682,25 +688,38 @@ export class RepairRunner {
         host: this.host
       })
       this.addPhase(id, 'verify', performance.now() - verifyStarted)
-      const hasVideo = probed.streams.some((s) => s.kind === 'video')
-      const hasAudio = probed.streams.some((s) => s.kind === 'audio')
-      const sourceHadAudio = result.file.streams.some((s) => s.kind === 'audio')
-      this.log(id, 'info', 'Re-probed the output', describeStreams(probed));
-      if (!hasVideo || (sourceHadAudio && !hasAudio)) {
-        throw new Error('The repaired file is missing streams — the original has been left untouched.')
-      }
+      this.log(id, 'info', 'Re-probed the output', describeStreams(probed))
+      const problem = outputProblem(result.file, probed)
+      if (problem) throw new Error(problem)
 
       this.setStage(id, 'promoting')
       const promoteStarted = performance.now()
-      const { finalPath, backupPath, otherBackups } = await promoteOutput(
+      const { finalPath, backupPath, originalLeft } = await promoteOutput(
         temporaryPath,
         outputPath,
         result.file.path,
         settings,
         this.host
       )
+      promotedTo = finalPath
       if (backupPath) this.noteBackup(backupPath, result.file.path)
-      for (const other of otherBackups) this.noteBackup(other, outputPath)
+      if (settings.outputPlacement === 'in-place' && finalPath !== outputPath) {
+        this.log(
+          id,
+          'warn',
+          `A different file was already at ${this.host.paths.basename(outputPath)}, so it was left alone`,
+          `kept       ${outputPath}\nrepaired   ${finalPath}\n\n` +
+            'Replacing the original was asked for; that file was not. The repaired file took the next free name.'
+        )
+      }
+      if (originalLeft) {
+        this.log(
+          id,
+          'warn',
+          'The repaired file is in place, but the original could not be cleared away',
+          `${result.file.path}\n\n${originalLeft}\n\nBoth files are there. Nothing was lost.`
+        )
+      }
       this.addPhase(id, 'promote', performance.now() - promoteStarted, {
         bytes: outputBytes,
         note: backupPath ? 'moved the original into the backup folder, then the output into place' : undefined
@@ -708,7 +727,11 @@ export class RepairRunner {
       this.log(
         id,
         'info',
-        backupPath ? 'Replaced the original (backed up first)' : 'Replaced the original',
+        originalLeft
+          ? 'Wrote the repaired file beside the original'
+          : backupPath
+            ? 'Replaced the original (backed up first)'
+            : 'Replaced the original',
         backupPath ? `now        ${finalPath}\noriginal   ${backupPath}` : `now        ${finalPath}`
       )
 
@@ -749,7 +772,11 @@ export class RepairRunner {
         })
       }
     } catch (error) {
-      await discardTemporary(temporaryPath, this.host)
+      // A promotion that stopped half way and could not be undone has left the
+      // repaired file in its temporary as the only copy beside the library —
+      // tidying that away is how a failed move used to become a lost file.
+      const stranded = error instanceof PromoteError
+      if (!stranded && !promotedTo) await discardTemporary(temporaryPath, this.host)
       const running = this.jobs.get(id)
       if (!running) return
       const cancelled = signal.aborted
@@ -774,7 +801,18 @@ export class RepairRunner {
         log: [
           ...job.log,
           { at: Date.now(), level: cancelled ? 'warn' : 'error', text, detail },
-          { at: Date.now(), level: 'info', text: 'Discarded the temporary file; the original is untouched' }
+          // Only what is true is said here. This line used to be fixed, and
+          // claimed the original was untouched after it had been moved.
+          stranded
+            ? {
+                at: Date.now(),
+                level: 'error',
+                text: 'Kept both files where they are; nothing was deleted',
+                detail: `original   ${error.backupPath}\nrepaired   ${error.temporaryPath}`
+              }
+            : promotedTo
+              ? { at: Date.now(), level: 'info', text: 'The repaired file is already in place', detail: promotedTo }
+              : { at: Date.now(), level: 'info', text: 'Discarded the temporary file; the original is untouched' }
         ]
       })
     }
@@ -809,6 +847,19 @@ export class RepairRunner {
     let written = 0
     for (const command of commands) {
       if (signal.aborted) break
+      // A sidecar already there is somebody's: downloaded, corrected by hand,
+      // or written by an earlier repair. ffmpeg is told to overwrite, so the
+      // check has to be here — and a track Plex can already read from a file
+      // beside the film does not need writing again.
+      if (await this.host.exists(command.outputPath).catch(() => false)) {
+        this.log(
+          jobId,
+          'info',
+          `Kept the existing sidecar ${this.host.paths.basename(command.outputPath)}`,
+          'A subtitle file with this name was already there, so it was not overwritten.'
+        )
+        continue
+      }
       try {
         await runFfmpeg({
           ffmpegPath: this.binaries.ffmpegPath,

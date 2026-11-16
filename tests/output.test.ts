@@ -11,6 +11,8 @@ import { localHost } from './node-host.js'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import {
   BACKUP_DIRECTORY,
+  PromoteError,
+  discardTemporary,
   promoteOutput,
   redirectOutput,
   resolveOutputPath
@@ -52,9 +54,11 @@ describe('promoteOutput — in place', () => {
     expect(await readdir(dir)).not.toContain('Movie.mkv')
   })
 
-  it('does not destroy an unrelated file already at the destination', async () => {
+  it('leaves an unrelated file at the destination exactly where it is', async () => {
     // Repairing Movie.mkv targets Movie.mp4 — which may already exist as a
     // different file. Replacing the original was asked for; this one was not.
+    // It used to be moved into the backup folder, where it expired a week
+    // later, and with backups off it was simply deleted.
     const source = join(dir, 'Movie.mkv')
     const output = join(dir, 'Movie.mp4')
     const temporary = join(dir, '.tmp-Movie.mp4')
@@ -62,12 +66,27 @@ describe('promoteOutput — in place', () => {
     await writeFile(output, 'PRE-EXISTING MP4')
     await writeFile(temporary, 'REPAIRED')
 
-    await promoteOutput(temporary, output, source, settings(), localHost())
+    const { finalPath } = await promoteOutput(temporary, output, source, settings(), localHost())
 
-    expect(await readFile(output, 'utf8')).toBe('REPAIRED')
-    const backups = await readdir(join(dir, BACKUP_DIRECTORY))
-    expect(backups.sort()).toEqual(['Movie.mkv', 'Movie.mp4'])
-    expect(await readFile(join(dir, BACKUP_DIRECTORY, 'Movie.mp4'), 'utf8')).toBe('PRE-EXISTING MP4')
+    expect(finalPath).toBe(join(dir, 'Movie (2).mp4'))
+    expect(await readFile(output, 'utf8')).toBe('PRE-EXISTING MP4')
+    expect(await readFile(finalPath, 'utf8')).toBe('REPAIRED')
+    expect(await readdir(join(dir, BACKUP_DIRECTORY))).toEqual(['Movie.mkv'])
+  })
+
+  it('leaves that file alone with backups off too', async () => {
+    const source = join(dir, 'Movie.mkv')
+    const output = join(dir, 'Movie.mp4')
+    const temporary = join(dir, '.tmp-Movie.mp4')
+    await writeFile(source, 'ORIGINAL MKV')
+    await writeFile(output, 'PRE-EXISTING MP4')
+    await writeFile(temporary, 'REPAIRED')
+
+    const { finalPath } = await promoteOutput(temporary, output, source, settings({ keepBackups: false }), localHost())
+
+    expect(await readFile(output, 'utf8')).toBe('PRE-EXISTING MP4')
+    expect(await readFile(finalPath, 'utf8')).toBe('REPAIRED')
+    expect((await readdir(dir)).sort()).toEqual(['Movie (2).mp4', 'Movie.mp4'])
   })
 
   it('deletes rather than keeps when backups are turned off', async () => {
@@ -81,6 +100,129 @@ describe('promoteOutput — in place', () => {
 
     expect(backupPath).toBeUndefined()
     expect(await readdir(dir)).toEqual(['Movie.mp4'])
+  })
+
+  it('replaces a file under its own name in one step when backups are off', async () => {
+    const source = join(dir, 'Movie.mp4')
+    const temporary = join(dir, '.tmp-Movie.mp4')
+    await writeFile(source, 'ORIGINAL')
+    await writeFile(temporary, 'REPAIRED')
+
+    const { finalPath } = await promoteOutput(temporary, source, source, settings({ keepBackups: false }), localHost())
+
+    expect(finalPath).toBe(source)
+    expect(await readFile(source, 'utf8')).toBe('REPAIRED')
+    expect(await readdir(dir)).toEqual(['Movie.mp4'])
+  })
+})
+
+/**
+ * The move that puts the repaired file in place, failing.
+ *
+ * A destination held open by a player or a scanner, a share that drops: this
+ * is the step that goes wrong in practice, and it used to come *after* the
+ * original had been moved or deleted. The caller then discarded the temporary
+ * — exactly as `runner.execute` does — and with backups off nothing was left.
+ */
+describe('promoteOutput — when the final move fails', () => {
+  /** A host whose rename fails for one source path and works for the rest. */
+  function failingMoveOf(path: string): ReturnType<typeof localHost> {
+    const real = localHost()
+    return {
+      ...real,
+      rename: async (from: string, to: string) => {
+        if (from === path) throw new Error('EBUSY: resource busy or locked')
+        return real.rename(from, to)
+      }
+    }
+  }
+
+  it('keeps the original when backups are off and the container changes', async () => {
+    const source = join(dir, 'Movie.mkv')
+    const output = join(dir, 'Movie.mp4')
+    const temporary = join(dir, '.tmp-Movie.mp4')
+    await writeFile(source, 'ORIGINAL')
+    await writeFile(temporary, 'REPAIRED')
+    const host = failingMoveOf(temporary)
+
+    await expect(promoteOutput(temporary, output, source, settings({ keepBackups: false }), host)).rejects.toThrow(/EBUSY/)
+    await discardTemporary(temporary, host)
+
+    expect(await readFile(source, 'utf8')).toBe('ORIGINAL')
+    expect(await readdir(dir)).toEqual(['Movie.mkv'])
+  })
+
+  it('keeps the original when backups are off and the name stays the same', async () => {
+    const source = join(dir, 'Movie.mp4')
+    const temporary = join(dir, '.tmp-Movie.mp4')
+    await writeFile(source, 'ORIGINAL')
+    await writeFile(temporary, 'REPAIRED')
+    const host = failingMoveOf(temporary)
+
+    await expect(promoteOutput(temporary, source, source, settings({ keepBackups: false }), host)).rejects.toThrow(/EBUSY/)
+
+    expect(await readFile(source, 'utf8')).toBe('ORIGINAL')
+  })
+
+  it('puts the original back when it had already been moved to the backup folder', async () => {
+    const source = join(dir, 'Movie.mp4')
+    const temporary = join(dir, '.tmp-Movie.mp4')
+    await writeFile(source, 'ORIGINAL')
+    await writeFile(temporary, 'REPAIRED')
+    const host = failingMoveOf(temporary)
+
+    const failure = await promoteOutput(temporary, source, source, settings(), host).catch((error: unknown) => error)
+
+    // An ordinary error, not a PromoteError: the disk is as it was found, so
+    // the caller is right to discard the temporary and say nothing changed.
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure).not.toBeInstanceOf(PromoteError)
+    expect(await readFile(source, 'utf8')).toBe('ORIGINAL')
+    expect((await readdir(dir)).sort()).toEqual(['.tmp-Movie.mp4', 'Movie.mp4'])
+  })
+
+  it('says where both files are when the original cannot be put back either', async () => {
+    const source = join(dir, 'Movie.mp4')
+    const temporary = join(dir, '.tmp-Movie.mp4')
+    await writeFile(source, 'ORIGINAL')
+    await writeFile(temporary, 'REPAIRED')
+    const real = localHost()
+    // The move into the backup folder works; everything after it fails.
+    let moves = 0
+    const host = {
+      ...real,
+      rename: async (from: string, to: string) => {
+        if (moves++ > 0) throw new Error('EIO: the share went away')
+        return real.rename(from, to)
+      }
+    }
+
+    const failure = await promoteOutput(temporary, source, source, settings(), host).catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(PromoteError)
+    const stranded = failure as PromoteError
+    // Neither file is gone, and the error carries where each one is — which
+    // is what stops the caller tidying the repaired copy away.
+    expect(await readFile(stranded.backupPath, 'utf8')).toBe('ORIGINAL')
+    expect(await readFile(stranded.temporaryPath, 'utf8')).toBe('REPAIRED')
+    expect(stranded.message).toContain(stranded.backupPath)
+  })
+
+  it('reports rather than fails when only the original could not be cleared away', async () => {
+    const source = join(dir, 'Movie.mkv')
+    const output = join(dir, 'Movie.mp4')
+    const temporary = join(dir, '.tmp-Movie.mp4')
+    await writeFile(source, 'ORIGINAL')
+    await writeFile(temporary, 'REPAIRED')
+    const real = localHost()
+    const host = { ...real, remove: async () => Promise.reject(new Error('EPERM: read-only')) }
+
+    const promoted = await promoteOutput(temporary, output, source, settings({ keepBackups: false }), host)
+
+    expect(promoted.finalPath).toBe(output)
+    expect(promoted.originalLeft).toMatch(/EPERM/)
+    expect(await readFile(output, 'utf8')).toBe('REPAIRED')
+    expect(await readFile(source, 'utf8')).toBe('ORIGINAL')
   })
 })
 

@@ -80,15 +80,33 @@ async fn overrides_set(
     store.set_override(path, mode).await
 }
 
+/// One of the two binary paths from Settings, if it is set to anything.
+fn chosen_path(settings: &Map<String, Value>, key: &str) -> Option<String> {
+    settings
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+}
+
+/// Resolve the toolchain against the settings this side saved.
+///
+/// The paths are read here rather than taken as arguments: this command runs
+/// what it is pointed at to see whether it works, and "whatever the caller
+/// names" is a wider thing to run than "what Settings says".
 #[tauri::command]
 async fn environment_resolve(
     app: AppHandle,
-    ffmpeg_path: Option<String>,
-    ffprobe_path: Option<String>,
     dolby_vision_filter: String,
     force: bool,
     cache: State<'_, EnvironmentCache>,
+    store: State<'_, Store>,
 ) -> Result<Environment, String> {
+    let settings = store.settings().await;
+    let ffmpeg_path = chosen_path(&settings, "ffmpegPath");
+    let ffprobe_path = chosen_path(&settings, "ffprobePath");
+
     let key = format!(
         "{}|{}|{}",
         ffmpeg_path.as_deref().unwrap_or(""),

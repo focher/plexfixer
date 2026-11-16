@@ -9,7 +9,7 @@
 //! our own code behind a strict CSP, but a command that takes any binary and
 //! any arguments is a much wider capability than the job needs, and widening
 //! it by accident is the kind of thing nobody notices. It runs the located
-//! ffmpeg and ffprobe, and nothing else.
+//! ffmpeg and ffprobe, the user's own ssh tools, and nothing else.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -17,11 +17,13 @@ use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use tauri::AppHandle;
+use serde_json::Value;
+use tauri::{AppHandle, Manager};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::locate::locate;
+use crate::settings::Store;
 
 /// Directories that never hold library media and cost time to walk.
 const SKIP_DIRECTORIES: &[&str] = &[
@@ -55,35 +57,52 @@ pub struct Entry {
     pub size_bytes: Option<u64>,
 }
 
-/// Only the binaries this app resolved may be run.
+/// The most `host_read_range` will read in one call.
 ///
-/// A path set in Settings is as legitimate as the bundled one, so it counts as
-/// allowed — but only when it is the path the app itself resolved, not any
-/// string the caller fancies.
-pub fn allowed_binary(
-    app: &AppHandle,
-    command: &str,
-    settings_ffmpeg: Option<&str>,
-    settings_ffprobe: Option<&str>,
-) -> bool {
-    if [settings_ffmpeg, settings_ffprobe]
-        .into_iter()
-        .flatten()
-        .any(|path| path == command)
-    {
-        return true;
-    }
-    // `ssh` and `ssh-keyscan` are the user's own, found on PATH: the whole
-    // point of shelling out to them is that their config, keys and agent
-    // apply. They are named here rather than left open.
+/// The box walk asks for sixteen bytes at a time and a header for a few
+/// kilobytes; the length is a number from the caller, and a buffer is
+/// allocated for it before anything is read.
+const LONGEST_READ: u32 = 64 * 1024 * 1024;
+
+/// Whether `command` is one of the binaries this app runs.
+///
+/// Separate from where the answers come from so it can be tested: `chosen` is
+/// what Settings names, `located` is what the app found by itself.
+fn is_allowed(command: &str, chosen: &[Option<String>], located: &[PathBuf]) -> bool {
+    // `ssh` and friends are the user's own, found on PATH: the whole point of
+    // shelling out to them is that their config, keys and agent apply. They
+    // are named here rather than left open.
     if matches!(command, "ssh" | "ssh-keyscan" | "ssh-keygen") {
         return true;
     }
-    ["ffmpeg", "ffprobe"].iter().any(|name| {
-        locate(app, name, None)
-            .map(|located| located.path == Path::new(command))
-            .unwrap_or(false)
-    })
+    if chosen.iter().flatten().any(|path| path == command) {
+        return true;
+    }
+    located.iter().any(|path| path == Path::new(command))
+}
+
+/// Only the binaries this app resolved may be run.
+///
+/// A path set in Settings is as legitimate as the bundled one, so it counts —
+/// and it is read here, from the settings this side saved. It used to arrive
+/// as an argument beside the command it was vouching for, which made the check
+/// one the caller could pass by naming the same path twice.
+pub async fn allowed_binary(app: &AppHandle, command: &str) -> bool {
+    let settings = app.state::<Store>().settings().await;
+    let chosen = |key: &str| {
+        settings
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+    };
+    let located: Vec<PathBuf> = ["ffmpeg", "ffprobe"]
+        .iter()
+        .filter_map(|name| locate(app, name, None).map(|found| found.path))
+        .collect();
+
+    is_allowed(command, &[chosen("ffmpegPath"), chosen("ffprobePath")], &located)
 }
 
 /* ------------------------------------------------------------------ *
@@ -145,10 +164,8 @@ pub async fn host_exec(
     args: Vec<String>,
     timeout_ms: Option<u64>,
     input: Option<String>,
-    settings_ffmpeg: Option<String>,
-    settings_ffprobe: Option<String>,
 ) -> Result<String, String> {
-    if !allowed_binary(&app, &command, settings_ffmpeg.as_deref(), settings_ffprobe.as_deref()) {
+    if !allowed_binary(&app, &command).await {
         return Err(format!(
             "{command} is not one of the binaries PlexFixer runs. Only the ffmpeg and ffprobe it resolved are."
         ));
@@ -159,7 +176,11 @@ pub async fn host_exec(
         .args(&args)
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // A command that runs past its time is given up on below, and giving
+        // up on it has to stop it: without this the wait is abandoned and the
+        // process is not, so every probe that hangs leaves one behind.
+        .kill_on_drop(true);
 
     #[cfg(windows)]
     {
@@ -169,29 +190,26 @@ pub async fn host_exec(
 
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(120_000));
 
-    let output = if let Some(input) = input {
+    let mut child = process
+        .spawn()
+        .map_err(|e| format!("{command} would not start: {e}"))?;
+
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
         use tokio::io::AsyncWriteExt;
-        let mut child = process
-            .spawn()
-            .map_err(|e| format!("{command} would not start: {e}"))?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(input.as_bytes())
-                .await
-                .map_err(|e| format!("could not write to {command}: {e}"))?;
+        // Written alongside the read rather than before it. A command that
+        // answers as it goes fills its output pipe while still being fed, and
+        // writing everything first would leave each side waiting on the other.
+        tokio::spawn(async move {
+            let _ = stdin.write_all(input.as_bytes()).await;
             // Closing it is what tells the command the input has ended.
             drop(stdin);
-        }
-        tokio::time::timeout(timeout, child.wait_with_output())
-            .await
-            .map_err(|_| format!("{command} did not finish within {}s", timeout.as_secs()))?
-            .map_err(|e| format!("{command} failed: {e}"))?
-    } else {
-        tokio::time::timeout(timeout, process.output())
-            .await
-            .map_err(|_| format!("{command} did not finish within {}s", timeout.as_secs()))?
-            .map_err(|e| format!("{command} would not start: {e}"))?
-    };
+        });
+    }
+
+    let output = tokio::time::timeout(timeout, child.wait_with_output())
+        .await
+        .map_err(|_| format!("{command} did not finish within {}s", timeout.as_secs()))?
+        .map_err(|e| format!("{command} failed: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -248,6 +266,10 @@ pub async fn host_list(directory: String) -> Result<Vec<Entry>, String> {
 #[tauri::command]
 pub async fn host_read_range(path: String, offset: u64, length: u32) -> Result<Vec<u8>, String> {
     use tokio::io::AsyncSeekExt;
+
+    if length > LONGEST_READ {
+        return Err(format!("{length} bytes is more than PlexFixer reads from a file at once"));
+    }
 
     let mut file = tokio::fs::File::open(&path)
         .await
@@ -527,6 +549,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_binary_nobody_resolved_is_refused() {
+        // The check this replaces took the "path from Settings" from the same
+        // caller that named the command, so naming it twice passed.
+        assert!(!is_allowed("/bin/sh", &[None, None], &[PathBuf::from("/app/bin/ffmpeg")]));
+    }
+
+    #[test]
+    fn the_located_binaries_are_allowed() {
+        let located = [PathBuf::from("/app/bin/ffmpeg"), PathBuf::from("/app/bin/ffprobe")];
+        assert!(is_allowed("/app/bin/ffmpeg", &[None, None], &located));
+        assert!(is_allowed("/app/bin/ffprobe", &[None, None], &located));
+    }
+
+    #[test]
+    fn a_path_saved_in_settings_is_allowed() {
+        let chosen = [Some("/opt/ffmpeg/bin/ffmpeg".to_string()), None];
+        assert!(is_allowed("/opt/ffmpeg/bin/ffmpeg", &chosen, &[]));
+        assert!(!is_allowed("/opt/ffmpeg/bin/ffprobe", &chosen, &[]));
+    }
+
+    #[test]
+    fn the_ssh_tools_are_allowed_by_name_only() {
+        assert!(is_allowed("ssh", &[None, None], &[]));
+        assert!(is_allowed("ssh-keygen", &[None, None], &[]));
+        assert!(!is_allowed("/tmp/ssh", &[None, None], &[]));
+    }
+
     #[tokio::test]
     async fn a_single_file_is_accepted_as_a_root() {
         let root = tree("single");
@@ -645,8 +695,9 @@ pub async fn host_clone_file(from: String, to: String) -> Result<bool, String> {
         return Ok(false);
     }
 
+    // `--` so a path is a path whatever it begins with.
     let status = Command::new("/bin/cp")
-        .args(["-c", "-p", &from, &to])
+        .args(["-c", "-p", "--", &from, &to])
         .stdin(Stdio::null())
         .status()
         .await
@@ -686,7 +737,7 @@ async fn volume_of(path: &str) -> Option<VolumeFacts> {
     let device: Option<u64> = None;
 
     let df = Command::new("df")
-        .args(["-P", &directory.to_string_lossy()])
+        .args(["-P", "--", &directory.to_string_lossy()])
         .stdin(Stdio::null())
         .output()
         .await

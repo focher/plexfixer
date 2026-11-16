@@ -76,16 +76,32 @@ describe('reading through Rust', () => {
     expect(await tauriHost('darwin').stat('/m/gone.mkv')).toBeUndefined()
   })
 
-  it('passes the paths from Settings, so a chosen ffmpeg is allowed to run', async () => {
+  it('does not vouch for a binary: which ones may run is decided in Rust', async () => {
+    // The paths from Settings used to be sent beside the command, and Rust
+    // allowed whatever matched them — so the caller could allow anything by
+    // naming it twice. They are read from the saved settings on that side now.
     invokeResult = ''
-    const host = tauriHost('darwin', { ffmpeg: '/opt/ffmpeg', ffprobe: '/opt/ffprobe' })
-    await host.exec('/opt/ffprobe', ['-version'])
+    await tauriHost('darwin').exec('/opt/ffprobe', ['-version'])
 
-    expect(invoked[0].args).toMatchObject({
-      command: '/opt/ffprobe',
-      settingsFfmpeg: '/opt/ffmpeg',
-      settingsFfprobe: '/opt/ffprobe'
-    })
+    expect(invoked[0].command).toBe('host_exec')
+    expect(Object.keys(invoked[0].args).sort()).toEqual(['args', 'command', 'input', 'timeoutMs'])
+  })
+
+  it('passes input through to the command, which ssh-keygen reads a key from', async () => {
+    // Dropped, this left `ssh-keygen -lf -` with nothing to read: no
+    // fingerprint was ever shown, and so nothing could be trusted from the app.
+    invokeResult = ''
+    await tauriHost('darwin').exec('ssh-keygen', ['-lf', '-'], { input: 'nas ssh-ed25519 AAAA\n', timeoutMs: 10_000 })
+
+    expect(invoked[0].args).toMatchObject({ input: 'nas ssh-ed25519 AAAA\n', timeoutMs: 10_000 })
+  })
+
+  it('starts a process with its command and arguments and nothing else', async () => {
+    tauriHost('darwin').spawnProcess('/bin/ffmpeg', ['-i', 'a.mkv'])
+    await settle()
+
+    const started = invoked.find((call) => call.command === 'process_start')
+    expect(Object.keys(started?.args ?? {}).sort()).toEqual(['args', 'command', 'id'])
   })
 
   it('parses what the volume command reports into the shape the runner reads', async () => {

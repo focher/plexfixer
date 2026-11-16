@@ -17,12 +17,6 @@ import { pathsFor } from '@shared/paths.js'
 import { kindOfFilesystem, parseDf } from '@shared/plex/volumes.js'
 import type { VolumeInfo } from '@shared/types.js'
 
-interface BinaryPaths {
-  /** Paths from Settings; Rust only runs binaries it resolved or these. */
-  ffmpeg?: string
-  ffprobe?: string
-}
-
 interface OutputEvent {
   id: string
   stream: 'stdout' | 'stderr'
@@ -65,10 +59,14 @@ function startRouting(): Promise<void> {
   return routing
 }
 
-export function tauriHost(platform: string, binaries: BinaryPaths = {}): RepairHost {
-  const settingsFfmpeg = binaries.ffmpeg || null
-  const settingsFfprobe = binaries.ffprobe || null
-
+/**
+ * This machine, reached through Rust.
+ *
+ * Which binaries may be run is decided on the other side, from the settings it
+ * saved. Nothing here vouches for a path: a check that takes the caller's word
+ * for what is allowed is not a check.
+ */
+export function tauriHost(platform: string): RepairHost {
   return {
     kind: 'local',
     label: 'this machine',
@@ -79,8 +77,11 @@ export function tauriHost(platform: string, binaries: BinaryPaths = {}): RepairH
         command,
         args,
         timeoutMs: options?.timeoutMs ?? null,
-        settingsFfmpeg,
-        settingsFfprobe
+        // Forwarded, not dropped: `ssh-keygen -lf -` reads the key it is asked
+        // about from here, and with nothing to read it fails — which is how a
+        // host's fingerprint came to be never shown, and the button to trust
+        // it with it.
+        input: options?.input ?? null
       }),
 
     stat: (path: string): Promise<HostStat | undefined> =>
@@ -136,7 +137,7 @@ export function tauriHost(platform: string, binaries: BinaryPaths = {}): RepairH
 
         void startRouting()
           .then(() =>
-            invoke('process_start', { id, command, args, settingsFfmpeg, settingsFfprobe })
+            invoke('process_start', { id, command, args })
           )
           .catch((error: unknown) => {
             outputListeners.delete(id)

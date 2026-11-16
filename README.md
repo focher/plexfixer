@@ -114,7 +114,18 @@ Direct Stream remux.
 
 Originals are kept by default (moved to a `.plexfixer-backups` folder beside the
 file). Output is written to a temporary file and only promoted into place after
-ffmpeg exits cleanly *and* the result re-probes with the streams it should have.
+ffmpeg exits cleanly *and* the result re-probes with the streams it should have
+and runs as long as the original — a file that stops early is refused, and the
+original stays where it is.
+
+The original is never the first thing to go. Replacing a file under its own
+name is a single rename; when the container changes, the repaired file is put
+in beside the original before the original is moved or removed, so a move that
+fails leaves two files rather than none. Nothing that was not asked about is
+touched: if a different file already has the name the repair would take —
+repairing `Movie.mkv` beside an unrelated `Movie.mp4` — that file is left alone
+and the repaired one is written as `Movie (2).mp4`. A subtitle sidecar that
+already exists is kept, not overwritten.
 
 ### Transcoding
 
@@ -224,6 +235,12 @@ into `resources/bin/<platform>-<arch>/`; failing that the app falls back to
 whatever is on `PATH` (Homebrew's `ffmpeg` works), and Settings → FFmpeg lets
 you point at a specific binary. Add `--force` to replace binaries already
 there, or name a platform (`linux-x64`) to fetch one we do not ship.
+
+Every download is pinned to a release tag and held to a SHA-256; one that does
+not match is discarded and the fetch fails. These binaries go inside a signed
+installer, so what ships is what was chosen, not what a URL served that day.
+To move to a newer build, change the tag and the checksum together in
+`scripts/fetch-ffmpeg.mjs` — GitHub lists a `digest` for every release asset.
 
 Windows and Linux use FFmpeg's *shared* builds, so the folder holds two small
 executables plus the libav* libraries they load from beside them — half the

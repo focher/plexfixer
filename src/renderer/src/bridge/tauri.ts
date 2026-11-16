@@ -32,12 +32,13 @@ import type {
   AboutInfo,
   AppSettings,
   EnvironmentInfo,
+  HostKeyFingerprint,
   Job,
   ModeOverrides,
-  RepairMode,
-  RepairRequest,
   RemoteCheck,
   RemoteListing,
+  RepairMode,
+  RepairRequest,
   RescanResult,
   ScanCompleteEvent,
   ScanProgressEvent
@@ -185,10 +186,7 @@ async function toolchain(): Promise<
   if (!environment.ready || !environment.ffprobePath) {
     return { problem: environment.problem ?? 'FFmpeg is not available.' }
   }
-  const local = tauriHost(await localPlatform(), {
-    ffmpeg: settings.ffmpegPath,
-    ffprobe: settings.ffprobePath
-  })
+  const local = tauriHost(await localPlatform())
   const target = remoteTargetFor(settings)
   return {
     settings,
@@ -207,9 +205,10 @@ async function environmentFor(settings: AppSettings, force: boolean): Promise<En
   const target = remoteTargetFor(settings)
   if (target) return remoteEnvironment(settings, target)
 
+  // The binary paths are not passed: Rust reads them from the settings it
+  // saved, so what gets run to be tested is what Settings names and nothing a
+  // caller could substitute.
   return invoke('environment_resolve', {
-    ffmpegPath: settings.ffmpegPath || null,
-    ffprobePath: settings.ffprobePath || null,
     // The probe runs the real filter chain, so the string comes from the one
     // place that defines it rather than being spelled out again in Rust.
     dolbyVisionFilter: DOLBY_VISION_HDR10_FILTER,
@@ -221,10 +220,7 @@ async function remoteEnvironment(
   settings: AppSettings,
   target: ReturnType<typeof remoteTargetFor> & {}
 ): Promise<EnvironmentInfo> {
-  const local = tauriHost(await localPlatform(), {
-    ffmpeg: settings.ffmpegPath,
-    ffprobe: settings.ffprobePath
-  })
+  const local = tauriHost(await localPlatform())
   const check = await checkRemote({ ...hostKeyTools(local), local }, target, settings)
 
   if (!check.ok || !check.ffmpegPath || !check.ffprobePath) {
@@ -298,14 +294,14 @@ function buildApi() {
         // though it were.
         const target = remoteTargetFor({ ...settings, remoteEnabled: true })
         if (!target) return { ok: false, host: settings.remoteHost, missing: [], found: [], problem: 'Enter the host to connect to first.' }
-        const local = tauriHost(await localPlatform(), { ffmpeg: settings.ffmpegPath, ffprobe: settings.ffprobePath })
+        const local = tauriHost(await localPlatform())
         return checkRemote({ ...hostKeyTools(local), local }, target, settings)
       },
       list: async (path?: string): Promise<RemoteListing> => {
         const settings = await settingsFrom(invoke('settings_get'))
         const target = remoteTargetFor({ ...settings, remoteEnabled: true })
         if (!target) return { path: '/', entries: [], problem: 'Enter the host to connect to first.' }
-        const local = tauriHost(await localPlatform(), { ffmpeg: settings.ffmpegPath, ffprobe: settings.ffprobePath })
+        const local = tauriHost(await localPlatform())
         const far = remoteHost(target, local)
 
         let directory = startDirectory(path, settings.remoteDefaultPath)
@@ -339,14 +335,16 @@ function buildApi() {
           }
         }
       },
-      trustHost: async (): Promise<RemoteCheck> => {
+      // `shown` is what was on screen when the button was pressed: only a key
+      // with one of those fingerprints is recorded.
+      trustHost: async (shown: HostKeyFingerprint[]): Promise<RemoteCheck> => {
         const settings = await settingsFrom(invoke('settings_get'))
         const target = remoteTargetFor({ ...settings, remoteEnabled: true })
         if (!target) return { ok: false, host: settings.remoteHost, missing: [], found: [], problem: 'Enter the host to connect to first.' }
-        const local = tauriHost(await localPlatform(), { ffmpeg: settings.ffmpegPath, ffprobe: settings.ffprobePath })
+        const local = tauriHost(await localPlatform())
         const tools = { ...hostKeyTools(local), local }
 
-        const trusted = await trustHost(tools, target)
+        const trusted = await trustHost(tools, target, shown)
         if (!trusted.ok) {
           return {
             ok: false,
