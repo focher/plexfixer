@@ -25,16 +25,25 @@
  *   --no-updater     omit the signed update artifacts (no signing key needed)
  *   --no-fetch       fail on missing ffmpeg instead of downloading it
  *   --keep           add to release/ rather than emptying it first
+ *   --publish        attach what was built to the GitHub release
+ *   --tag=NAME       the release to attach it to (default: v<version>)
+ *   --repo=OWNER/N   the repository (default: $GH_REPO, or the git remote)
  *
  * Artifacts are collected into `release/`. Nothing here notarizes: PlexFixer
  * is signed but deliberately not notarized, and the DMG's unblock script is
  * the answer to that.
+ *
+ * `--publish` is the step that makes a build other people can get hold of, so
+ * it is opt-in and never implied: a build is routinely run to check a change
+ * compiles, and that must not touch a release. It needs the GitHub CLI, which
+ * is also what provides the credentials — nothing here handles a token.
  */
 
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { repository } from './lib/github.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -99,18 +108,27 @@ const NATIVE =
       ? 'win'
       : 'linux'
 
-const KNOWN_FLAGS = ['--no-sign', '--no-updater', '--no-fetch', '--keep', '--help']
+const KNOWN_FLAGS = ['--no-sign', '--no-updater', '--no-fetch', '--keep', '--publish', '--help']
+/** Options written `--name=value`, as opposed to the bare flags above. */
+const VALUE_FLAGS = ['--identity=', '--tag=', '--repo=']
 
 const args = process.argv.slice(2)
 const flags = new Set(args.filter((arg) => arg.startsWith('--')))
-const identityFlag = args.find((arg) => arg.startsWith('--identity='))?.slice('--identity='.length)
 const names = args.filter((arg) => !arg.startsWith('--'))
 const wanted = names.length > 0 ? names : [NATIVE]
+
+/** The value of a `--name=value` option, or undefined if it was not given. */
+function option(name) {
+  return args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3)
+}
+
+const identityFlag = option('identity')
 
 const usage =
   `usage: node scripts/dist.mjs [target...] [options]\n\n` +
   `targets: ${Object.keys(TARGETS).join(', ')}  (default on this machine: ${NATIVE})\n` +
-  `options: ${KNOWN_FLAGS.filter((flag) => flag !== '--help').join(', ')}, --identity=NAME\n`
+  `options: ${KNOWN_FLAGS.filter((flag) => flag !== '--help').join(', ')}, ` +
+  `${VALUE_FLAGS.map((prefix) => `${prefix}VALUE`).join(', ')}\n`
 
 if (flags.has('--help')) {
   console.log(usage)
@@ -120,7 +138,7 @@ if (flags.has('--help')) {
 // An unrecognised flag means the command was not the one that was meant, and
 // a build is far too slow to start on a guess.
 for (const flag of flags) {
-  if (!KNOWN_FLAGS.includes(flag) && !flag.startsWith('--identity=')) {
+  if (!KNOWN_FLAGS.includes(flag) && !VALUE_FLAGS.some((prefix) => flag.startsWith(prefix))) {
     console.error(`Unknown option "${flag}".\n\n${usage}`)
     process.exit(1)
   }
@@ -394,6 +412,54 @@ function buildTarget(name) {
   return copied
 }
 
+/** Anything the updater serves, as opposed to an installer someone downloads. */
+const UPDATE_PACKAGE = /\.app\.tar\.gz$|\.nsis\.zip$|\.msi\.zip$|\.AppImage\.tar\.gz$/
+
+/**
+ * Attach what this run built to a GitHub release.
+ *
+ * Only the files this run produced are uploaded, never the whole of
+ * `release/`. That is the important part: `latest.json` has to be written
+ * from every platform's artifacts at once, so a Windows-only build that
+ * uploaded its own manifest would withdraw the update from every Mac. Leaving
+ * the manifest to `release-manifest.mjs`, run once the artifacts are
+ * together, is what keeps that from being possible by accident.
+ */
+function publish(built) {
+  if (built.length === 0) throw new Error('nothing was built, so there is nothing to publish')
+
+  if (!capture('gh', ['--version'])) {
+    throw new Error(
+      'Publishing needs the GitHub CLI, and gh is not on PATH.\n' +
+        '  Install it from https://cli.github.com, then: gh auth login',
+    )
+  }
+
+  const repo = repository({ root: ROOT, given: option('repo') })
+  const tag = option('tag') ?? `v${version()}`
+
+  // A release that does not exist yet is created as a draft. Publishing it is
+  // a decision about release notes and timing, not something a build makes.
+  if (!capture('gh', ['release', 'view', tag, '--repo', repo, '--json', 'tagName'])) {
+    console.log(`\n  ${tag} is not on ${repo} yet — creating it as a draft`)
+    run('gh', ['release', 'create', tag, '--repo', repo, '--draft', '--title', tag, '--notes', ''])
+  }
+
+  console.log(`\n=== publishing to ${repo} ${tag} ===`)
+  run('gh', ['release', 'upload', tag, ...built, '--repo', repo, '--clobber'])
+  for (const file of built.sort()) console.log(`  uploaded ${basename(file)}`)
+
+  if (built.some((file) => UPDATE_PACKAGE.test(file))) {
+    console.log(
+      '\n  Update packages were uploaded, and latest.json was not rewritten —\n' +
+        '  it is built from every platform at once, so doing it here would drop\n' +
+        '  the platforms this build did not produce. Once they are all on the\n' +
+        `  release:\n    node scripts/release-manifest.mjs --tag ${tag}\n` +
+        `    gh release upload ${tag} release/latest.json --repo ${repo} --clobber`,
+    )
+  }
+}
+
 try {
   for (const name of wanted) checkHost(name)
   checkDependencies()
@@ -411,6 +477,8 @@ try {
     console.log(`  ${basename(file).padEnd(44)} ${megabytes.padStart(7)} MB`)
   }
   console.log(`\n${built.length} file(s) in ${join(ROOT, 'release')}`)
+
+  if (flags.has('--publish')) publish(built)
 } catch (error) {
   // These failures are all ones someone has to act on — a missing toolchain, a
   // target this machine cannot build — so they are reported as instructions

@@ -21,10 +21,10 @@
  *   --notes TEXT  release notes shown by the update prompt
  */
 
-import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { repository as repositoryOf } from './lib/github.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -48,17 +48,12 @@ if (!tag) {
 
 /** The repository the artifacts will be downloaded from. */
 function repository() {
-  const given = option('repo', process.env.GH_REPO)
-  if (given) return given
   try {
-    const url = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: ROOT, encoding: 'utf8' })
-    const match = /github\.com[:/]+([^/]+\/[^/.\s]+)/.exec(url)
-    if (match) return match[1]
-  } catch {
-    // No remote: fall through to the error below.
+    return repositoryOf({ root: ROOT, given: option('repo') })
+  } catch (error) {
+    console.error(error.message)
+    process.exit(1)
   }
-  console.error('Cannot tell which repository to link to. Pass --repo owner/name.')
-  process.exit(1)
 }
 
 /**

@@ -348,6 +348,28 @@ unless `APPLE_CERTIFICATE` (a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD` and
 `APPLE_SIGNING_IDENTITY` are set; without them the runner produces an unsigned
 build, which is worth knowing before publishing one.
 
+### Publishing a build
+
+The build writes to `release/` and stops there. `--publish` attaches what it
+just built to a GitHub release:
+
+```bash
+npm run dist:win -- --publish
+node scripts/dist.mjs mac-arm mac-intel --publish --tag=v0.2.1
+```
+
+The tag defaults to `v<version>` from `tauri.conf.json`; `--tag=` overrides it
+and `--repo=owner/name` overrides the `origin` remote. A tag with no release
+yet gets one, as a **draft** — publishing it is a decision about notes and
+timing, not one a build should make for you. Credentials come from the GitHub
+CLI, so `gh auth login` is the whole setup and none of these scripts handles a
+token.
+
+It uploads only the files that run produced, never the contents of `release/`,
+and it does not write `latest.json`. That is deliberate: the manifest covers
+every platform at once, so a Windows-only build that uploaded its own would
+withdraw the update from every Mac.
+
 ### The updater manifest
 
 The updater reads one `latest.json` covering every platform, so it can only be
