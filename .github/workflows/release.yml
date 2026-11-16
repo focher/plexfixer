@@ -71,8 +71,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `macos-latest`, not a numbered image: GitHub retires those, and a
+          # retired label does not fail the job, it cancels it before it starts
+          # — which is how this stopped building without anything saying so.
           - name: macOS (Apple Silicon + Intel)
-            runner: macos-14
+            runner: macos-latest
             targets: mac-arm mac-intel
             rust: aarch64-apple-darwin,x86_64-apple-darwin
           - name: Windows x64
