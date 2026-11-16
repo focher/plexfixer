@@ -81,7 +81,6 @@ async fn run(binary: &str, args: &[&str]) -> Option<String> {
 
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         // CREATE_NO_WINDOW: a probe must not flash a console window.
         command.creation_flags(0x0800_0000);
     }

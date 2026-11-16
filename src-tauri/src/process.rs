@@ -79,7 +79,9 @@ pub async fn process_start(
 
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: ffmpeg must not flash a console window. No import
+        // here — tokio's Command has `creation_flags` inherently, where std's
+        // takes it from a trait.
         builder.creation_flags(0x0800_0000);
     }
 
@@ -211,9 +213,13 @@ fn terminate_pid(pid: u32) {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn terminate_pid(pid: u32) {
     // Windows has no SIGTERM; taskkill without /F asks politely first.
+    // `creation_flags` comes from a trait on std's Command — unlike tokio's,
+    // which has it inherently — so the import has to be here for CREATE_NO_WINDOW
+    // to apply and taskkill not to flash a console over whatever is on screen.
+    use std::os::windows::process::CommandExt;
     let _ = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string()])
         .creation_flags(0x0800_0000)
