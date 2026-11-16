@@ -326,6 +326,14 @@ code {
   margin: 0 0 18px;
 }
 
+/* Two ways in, because the native picker takes files or folders but not both. */
+.dropzone-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
 /* ---------- summary ---------- */
 
 .summary {

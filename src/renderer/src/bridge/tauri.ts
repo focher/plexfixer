@@ -373,10 +373,22 @@ function buildApi() {
       }
     },
     dialog: {
+      // Files and folders are two dialogs, not one. The native picker is in
+      // one mode or the other — `directory: false` is a file picker that will
+      // not let a folder be chosen at all — so an app that offers only this
+      // one cannot be pointed at a library, which is the ordinary case.
       pickPaths: async (): Promise<string[]> => {
-        // Files and folders in one dialog: a library is usually a folder, but
-        // a single awkward file is exactly what someone reaches for first.
         const picked = await openDialog({ multiple: true, directory: false })
+        return picked ?? []
+      },
+      pickFolders: async (): Promise<string[]> => {
+        // `multiple` so several libraries can be added at once; each is walked
+        // to its full depth by the scan, which is what makes this the normal
+        // way in rather than a shortcut. `recursive` widens the scope granted
+        // over what was picked to everything beneath it — the walk itself runs
+        // in Rust and is not bound by that scope, but anything later reached
+        // for through a plugin would be.
+        const picked = await openDialog({ multiple: true, directory: true, recursive: true })
         return picked ?? []
       },
       pickDirectory: async (): Promise<string | undefined> => {

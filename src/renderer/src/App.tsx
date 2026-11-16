@@ -320,17 +320,32 @@ export default function App(): React.JSX.Element {
     return window.plexfixer.app.onOpenPaths((paths) => void startScan(paths))
   }, [startScan])
 
-  const choosePaths = useCallback(async () => {
-    // The native dialog can only see this machine, so remote mode gets its own
-    // browser — picking a local folder while the work runs elsewhere would
-    // scan a path that does not exist there.
-    if (settingsRef.current?.remoteEnabled) {
-      setBrowsingRemote(true)
-      return
-    }
-    const paths = await window.plexfixer.dialog.pickPaths()
-    await startScan(paths)
-  }, [startScan])
+  /**
+   * Open a picker and scan what comes back.
+   *
+   * `kind` is here because the native dialog cannot do both at once: a file
+   * picker will not let a folder be chosen, and a folder picker will not let a
+   * file be chosen. Two ways in is the price of that, and the folder is the
+   * one that leads, since a library is the ordinary thing to point this at.
+   */
+  const choosePaths = useCallback(
+    async (kind: 'files' | 'folders') => {
+      // The native dialog can only see this machine, so remote mode gets its own
+      // browser — picking a local folder while the work runs elsewhere would
+      // scan a path that does not exist there. That browser does both, so there
+      // is nothing for `kind` to choose between.
+      if (settingsRef.current?.remoteEnabled) {
+        setBrowsingRemote(true)
+        return
+      }
+      const paths =
+        kind === 'folders'
+          ? await window.plexfixer.dialog.pickFolders()
+          : await window.plexfixer.dialog.pickPaths()
+      await startScan(paths)
+    },
+    [startScan]
+  )
 
   const cancelScan = useCallback(async () => {
     if (scanIdRef.current) await window.plexfixer.scan.cancel(scanIdRef.current)
@@ -562,7 +577,8 @@ export default function App(): React.JSX.Element {
         setScanErrors(
           paths.slice(0, 5).map((path) => ({
             path,
-            message: 'Dropped files are on this machine. Remote mode scans the remote host — use Scan… to browse it.'
+            message:
+              'Dropped files are on this machine. Remote mode scans the remote host — use Add folder… to browse it.'
           }))
         )
         return
@@ -784,8 +800,18 @@ export default function App(): React.JSX.Element {
                 >
                   Clear list
                 </button>
-                <button className="primary" onClick={() => void choosePaths()}>
-                  Scan…
+                <button
+                  onClick={() => void choosePaths('files')}
+                  title="Choose one or more media files."
+                >
+                  Add files…
+                </button>
+                <button
+                  className="primary"
+                  onClick={() => void choosePaths('folders')}
+                  title="Choose a folder. Everything beneath it is scanned."
+                >
+                  Add folder…
                 </button>
               </>
             )}
@@ -975,9 +1001,21 @@ export default function App(): React.JSX.Element {
                     PlexFixer checks whether each MKV or M4V will direct play on a remote Plex client, and fixes what it
                     can without re-encoding.
                   </p>
-                  <button className="primary" onClick={() => void choosePaths()}>
-                    Scan…
-                  </button>
+                  <div className="dropzone-actions">
+                    <button
+                      onClick={() => void choosePaths('files')}
+                      title="Choose one or more media files."
+                    >
+                      Add files…
+                    </button>
+                    <button
+                      className="primary"
+                      onClick={() => void choosePaths('folders')}
+                      title="Choose a folder. Everything beneath it is scanned."
+                    >
+                      Add folder…
+                    </button>
+                  </div>
                 </div>
               ) : null}
 
