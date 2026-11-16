@@ -354,8 +354,9 @@ The build writes to `release/` and stops there. `--publish` attaches what it
 just built to a GitHub release:
 
 ```bash
-npm run dist:win -- --publish
-node scripts/dist.mjs mac-arm mac-intel --publish --tag=v0.2.1
+npm run release:win    # on Windows: build, upload, refresh the manifest
+npm run release:mac    # on a Mac: both architectures, same thing
+node scripts/dist.mjs win --publish --tag=v0.2.1   # a tag other than the version's
 ```
 
 The tag defaults to `v<version>` from `tauri.conf.json`; `--tag=` overrides it
@@ -366,9 +367,17 @@ CLI, so `gh auth login` is the whole setup and none of these scripts handles a
 token.
 
 It uploads only the files that run produced, never the contents of `release/`,
-and it does not write `latest.json`. That is deliberate: the manifest covers
-every platform at once, so a Windows-only build that uploaded its own would
-withdraw the update from every Mac.
+and then rebuilds `latest.json` to cover **every** platform on the release, not
+just the one it built. The signatures already attached are fetched first — a
+few hundred bytes each, not the packages — and merged with this build's, so
+publishing Windows from a Windows machine leaves the Macs on the updater
+rather than withdrawing them. Publishing in either order gives the same
+result.
+
+A platform only reaches the updater if its update package was signed, which
+needs `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
+in the environment of the machine that builds it. Build with `--no-updater`
+and the installer still publishes; it just is not offered as an update.
 
 ### The updater manifest
 

@@ -176,6 +176,11 @@ function capture(command, commandArgs) {
   return result.status === 0 ? (result.stdout ?? '') : ''
 }
 
+/** Run a command for whether it worked, for the ones allowed to fail. */
+function attempt(command, commandArgs) {
+  return spawnSync(command, commandArgs, { cwd: ROOT, encoding: 'utf8' }).status === 0
+}
+
 /**
  * Install the Rust targets a build needs.
  *
@@ -412,9 +417,6 @@ function buildTarget(name) {
   return copied
 }
 
-/** Anything the updater serves, as opposed to an installer someone downloads. */
-const UPDATE_PACKAGE = /\.app\.tar\.gz$|\.nsis\.zip$|\.msi\.zip$|\.AppImage\.tar\.gz$/
-
 /**
  * Attach what this run built to a GitHub release.
  *
@@ -449,15 +451,55 @@ function publish(built) {
   run('gh', ['release', 'upload', tag, ...built, '--repo', repo, '--clobber'])
   for (const file of built.sort()) console.log(`  uploaded ${basename(file)}`)
 
-  if (built.some((file) => UPDATE_PACKAGE.test(file))) {
-    console.log(
-      '\n  Update packages were uploaded, and latest.json was not rewritten —\n' +
-        '  it is built from every platform at once, so doing it here would drop\n' +
-        '  the platforms this build did not produce. Once they are all on the\n' +
-        `  release:\n    node scripts/release-manifest.mjs --tag ${tag}\n` +
-        `    gh release upload ${tag} release/latest.json --repo ${repo} --clobber`,
+  refreshManifest(repo, tag)
+}
+
+/**
+ * Rebuild `latest.json` so it covers every platform on the release.
+ *
+ * The updater reads one manifest for all platforms, so a build that wrote its
+ * own would withdraw the update from the platforms it did not produce — which
+ * is the trap in building Windows on one machine and macOS on another. The
+ * signatures already on the release are fetched first and the manifest is
+ * written from those together with this build's, so publishing from either
+ * machine leaves a release that is complete rather than one that is only
+ * right about the platform that went last.
+ */
+function refreshManifest(repo, tag) {
+  const outDir = join(ROOT, 'release')
+
+  // Signatures only: a few hundred bytes each, where the packages they belong
+  // to are tens of megabytes. Nothing matching is normal — it is what the
+  // first publish to a tag looks like — so this is allowed to fail.
+  const merged = attempt('gh', [
+    'release', 'download', tag, '--repo', repo, '--pattern', '*.sig', '--dir', outDir, '--clobber',
+  ])
+  console.log(
+    merged
+      ? '\n  merged with the signatures already on the release'
+      : '\n  nothing already on the release to merge with',
+  )
+
+  const manifest = spawnSync(
+    process.execPath,
+    [join(ROOT, 'scripts', 'release-manifest.mjs'), '--tag', tag, '--repo', repo, '--dir', outDir],
+    { cwd: ROOT, stdio: 'inherit' },
+  )
+  if (manifest.status !== 0) {
+    // The only way this fails is with nothing signed anywhere, which is what
+    // --no-updater produces. The installers are published and usable; it is
+    // the in-app update that is not on offer, and saying so is better than
+    // failing a publish that worked.
+    console.warn(
+      '\n  No update packages on this release, so latest.json was not written.\n' +
+        '  The installers are published. Building with a signing key in\n' +
+        '  TAURI_SIGNING_PRIVATE_KEY is what puts a platform on the updater.',
     )
+    return
   }
+
+  run('gh', ['release', 'upload', tag, join(outDir, 'latest.json'), '--repo', repo, '--clobber'])
+  console.log('  uploaded latest.json')
 }
 
 try {

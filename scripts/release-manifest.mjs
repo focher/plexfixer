@@ -95,10 +95,19 @@ if (tag.replace(/^v/, '') !== version) {
 }
 
 const files = readdirSync(dir)
-const chosen = new Map()
 
+// A package counts as present if its signature is there, whether or not the
+// package itself is: the manifest is built from the name and the signature and
+// never reads the bytes. That is what lets a release keep offering a platform
+// built on another machine — its signature is fetched from the release, the
+// 60 MB beside it is not.
+const candidates = new Set()
 for (const name of files) {
-  if (name.endsWith('.sig')) continue
+  candidates.add(name.endsWith('.sig') ? name.slice(0, -'.sig'.length) : name)
+}
+
+const chosen = new Map()
+for (const name of candidates) {
   for (const platform of platformsFor(name)) {
     if (preferred(chosen.get(platform), name)) chosen.set(platform, name)
   }
