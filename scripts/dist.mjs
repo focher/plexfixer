@@ -307,6 +307,22 @@ function checkHost(name) {
   )
 }
 
+/**
+ * Refuse to start without the dependencies the build runs through.
+ *
+ * Tauri's `beforeBuildCommand` builds the renderer with vite, so a clone that
+ * has not been installed fails partway into the Tauri build with "'vite' is
+ * not recognized" — which reads like a broken PATH and is really a missing
+ * `npm ci`. Cheaper to say so before the ffmpeg download than after it.
+ */
+function checkDependencies() {
+  if (existsSync(join(ROOT, 'node_modules', 'vite'))) return
+  throw new Error(
+    'The renderer is built with vite, which is not installed.\n' +
+      '  Run: npm ci',
+  )
+}
+
 function buildTarget(name) {
   const target = TARGETS[name]
   console.log(`\n=== ${name} (${target.triple}) ===`)
@@ -380,6 +396,7 @@ function buildTarget(name) {
 
 try {
   for (const name of wanted) checkHost(name)
+  checkDependencies()
 
   if (!flags.has('--keep')) {
     rmSync(join(ROOT, 'release'), { recursive: true, force: true })
