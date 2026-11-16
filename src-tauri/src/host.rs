@@ -162,7 +162,7 @@ pub async fn host_exec(
 
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: a command run for the page must not flash a console.
         process.creation_flags(0x0800_0000);
     }
 
@@ -592,18 +592,18 @@ async fn volume_of(path: &str) -> Option<VolumeFacts> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from(path));
 
+    #[cfg(unix)]
     let device = tokio::fs::metadata(&directory).await.ok().map(|meta| {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            meta.dev()
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = &meta;
-            0u64
-        }
+        use std::os::unix::fs::MetadataExt;
+        meta.dev()
     });
+    // Windows metadata carries no device number. Reporting 0 for every path,
+    // as this did, makes every pair of paths compare equal — so a repair
+    // writing from C: to D: would have been diagnosed as staying on one
+    // volume. `None` is the truthful answer, and leaves `sameVolume`
+    // undefined rather than confidently wrong.
+    #[cfg(not(unix))]
+    let device: Option<u64> = None;
 
     let df = Command::new("df")
         .args(["-P", &directory.to_string_lossy()])
