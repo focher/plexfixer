@@ -301,6 +301,19 @@ describe('the connection check', () => {
     expect(check.platform).toBe('Linux x86_64')
     expect(check.ffmpegVersion).toBe('ffmpeg version 6.1')
     expect(check.missing).toEqual([])
+    // Optional, so its absence is not a problem.
+    expect(check.qtFaststartPath).toBeUndefined()
+
+    const withQt = parseCheck('nas', [...lines, 'QTFASTSTART\t/usr/bin/qt-faststart'].join('\n'))
+    expect(withQt.ok).toBe(true)
+    expect(withQt.qtFaststartPath).toBe('/usr/bin/qt-faststart')
+  })
+
+  it('looks for qt-faststart beside ffmpeg, then on PATH, and only reports it', () => {
+    const script = checkScript('/opt/ff/ffmpeg', 'ffprobe')
+    expect(script).toContain('qt-faststart')
+    expect(script).toContain("printf 'QTFASTSTART")
+    expect(script).toContain('${f%/*}/qt-faststart')
   })
 
   it('names what is missing rather than just failing', () => {

@@ -144,7 +144,11 @@ async function ensureRunner(): Promise<RepairRunner> {
   const environment = await environmentFor(ready.settings, false)
   if (!environment.ffmpegPath) throw new Error(environment.problem ?? 'FFmpeg is not available.')
 
-  const binaries = { ffmpegPath: environment.ffmpegPath, ffprobePath: ready.ffprobePath }
+  const binaries = {
+    ffmpegPath: environment.ffmpegPath,
+    ffprobePath: ready.ffprobePath,
+    qtFaststartPath: environment.qtFaststartPath
+  }
 
   if (!runner) {
     runner = new RepairRunner(
@@ -244,6 +248,7 @@ async function remoteEnvironment(
     ready: true,
     ffmpegPath: check.ffmpegPath,
     ffprobePath: check.ffprobePath,
+    qtFaststartPath: check.qtFaststartPath,
     ffmpegSource: settings.remoteFfmpegPath.trim() ? 'settings' : 'path',
     ffprobeSource: settings.remoteFfprobePath.trim() ? 'settings' : 'path',
     ffmpegVersion: check.ffmpegVersion,

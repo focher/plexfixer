@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tokio::process::Command;
 
-use crate::locate::{locate, node_platform};
+use crate::locate::{locate, locate_qt_faststart, node_platform};
 
 /// Hardware encoders worth asking about, in the order they are reported.
 const HARDWARE_ENCODERS: &[&str] = &[
@@ -54,6 +54,9 @@ pub struct Environment {
     pub ffmpeg_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ffprobe_path: Option<String>,
+    /// Moves an MP4's index in one pass; optional, ffmpeg does it otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qt_faststart_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ffmpeg_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -259,9 +262,13 @@ pub async fn resolve(
         }
     );
 
+    let qt_faststart_path =
+        locate_qt_faststart(app, &ffmpeg.path).map(|path| path.to_string_lossy().into_owned());
+
     Environment {
         ffmpeg_path: Some(ffmpeg_path),
         ffprobe_path: Some(ffprobe_path),
+        qt_faststart_path,
         ffmpeg_source: Some(ffmpeg.source.to_string()),
         ffprobe_source: Some(ffprobe.source.to_string()),
         ffmpeg_version: Some(version),

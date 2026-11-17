@@ -16,11 +16,14 @@ import type {
   JobMetrics,
   JobPhase,
   JobStage,
+  MediaFile,
   RepairMode
 } from '../types.js'
 import type { RepairHost } from '../host.js'
 import { FfmpegError, runFfmpeg } from './ffmpeg-run.js'
 import { probeFile } from './probe.js'
+import { QtFaststartError, runQtFaststart } from './qt-faststart.js'
+import { indexMoveMismatch, isIndexMoveOnly } from './faststart.js'
 import { buildRepairCommand, buildSubtitleExtractCommands } from './command.js'
 import {
   PromoteError,
@@ -41,6 +44,8 @@ import { applyPatches, packLanguage, readMp4Tracks, revertPatches, type BytePatc
 export interface RunnerBinaries {
   ffmpegPath: string
   ffprobePath: string
+  /** Moves an MP4's index in one pass, when that is the whole repair. */
+  qtFaststartPath?: string
 }
 
 export interface EnqueueOptions {
@@ -551,9 +556,12 @@ export class RepairRunner {
     const temporaryPath = temporaryPathFor(outputPath, this.host)
     const finalArgs = redirectOutput(args, outputPath, temporaryPath)
 
-    // Progress milestones, so a long copy leaves a trail in the log.
-    let loggedMilestone = -1
-    let announcedFinalise = false
+    const ffmpegCommand = [this.binaries.ffmpegPath, ...finalArgs]
+    // When moving the index is the whole repair, qt-faststart does it in one
+    // read and one write; ffmpeg would remux and then rewrite the file again.
+    const qtFaststartPath = this.binaries.qtFaststartPath
+    const qtCommand =
+      qtFaststartPath && isIndexMoveOnly(result) ? [qtFaststartPath, result.file.path, temporaryPath] : undefined
 
     // Re-read rather than reusing the snapshot above: `tryInPlace` logs why it
     // gave up, and spreading the older copy would drop that entry.
@@ -562,18 +570,21 @@ export class RepairRunner {
       state: 'running',
       stage: 'planning',
       startedAt: Date.now(),
-      command: [this.binaries.ffmpegPath, ...finalArgs],
+      command: qtCommand ?? ffmpegCommand,
       message: encoderLabel ? `Encoding with ${encoderLabel}` : undefined
     })
 
     this.log(id, 'info', 'Planned actions', describePlan(result))
-    this.log(
-      id,
-      'info',
-      encoderLabel ? `Running ffmpeg (${encoderLabel})` : 'Running ffmpeg (stream copy)',
-      quoteCommand([this.binaries.ffmpegPath, ...finalArgs])
-    )
-    this.log(id, 'info', 'Writing to a temporary file first', temporaryPath)
+    const announceFfmpeg = (): void => {
+      this.log(
+        id,
+        'info',
+        encoderLabel ? `Running ffmpeg (${encoderLabel})` : 'Running ffmpeg (stream copy)',
+        quoteCommand(ffmpegCommand)
+      )
+      this.log(id, 'info', 'Writing to a temporary file first', temporaryPath)
+    }
+    if (!qtCommand) announceFfmpeg()
 
     this.addPhase(id, 'in-place-check', checkMs, { note: 'no in-place edit was possible, so the file is rewritten' })
     this.mergeMetrics(id, { sourceBytes: result.file.sizeBytes, durationSeconds: result.file.durationSeconds })
@@ -582,112 +593,39 @@ export class RepairRunner {
     // Timestamps rather than wrapped calls: each stage is one await in a
     // sequence, and bracketing them individually would bury the sequence.
     this.setStage(id, 'copying')
-    const ffmpegStarted = performance.now()
-    let lastProgressAt = 0
-    let finaliseFrom: number | undefined
-    let lastSpeed: string | undefined
     // Set once the repaired file is in place. A failure after that is a
     // failure with the repair already done, and must not be reported — or
     // cleaned up after — as though nothing had been touched.
     let promotedTo: string | undefined
 
     try {
-      await runFfmpeg({
-        ffmpegPath: this.binaries.ffmpegPath,
-        args: finalArgs,
-        durationSeconds: result.file.durationSeconds,
-        expectedBytes: result.file.sizeBytes,
-        signal,
-        spawn: (command, commandArgs) => this.host.spawnProcess(command, commandArgs),
-        // Closing the ssh connection does not reliably stop ffmpeg on the far
-        // end; the temporary path is unique to this job, so the host can find
-        // and stop exactly that process.
-        onAbort: () => void this.host.kill(temporaryPath),
-        onProgress: (progress) => {
+      let probed: MediaFile | undefined
+      let outputBytes: number | undefined
+      if (qtCommand) {
+        probed = await this.moveIndexWithQtFaststart(id, result, qtCommand, temporaryPath, signal)
+        if (probed) {
+          outputBytes = probed.sizeBytes
+        } else {
           const job = this.jobs.get(id)
-          if (!job || job.state !== 'running') return
-          this.update({ ...job, progress })
-          lastProgressAt = performance.now()
-          if (progress.speed) lastSpeed = progress.speed
-          // Everything after the last byte is reported is the finalising pass,
-          // which is where an MP4 index move hides.
-          if (finaliseFrom == null && progress.fraction >= 0.999) {
-            finaliseFrom = performance.now()
-            // ffmpeg reports nothing during the index move, so the step itself
-            // is the only sign that anything is still happening.
-            if (result.plan.faststart) this.setStage(id, 'finalising')
-          }
-
-          // A multi-gigabyte remux over a network share runs for minutes with
-          // nothing to show for it, which is indistinguishable from a hang.
-          // Milestones go in the log so the report carries evidence of
-          // movement rather than stopping at "writing to a temporary file".
-          const milestone = Math.floor(progress.fraction * 10) * 10
-          if (milestone > loggedMilestone && milestone < 100) {
-            loggedMilestone = milestone
-            // ffmpeg reports no position on some sources, and "0:00 of
-            // 30:56" reads like a stall; bytes written are always real.
-            const position =
-              progress.outTimeSeconds > 0
-                ? `${formatSeconds(progress.outTimeSeconds)} of ${formatSeconds(result.file.durationSeconds ?? 0)}`
-                : progress.bytesWritten
-                  ? `${formatBytes(progress.bytesWritten)} written`
-                  : 'in progress'
-            const speed = progress.speed ? `  speed ${progress.speed}` : ''
-            this.log(id, 'info', `${milestone}% copied`, `${position}${speed}`)
-          }
-
-          // The index move is a second pass over the whole file, and ffmpeg
-          // reports no progress during it. On a network share it can take as
-          // long again as the copy, so say so rather than appearing stuck at
-          // 100%.
-          if (!announcedFinalise && progress.fraction >= 0.999 && result.plan.faststart) {
-            announcedFinalise = true
-            this.log(
-              id,
-              'info',
-              'Moving the index to the front',
-              'ffmpeg rewrites the whole file to do this and reports no progress while it runs. ' +
-                'On a network share it can take about as long as the copy itself.'
-            )
-          }
+          if (job) this.update({ ...job, command: ffmpegCommand, progress: { fraction: 0 } })
+          announceFfmpeg()
         }
-      })
-
-      const ffmpegMs = performance.now() - ffmpegStarted
-      if (signal.aborted) throw new Error('Cancelled')
-      this.log(id, 'info', 'ffmpeg finished cleanly')
-
-      const outputBytes = (await this.host.stat(temporaryPath))?.sizeBytes
-      this.addPhase(id, 'ffmpeg', ffmpegMs, { bytes: outputBytes })
-      this.mergeMetrics(id, {
-        outputBytes,
-        ffmpegSpeed: lastSpeed,
-        mbPerSecond: outputBytes && ffmpegMs > 0 ? outputBytes / (1024 * 1024) / (ffmpegMs / 1000) : undefined
-      })
-
-      // The tail after the last progress report is the second pass: for an MP4
-      // whose index has to move to the front, it is another run over the whole
-      // file with nothing to show for it.
-      const tail = finaliseFrom != null ? performance.now() - finaliseFrom : lastProgressAt ? performance.now() - lastProgressAt : 0
-      if (tail > 500) {
-        this.addPhase(id, 'finalise', tail, {
-          note: result.plan.faststart
-            ? 'second pass over the file to put the index at the front'
-            : 'ffmpeg finishing after the last byte was reported'
-        })
       }
 
-      // Confirm the output is a readable media file with the streams we asked
-      // for. ffmpeg can exit 0 having produced something unplayable.
-      this.setStage(id, 'verifying')
-      const verifyStarted = performance.now()
-      const probed = await probeFile(temporaryPath, {
-        ffprobePath: this.binaries.ffprobePath,
-        includeSidecars: false,
-        host: this.host
-      })
-      this.addPhase(id, 'verify', performance.now() - verifyStarted)
+      if (!probed) {
+        outputBytes = await this.remux(id, result, finalArgs, temporaryPath, signal)
+
+        // Confirm the output is a readable media file with the streams we asked
+        // for. ffmpeg can exit 0 having produced something unplayable.
+        this.setStage(id, 'verifying')
+        const verifyStarted = performance.now()
+        probed = await probeFile(temporaryPath, {
+          ffprobePath: this.binaries.ffprobePath,
+          includeSidecars: false,
+          host: this.host
+        })
+        this.addPhase(id, 'verify', performance.now() - verifyStarted)
+      }
       this.log(id, 'info', 'Re-probed the output', describeStreams(probed))
       const problem = outputProblem(result.file, probed)
       if (problem) throw new Error(problem)
@@ -831,6 +769,219 @@ export class RepairRunner {
     if (!(error instanceof FfmpegError) || error.exitCode !== 255) return undefined
     const detail = error.stderrTail.trim().split('\n')[0]
     return `The connection to ${this.host.label} dropped while the repair was running${detail ? ` (${detail})` : ''}. Nothing was promoted, and the original is untouched.`
+  }
+
+  /**
+   * The ffmpeg run itself: remux or re-encode into the temporary file, with
+   * progress, milestones and the timing of the second pass that moves an MP4
+   * index. Resolves with the size of what it wrote.
+   */
+  private async remux(
+    id: string,
+    result: AnalysisResult,
+    finalArgs: string[],
+    temporaryPath: string,
+    signal: AbortSignal
+  ): Promise<number | undefined> {
+    // Progress milestones, so a long copy leaves a trail in the log.
+    let loggedMilestone = -1
+    let announcedFinalise = false
+    const ffmpegStarted = performance.now()
+    let lastProgressAt = 0
+    let finaliseFrom: number | undefined
+    let lastSpeed: string | undefined
+
+    await runFfmpeg({
+      ffmpegPath: this.binaries.ffmpegPath,
+      args: finalArgs,
+      durationSeconds: result.file.durationSeconds,
+      expectedBytes: result.file.sizeBytes,
+      signal,
+      spawn: (command, commandArgs) => this.host.spawnProcess(command, commandArgs),
+      // Closing the ssh connection does not reliably stop ffmpeg on the far
+      // end; the temporary path is unique to this job, so the host can find
+      // and stop exactly that process.
+      onAbort: () => void this.host.kill(temporaryPath),
+      onProgress: (progress) => {
+        const job = this.jobs.get(id)
+        if (!job || job.state !== 'running') return
+        this.update({ ...job, progress })
+        lastProgressAt = performance.now()
+        if (progress.speed) lastSpeed = progress.speed
+        // Everything after the last byte is reported is the finalising pass,
+        // which is where an MP4 index move hides.
+        if (finaliseFrom == null && progress.fraction >= 0.999) {
+          finaliseFrom = performance.now()
+          // ffmpeg reports nothing during the index move, so the step itself
+          // is the only sign that anything is still happening.
+          if (result.plan.faststart) this.setStage(id, 'finalising')
+        }
+
+        // A multi-gigabyte remux over a network share runs for minutes with
+        // nothing to show for it, which is indistinguishable from a hang.
+        // Milestones go in the log so the report carries evidence of
+        // movement rather than stopping at "writing to a temporary file".
+        const milestone = Math.floor(progress.fraction * 10) * 10
+        if (milestone > loggedMilestone && milestone < 100) {
+          loggedMilestone = milestone
+          // ffmpeg reports no position on some sources, and "0:00 of
+          // 30:56" reads like a stall; bytes written are always real.
+          const position =
+            progress.outTimeSeconds > 0
+              ? `${formatSeconds(progress.outTimeSeconds)} of ${formatSeconds(result.file.durationSeconds ?? 0)}`
+              : progress.bytesWritten
+                ? `${formatBytes(progress.bytesWritten)} written`
+                : 'in progress'
+          const speed = progress.speed ? `  speed ${progress.speed}` : ''
+          this.log(id, 'info', `${milestone}% copied`, `${position}${speed}`)
+        }
+
+        // The index move is a second pass over the whole file, and ffmpeg
+        // reports no progress during it. On a network share it can take as
+        // long again as the copy, so say so rather than appearing stuck at
+        // 100%.
+        if (!announcedFinalise && progress.fraction >= 0.999 && result.plan.faststart) {
+          announcedFinalise = true
+          this.log(
+            id,
+            'info',
+            'Moving the index to the front',
+            'ffmpeg rewrites the whole file to do this and reports no progress while it runs. ' +
+              'On a network share it can take about as long as the copy itself.'
+          )
+        }
+      }
+    })
+
+    const ffmpegMs = performance.now() - ffmpegStarted
+    if (signal.aborted) throw new Error('Cancelled')
+    this.log(id, 'info', 'ffmpeg finished cleanly')
+
+    const outputBytes = (await this.host.stat(temporaryPath))?.sizeBytes
+    this.addPhase(id, 'ffmpeg', ffmpegMs, { bytes: outputBytes })
+    this.mergeMetrics(id, {
+      outputBytes,
+      ffmpegSpeed: lastSpeed,
+      mbPerSecond: outputBytes && ffmpegMs > 0 ? outputBytes / (1024 * 1024) / (ffmpegMs / 1000) : undefined
+    })
+
+    // The tail after the last progress report is the second pass: for an MP4
+    // whose index has to move to the front, it is another run over the whole
+    // file with nothing to show for it.
+    const tail = finaliseFrom != null ? performance.now() - finaliseFrom : lastProgressAt ? performance.now() - lastProgressAt : 0
+    if (tail > 500) {
+      this.addPhase(id, 'finalise', tail, {
+        note: result.plan.faststart
+          ? 'second pass over the file to put the index at the front'
+          : 'ffmpeg finishing after the last byte was reported'
+      })
+    }
+    return outputBytes
+  }
+
+  /**
+   * Move the index with qt-faststart, when that is the whole repair.
+   *
+   * Resolves with the re-probed output when it worked. When it did not — it
+   * failed, declined (it exits 0 without writing anything when the last atom
+   * is not `moov`), or wrote something that does not match the source — the
+   * temporary file is discarded and it resolves with nothing, so the caller
+   * falls back to ffmpeg. Only cancellation throws.
+   */
+  private async moveIndexWithQtFaststart(
+    id: string,
+    result: AnalysisResult,
+    command: string[],
+    temporaryPath: string,
+    signal: AbortSignal
+  ): Promise<MediaFile | undefined> {
+    const [qtFaststartPath, input] = command as [string, string, string]
+    this.log(id, 'info', 'Moving the index with qt-faststart (one pass, no remux)', quoteCommand(command))
+    this.log(id, 'info', 'Writing to a temporary file first', temporaryPath)
+
+    const sourceBytes = result.file.sizeBytes
+    let loggedMilestone = -1
+    const started = performance.now()
+    let problem: string | undefined
+
+    try {
+      await runQtFaststart({
+        qtFaststartPath,
+        input,
+        output: temporaryPath,
+        signal,
+        spawn: (binary, binaryArgs) => this.host.spawnProcess(binary, binaryArgs),
+        onAbort: () => void this.host.kill(temporaryPath),
+        // It reports nothing while it runs; the output growing is the progress.
+        onTick: () => {
+          void this.host
+            .stat(temporaryPath)
+            .then((info) => {
+              const job = this.jobs.get(id)
+              if (!info || !job || job.state !== 'running' || !sourceBytes) return
+              const fraction = Math.min(0.99, info.sizeBytes / sourceBytes)
+              this.update({ ...job, progress: { fraction, bytesWritten: info.sizeBytes } })
+              const milestone = Math.floor(fraction * 10) * 10
+              if (milestone > loggedMilestone && milestone < 100) {
+                loggedMilestone = milestone
+                this.log(id, 'info', `${milestone}% copied`, `${formatBytes(info.sizeBytes)} written`)
+              }
+            })
+            .catch(() => undefined)
+        }
+      })
+    } catch (error) {
+      if (signal.aborted) throw new Error('Cancelled')
+      problem =
+        error instanceof QtFaststartError
+          ? `${error.message}${error.outputTail ? `\n\n${error.outputTail}` : ''}`
+          : error instanceof Error
+            ? error.message
+            : String(error)
+    }
+    const ms = performance.now() - started
+    if (signal.aborted) throw new Error('Cancelled')
+
+    let probed: MediaFile | undefined
+    if (!problem) {
+      const info = await this.host.stat(temporaryPath).catch(() => undefined)
+      // A refusal exits 0 having written nothing; its reason is in the output.
+      if (!info) problem = 'it wrote no output (it declines files whose last top-level atom is not the index)'
+    }
+    if (!problem) {
+      this.setStage(id, 'verifying')
+      const verifyStarted = performance.now()
+      try {
+        probed = await probeFile(temporaryPath, {
+          ffprobePath: this.binaries.ffprobePath,
+          includeSidecars: false,
+          host: this.host
+        })
+        problem = indexMoveMismatch(result.file, probed)
+      } catch (error) {
+        problem = `the output could not be read back (${error instanceof Error ? error.message : String(error)})`
+      }
+      this.addPhase(id, 'verify', performance.now() - verifyStarted)
+    }
+
+    if (problem || !probed) {
+      await discardTemporary(temporaryPath, this.host)
+      this.log(id, 'warn', 'qt-faststart could not move the index; using ffmpeg instead', problem)
+      this.setStage(id, 'copying')
+      return undefined
+    }
+
+    const outputBytes = probed.sizeBytes
+    this.addPhase(id, 'qt-faststart', ms, {
+      bytes: outputBytes,
+      note: 'one read and one write; no remux and no second pass'
+    })
+    this.mergeMetrics(id, {
+      outputBytes,
+      mbPerSecond: outputBytes && ms > 0 ? outputBytes / (1024 * 1024) / (ms / 1000) : undefined
+    })
+    this.log(id, 'info', 'qt-faststart finished; the index is now at the front')
+    return probed
   }
 
   /** Write the planned sidecar .srt files; failures are reported, not fatal. */

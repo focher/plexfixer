@@ -20,7 +20,7 @@ import { hasKnownHostEntry, offeredFingerprints, resolveTarget, type HostKeyTool
  */
 export const REQUIRED_UTILITIES = ['ls', 'find', 'stat', 'df', 'mkdir', 'mv', 'rm', 'tail', 'head', 'base64', 'pkill']
 
-/** One script, one round trip: platform, utilities, then both binaries. */
+/** One script, one round trip: platform, utilities, both binaries, then the optional qt-faststart. */
 export function checkScript(ffmpeg: string, ffprobe: string): string {
   const lines = [
     `printf 'PLATFORM\\t%s\\n' "$(uname -s -m 2>/dev/null)"`,
@@ -40,6 +40,17 @@ export function checkScript(ffmpeg: string, ffprobe: string): string {
       `fi`
     )
   }
+  // Optional: qt-faststart moves an MP4 index in one pass. Beside ffmpeg first,
+  // where packages and static builds put it, then anywhere on PATH. Its
+  // absence is never a problem — the index is moved by ffmpeg instead.
+  const ffmpegQuoted = shellQuote(ffmpeg)
+  lines.push(
+    `q=''`,
+    `f="$(command -v ${ffmpegQuoted} 2>/dev/null)"`,
+    `if [ -n "$f" ] && [ -x "\${f%/*}/qt-faststart" ]; then q="\${f%/*}/qt-faststart"`,
+    `elif command -v qt-faststart >/dev/null 2>&1; then q="$(command -v qt-faststart)"; fi`,
+    `if [ -n "$q" ]; then printf 'QTFASTSTART\\t%s\\n' "$q"; fi`
+  )
   return lines.join('\n')
 }
 
@@ -53,6 +64,7 @@ export function parseCheck(host: string, output: string): RemoteCheck {
     else if (tag === 'FFMPEGV') check.ffmpegVersion = first?.trim() || undefined
     else if (tag === 'FFPROBE') check.ffprobePath = first?.trim() || undefined
     else if (tag === 'FFPROBEV') check.ffprobeVersion = first?.trim() || undefined
+    else if (tag === 'QTFASTSTART') check.qtFaststartPath = first?.trim() || undefined
   }
 
   // Both binaries and every utility, or the answer is no — a partial yes here

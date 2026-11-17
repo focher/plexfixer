@@ -511,6 +511,8 @@ export type JobPhase =
   | 'in-place-edit'
   /** ffmpeg, start to exit. */
   | 'ffmpeg'
+  /** qt-faststart moving the MP4 index, when that is the whole repair. */
+  | 'qt-faststart'
   /** The tail of the ffmpeg run after the last progress report — the MP4 index move. */
   | 'finalise'
   /** Re-probing the output to confirm it is what was asked for. */
@@ -692,6 +694,8 @@ export interface RepairRequest {
 export interface EnvironmentInfo {
   ffmpegPath?: string
   ffprobePath?: string
+  /** Moves an MP4's index in one pass; optional, ffmpeg does it otherwise. */
+  qtFaststartPath?: string
   ffmpegSource?: 'settings' | 'bundled' | 'path'
   ffprobeSource?: 'settings' | 'bundled' | 'path'
   ffmpegVersion?: string
@@ -733,6 +737,8 @@ export interface RemoteCheck {
   ffmpegVersion?: string
   ffprobePath?: string
   ffprobeVersion?: string
+  /** Optional: when present, index-only repairs use it instead of a remux. */
+  qtFaststartPath?: string
   /** POSIX utilities the scan and repair need that are not there. */
   missing: string[]
   /** The ones that are, so a passing check still shows its working. */

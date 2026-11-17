@@ -12,6 +12,7 @@ export const PHASE_LABEL: Record<JobPhase, string> = {
   'in-place-check': 'Checked for an in-place edit',
   'in-place-edit': 'Edited the header in place',
   ffmpeg: 'ffmpeg',
+  'qt-faststart': 'Moved the index with qt-faststart',
   finalise: 'Moved the index to the front',
   verify: 'Re-probed the output',
   promote: 'Moved into place',
@@ -85,6 +86,8 @@ export function diagnoseMetrics(metrics: JobMetrics | undefined): string[] {
   if (!metrics) return []
   const notes: string[] = []
   const ffmpeg = phase(metrics, 'ffmpeg')
+  // The copy itself: ffmpeg's run, or qt-faststart's when only the index moved.
+  const copy = ffmpeg ?? phase(metrics, 'qt-faststart')
   const finalise = phase(metrics, 'finalise')
   const promote = phase(metrics, 'promote')
   const total = phase(metrics, 'total')
@@ -94,7 +97,7 @@ export function diagnoseMetrics(metrics: JobMetrics | undefined): string[] {
   // true and useless.
   const bigEnoughToJudge = (metrics.outputBytes ?? 0) >= 64 * 1024 * 1024
 
-  if (bigEnoughToJudge && ffmpeg && metrics.mbPerSecond != null && metrics.mbPerSecond > 0) {
+  if (bigEnoughToJudge && copy && metrics.mbPerSecond != null && metrics.mbPerSecond > 0) {
     const rate = Math.round(metrics.mbPerSecond)
     const remote = metrics.source?.kind === 'network' || metrics.output?.kind === 'network'
     if (remote) {
