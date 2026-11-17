@@ -96,15 +96,41 @@ export function unixCompileArgs({ source, output, arch }) {
 }
 
 /**
- * The MSVC command line, as text for a batch file.
+ * The MSVC command line.
  *
- * Every path is quoted: these run under `cmd`, and the one path that is always
- * involved — Visual Studio's, under "Program Files (x86)" — has a space in it.
- * `/Fo` keeps the object file in the work directory rather than dropping it
- * beside the binary being built.
+ * Bare names, no paths: the compile is run with the work directory as its
+ * current directory, where the source already is and where the binary is
+ * wanted. That is not tidiness. Quoting a Windows path on a command line a
+ * compiler will re-parse is a trap — `cl /Fo"C:\work\"` looks like a quoted
+ * directory and is read as an *escaped quote*, because a backslash before a
+ * quote escapes it, so the quote never closes and `cl` swallows the rest of
+ * the line, source filename and all. That is exactly the "D8003 missing source
+ * filename" this used to fail with. A name with no path in it cannot do that.
+ *
+ * The object file lands in the current directory by default, which is already
+ * the work directory, so it needs no flag of its own either.
  */
-export function msvcCompileArgs({ source, output, objectDir }) {
-  return ['/nologo', '/O2', `/Fo"${objectDir}\\"`, `/Fe:"${output}"`, `"${source}"`]
+export function msvcCompileArgs({ source, output }) {
+  return ['/nologo', '/O2', `/Fe:${output}`, source]
+}
+
+/**
+ * The batch file that runs MSVC through `vcvarsall.bat`.
+ *
+ * Only one path appears in it — Visual Studio's own, which lives under
+ * "Program Files (x86)" and so always has a space — and it is quoted, which is
+ * safe here because it does not end in a backslash. `cd /d` because
+ * `vcvarsall.bat` is entitled to leave the current directory somewhere else,
+ * and the compile line depends on being in the work directory.
+ */
+export function msvcBatchScript({ vcvars, workDir, args }) {
+  return [
+    '@echo off',
+    `call "${vcvars}" x64 || exit /b 1`,
+    `cd /d "${workDir}" || exit /b 1`,
+    `cl ${args.join(' ')} || exit /b 1`,
+    '',
+  ].join('\r\n')
 }
 
 /**
@@ -142,43 +168,62 @@ async function findVcvars() {
 }
 
 /**
+ * What a failed compile actually said, in one line.
+ *
+ * `cl` prints its diagnostics to stdout, not stderr, so an error's `message`
+ * alone loses the only part worth reading. Keeping the last few lines is
+ * enough to tell a missing compiler from a compiler that ran and objected.
+ */
+function why(error) {
+  const printed = [error?.stdout, error?.stderr]
+    .filter(Boolean)
+    .join('\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (printed.length > 0) return printed.slice(-3).join('; ')
+  return String(error?.message ?? 'unknown error').split('\n')[0]
+}
+
+/**
  * Compile on Windows: MSVC if it is installed, else a MinGW-style compiler.
  *
  * Each candidate is tried by compiling with it rather than by asking whether
  * it is there. `cl /?` and friends disagree about exit codes, and a compiler
  * that answers a probe and then cannot build is a worse failure than one that
- * never answered at all.
+ * never answered at all. Every attempt's reason is kept, because "no compiler
+ * found" when one is installed and merely unhappy is a maddening thing to be
+ * told.
  *
- * The MSVC-through-vcvars case goes into a batch file rather than onto a
- * `cmd /c` command line. Quoting a command that itself contains quoted paths,
- * through Node's argument handling and then cmd's, is a well-known way to
- * produce something that works until a path has a space in it — and the path
- * that is always involved is "Program Files (x86)".
+ * Nothing here runs through a shell. The arguments are passed as arguments,
+ * which is both what removes a whole class of quoting bugs and what silences
+ * Node's own warning about doing otherwise. `cl.exe`, `clang.exe` and
+ * `gcc.exe` are all found on PATH without one.
  */
 async function compileOnWindows({ source, output, workDir }) {
-  const msvc = msvcCompileArgs({ source, output, objectDir: workDir })
+  const msvc = msvcCompileArgs({ source, output })
+  const tried = []
 
   try {
-    await execFileAsync('cl', msvc, { cwd: workDir, timeout: 120_000, shell: true })
+    await execFileAsync('cl', msvc, { cwd: workDir, timeout: 120_000 })
     return 'cl'
-  } catch {
-    /* Not on PATH, which is the normal state of an ordinary shell. */
+  } catch (error) {
+    // Normally just absent: `cl` is put on PATH by vcvarsall, not by login.
+    tried.push(`cl: ${why(error)}`)
   }
 
   const vcvars = await findVcvars()
   if (vcvars) {
-    const script = join(workDir, 'build-qt-faststart.bat')
-    await writeFile(
-      script,
-      [
-        '@echo off',
-        `call "${vcvars}" x64 >nul || exit /b 1`,
-        `cl ${msvc.join(' ')} || exit /b 1`,
-        '',
-      ].join('\r\n'),
-    )
-    await execFileAsync('cmd', ['/c', script], { cwd: workDir, timeout: 180_000 })
-    return 'cl (through vcvarsall)'
+    try {
+      const script = join(workDir, 'build-qt-faststart.bat')
+      await writeFile(script, msvcBatchScript({ vcvars, workDir, args: msvc }))
+      await execFileAsync('cmd', ['/c', script], { cwd: workDir, timeout: 180_000 })
+      return 'cl (through vcvarsall)'
+    } catch (error) {
+      tried.push(`cl through vcvarsall: ${why(error)}`)
+    }
+  } else {
+    tried.push('vcvarsall: no Visual Studio with the C++ tools is installed')
   }
 
   for (const compiler of ['clang', 'gcc']) {
@@ -186,17 +231,17 @@ async function compileOnWindows({ source, output, workDir }) {
       await execFileAsync(compiler, unixCompileArgs({ source, output }), {
         cwd: workDir,
         timeout: 120_000,
-        shell: true,
       })
       return compiler
-    } catch {
-      /* Try the next one. */
+    } catch (error) {
+      tried.push(`${compiler}: ${why(error)}`)
     }
   }
 
   throw new Error(
-    'no C compiler found. The Visual Studio Build Tools with the C++ workload are\n' +
-      '    what cargo already needs to build PlexFixer on Windows; clang or gcc also work.',
+    `no C compiler built it (${tried.join(' | ')}). The Visual Studio Build Tools with\n` +
+      '    the C++ workload are what cargo already needs to build PlexFixer on Windows;\n' +
+      '    clang or gcc also work.',
   )
 }
 
@@ -216,7 +261,7 @@ async function compileOnUnix({ source, output, arch, workDir }) {
     }
   }
   throw new Error(
-    `no working C compiler (tried ${compilers.join(', ')}): ${lastError?.message ?? 'unknown error'}`,
+    `no working C compiler (tried ${compilers.join(', ')}): ${lastError ? why(lastError) : 'unknown error'}`,
   )
 }
 
@@ -245,7 +290,8 @@ export async function ensureQtFaststart({ platformKey, outputDir, workDir, force
   }
 
   await mkdir(workDir, { recursive: true })
-  const source = join(workDir, 'qt-faststart.c')
+  const sourceName = 'qt-faststart.c'
+  const source = join(workDir, sourceName)
 
   try {
     await download(SOURCE.url, source, { sha256: SOURCE.sha256 })
@@ -255,11 +301,18 @@ export async function ensureQtFaststart({ platformKey, outputDir, workDir, force
     const digest = createHash('sha256').update(await readFile(source)).digest('hex')
     if (digest !== SOURCE.sha256) throw new Error(`the source changed after it was fetched (${digest})`)
 
+    // Compiled by name from inside the work directory, never by path: see
+    // `msvcCompileArgs` for what a quoted Windows path does to a command line.
     const output = join(workDir, name)
     const compiler =
       process.platform === 'win32'
-        ? await compileOnWindows({ source, output, workDir })
-        : await compileOnUnix({ source, output, arch: archFlagFor(platformKey), workDir })
+        ? await compileOnWindows({ source: sourceName, output: name, workDir })
+        : await compileOnUnix({
+            source: sourceName,
+            output: name,
+            arch: archFlagFor(platformKey),
+            workDir,
+          })
 
     await mkdir(outputDir, { recursive: true })
     await writeFile(target, await readFile(output))
