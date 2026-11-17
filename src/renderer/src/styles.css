@@ -1808,7 +1808,19 @@ button.browser-row:hover:not(:disabled) {
   color: var(--text);
 }
 
+.browser-row.media {
+  cursor: pointer;
+}
+
 .browser-row.media .browser-name {
+  color: var(--text);
+}
+
+.browser-row.picked {
+  background: rgba(229, 160, 13, 0.1);
+}
+
+.browser-row.picked .browser-name {
   color: var(--text);
 }
 

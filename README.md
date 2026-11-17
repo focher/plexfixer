@@ -179,12 +179,14 @@ their versions, and every POSIX utility the repair flow shells out to — `ls`,
 `find`, `stat`, `df`, `mkdir`, `mv`, `rm`, `tail`, `head`, `base64` and `pkill`.
 A missing one is named rather than discovered half way through a repair.
 
-With it on, **Add folder…** opens a browser for the *remote* filesystem — the native
-dialog can only see this machine — and everything downstream behaves as it
-always has: the same analysis, the same plans, the same temporary-file,
-re-probe, back-up and promote dance, all happening on the far end. The encoders
-reported are the remote machine's, confirmed by test encodes there, so a
-force transcode uses the NAS's NVENC rather than this laptop's idea of it.
+With it on, **Add folder…** and **Add files…** open a browser for the *remote*
+filesystem — the native dialog can only see this machine. It scans the folder
+you are standing in, or, if you click media files to choose them, just those.
+Everything downstream behaves as it always has: the same analysis, the same
+plans, the same temporary-file, re-probe, back-up and promote dance, all
+happening on the far end. The encoders reported are the remote machine's,
+confirmed by test encodes there, so a force transcode uses the NAS's NVENC
+rather than this laptop's idea of it.
 
 Two limits worth knowing: the remote host must be POSIX (Linux, macOS, BSD —
 not Windows), and the in-place header edit, which rewrites a few bytes rather

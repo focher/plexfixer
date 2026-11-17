@@ -1193,9 +1193,9 @@ export default function App(): React.JSX.Element {
           defaultPath={settings.remoteDefaultPath}
           onSetDefault={(path) => void updateSettings({ remoteDefaultPath: path })}
           onClose={() => setBrowsingRemote(false)}
-          onScan={(path) => {
+          onScan={(paths) => {
             setBrowsingRemote(false)
-            void startScan([path])
+            void startScan(paths)
           }}
         />
       ) : null}
