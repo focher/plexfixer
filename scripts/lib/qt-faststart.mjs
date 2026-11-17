@@ -56,6 +56,39 @@ export const SOURCE = {
 export const UNAVAILABLE = '.qt-faststart-unavailable'
 
 /**
+ * Which attempt the note refers to.
+ *
+ * Bumped whenever the way this compiles changes. A note says "it could not be
+ * built here", which is only ever true of a particular way of building it —
+ * and the first Windows build failed on a quoting bug in the command line, so
+ * the note it left was wrong the moment that was fixed. Without a stamp the
+ * next build read the note, skipped the attempt, and shipped the note instead
+ * of the binary. A note from a different recipe is ignored and the compile is
+ * tried again.
+ */
+export const RECIPE = 2
+
+/** The note's text: the recipe it refers to, then why it failed. */
+export function markerText(reason, recipe = RECIPE) {
+  return `recipe ${recipe}\n${reason}\n`
+}
+
+/** Whether a note still speaks for how this builds today. */
+export function markerIsCurrent(text, recipe = RECIPE) {
+  const first = String(text ?? '').split('\n', 1)[0]?.trim()
+  return first === `recipe ${recipe}`
+}
+
+/** Why the last attempt failed, for the caller to report. */
+export function markerReason(text) {
+  const lines = String(text ?? '')
+    .split('\n')
+    .slice(1)
+    .filter((line) => line.trim() !== '')
+  return lines.join('; ') || 'no reason recorded'
+}
+
+/**
  * Which platform folders this machine can compile for.
  *
  * A C compiler targets the machine it runs on, with one exception: Apple's
@@ -279,10 +312,21 @@ export async function ensureQtFaststart({ platformKey, outputDir, workDir, force
 
   if (!force && existsSync(target)) return { state: 'present', path: target }
   if (force) await rm(marker, { force: true })
-  if (!force && existsSync(marker)) return { state: 'skipped', reason: 'tried before on this machine' }
+  if (!force && existsSync(marker)) {
+    const note = await readFile(marker, 'utf8').catch(() => '')
+    // A note from an older recipe is not evidence about this one, so it is
+    // dropped and the compile tried again.
+    if (markerIsCurrent(note)) {
+      return {
+        state: 'skipped',
+        reason: `tried before on this machine — ${markerReason(note)}`,
+      }
+    }
+    await rm(marker, { force: true })
+  }
 
   if (!canBuildHere(platformKey)) {
-    await writeFile(marker, `${platformKey} is not built on ${process.platform}\n`)
+    await writeFile(marker, markerText(`${platformKey} is not built on ${process.platform}`))
     return {
       state: 'skipped',
       reason: `a C compiler builds for the machine it runs on, and this is ${process.platform}`,
@@ -321,7 +365,7 @@ export async function ensureQtFaststart({ platformKey, outputDir, workDir, force
     return { state: 'built', path: target, compiler }
   } catch (error) {
     await mkdir(outputDir, { recursive: true })
-    await writeFile(marker, `${error.message}\n`)
+    await writeFile(marker, markerText(error.message))
     return { state: 'skipped', reason: error.message }
   }
 }

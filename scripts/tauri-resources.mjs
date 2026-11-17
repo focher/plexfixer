@@ -17,7 +17,7 @@
  */
 
 import { cp, mkdir, rm, readdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -62,7 +62,15 @@ for (const entry of await readdir(STAGE, { withFileTypes: true })) {
   if (entry.isDirectory()) await rm(join(STAGE, entry.name), { recursive: true, force: true })
 }
 for (const { folder, source } of staged) {
-  await cp(source, join(STAGE, folder), { recursive: true })
+  await cp(source, join(STAGE, folder), {
+    recursive: true,
+    // Dotfiles in a platform folder are bookkeeping, not payload — the note
+    // left behind when qt-faststart could not be compiled on this machine is
+    // one. They are already left out of the count above; leaving them out of
+    // the copy as well is what keeps them out of the installer, where one of
+    // them has already been shipped once.
+    filter: (from) => !basename(from).startsWith('.'),
+  })
 }
 
 console.log(

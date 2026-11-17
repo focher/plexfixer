@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 // prettier-ignore
 // @ts-expect-error -- plain ESM helper shared with the build scripts
-import { SOURCE, UNAVAILABLE, archFlagFor, canBuildHere, ensureQtFaststart, msvcBatchScript, msvcCompileArgs, unixCompileArgs } from '../scripts/lib/qt-faststart.mjs'
+import { RECIPE, SOURCE, UNAVAILABLE, archFlagFor, canBuildHere, ensureQtFaststart, markerIsCurrent, markerReason, markerText, msvcBatchScript, msvcCompileArgs, unixCompileArgs } from '../scripts/lib/qt-faststart.mjs'
 
 let dir: string
 beforeEach(async () => {
@@ -148,6 +148,38 @@ describe('ensureQtFaststart', () => {
     expect(second.reason).toMatch(/tried before/)
   })
 
+  it('ignores a note left by an older way of building', async () => {
+    // The first Windows build failed on a quoting bug and left a note. The
+    // next build read it, skipped the attempt, and shipped the note instead
+    // of the binary — so a note has to say which attempt it speaks for.
+    const options = {
+      platformKey: 'win32-x64',
+      outputDir: dir,
+      workDir: join(dir, 'work'),
+      download: never
+    }
+    await writeFile(join(dir, UNAVAILABLE), markerText('D8003 missing source filename', RECIPE - 1))
+
+    const again = await ensureQtFaststart({ ...options })
+    expect(again.reason).not.toMatch(/tried before/)
+    // Retried, and on a Mac it stops at the thing it genuinely cannot do.
+    expect(markerIsCurrent(await readFile(join(dir, UNAVAILABLE), 'utf8'))).toBe(true)
+  })
+
+  it('says why the last attempt failed, rather than only that it did', async () => {
+    const options = {
+      platformKey: 'win32-x64',
+      outputDir: dir,
+      workDir: join(dir, 'work'),
+      download: never
+    }
+    await writeFile(join(dir, UNAVAILABLE), markerText('no C compiler built it'))
+
+    const result = await ensureQtFaststart({ ...options })
+    expect(result.reason).toMatch(/tried before/)
+    expect(result.reason).toMatch(/no C compiler built it/)
+  })
+
   it('reports a download that fails rather than throwing', async () => {
     // An optional speed-up must never fail a fetch that otherwise worked.
     const result = await ensureQtFaststart({
@@ -166,5 +198,26 @@ describe('ensureQtFaststart', () => {
   it('pins the source to a tag and a checksum', () => {
     expect(SOURCE.url).toMatch(/FFmpeg\/FFmpeg\/n\d+\.\d+\.\d+\/tools\/qt-faststart\.c$/)
     expect(SOURCE.sha256).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe('the note left when it could not be built', () => {
+  it('records the recipe it speaks for, and the reason under it', () => {
+    const text = markerText('cl: D8003 missing source filename')
+    expect(text.split('\n')[0]).toBe(`recipe ${RECIPE}`)
+    expect(markerIsCurrent(text)).toBe(true)
+    expect(markerReason(text)).toBe('cl: D8003 missing source filename')
+  })
+
+  it('does not mistake a note from another recipe for a current one', () => {
+    expect(markerIsCurrent(markerText('whatever', RECIPE - 1))).toBe(false)
+    // The unstamped notes the first version wrote are the ones that caused
+    // this, so they must not read as current either.
+    expect(markerIsCurrent('no C compiler found\n')).toBe(false)
+    expect(markerIsCurrent('')).toBe(false)
+  })
+
+  it('copes with a note that has no reason in it', () => {
+    expect(markerReason(`recipe ${RECIPE}\n`)).toBe('no reason recorded')
   })
 })
