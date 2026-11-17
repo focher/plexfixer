@@ -58,9 +58,26 @@ export interface EnqueueOptions {
 
 export type JobListener = (job: Job) => void
 
+/**
+ * A batch of repairs on its way into the queue.
+ *
+ * Queueing is not instant. Every file is re-probed first so its plan reflects
+ * today's settings rather than whatever was true when it was scanned, and on a
+ * remote host that is a round trip each — a few hundred files take a while to
+ * all arrive. Cancelling during that stretch has to stop the arrivals too, or
+ * the queue fills back up behind the click.
+ */
+export interface QueueBatch {
+  /** Checked between files; once true, the caller stops adding. */
+  readonly cancelled: boolean
+  /** Done adding, whether it finished or was stopped. */
+  finish(): void
+}
+
 export class RepairRunner {
   private readonly queue: TaskQueue
   private readonly jobs = new Map<string, Job>()
+  private readonly batches = new Set<{ cancelled: boolean }>()
 
   constructor(
     private binaries: RunnerBinaries,
@@ -120,13 +137,52 @@ export class RepairRunner {
     return cancelled
   }
 
-  cancelAll(): void {
-    this.queue.cancelAll()
-    for (const job of this.jobs.values()) {
-      if (job.state === 'queued') {
-        this.update({ ...job, state: 'cancelled', message: 'Cancelled before starting', finishedAt: Date.now() })
+  /**
+   * Say that a batch is being added, so that cancelling can stop it.
+   *
+   * The caller checks `cancelled` between files and calls `finish()` when it
+   * is done either way.
+   */
+  beginBatch(): QueueBatch {
+    const batch = { cancelled: false }
+    this.batches.add(batch)
+    return {
+      get cancelled(): boolean {
+        return batch.cancelled
+      },
+      finish: () => {
+        this.batches.delete(batch)
       }
     }
+  }
+
+  /** Stop every batch still being added. */
+  private stopBatches(): void {
+    for (const batch of this.batches) batch.cancelled = true
+    this.batches.clear()
+  }
+
+  /**
+   * Stop everything: what is running, what is waiting, and what is still
+   * arriving.
+   *
+   * A running repair is aborted and keeps its row, because it got part-way and
+   * what it did is worth seeing. The ones that never started are removed
+   * outright rather than left as a wall of cancelled rows — "Cancel all" is
+   * reached for when a batch was a mistake, and a hundred rows saying so is
+   * not a record of anything. Returns the ids that went, so the window can
+   * drop exactly those and not a job that began in the meantime.
+   */
+  cancelAll(): string[] {
+    this.stopBatches()
+    this.queue.cancelAll()
+    const removed: string[] = []
+    for (const [id, job] of this.jobs) {
+      if (job.state !== 'queued') continue
+      this.jobs.delete(id)
+      removed.push(id)
+    }
+    return removed
   }
 
   clearFinished(): void {
@@ -142,8 +198,12 @@ export class RepairRunner {
    * temporary beside it and possibly the original already moved aside, and
    * stopping that is what Cancel is for. Finished jobs are the record of what
    * happened, which "Clear finished" removes. Returns how many went.
+   *
+   * A batch still being added is stopped as well. Without that, clearing a
+   * queue that is still filling just makes room for the rest of it.
    */
   clearQueued(): number {
+    this.stopBatches()
     let removed = 0
     for (const [id, job] of this.jobs) {
       if (job.state !== 'queued') continue
@@ -155,6 +215,11 @@ export class RepairRunner {
   }
 
   private update(job: Job): void {
+    // A job removed from the list stays removed. A task that was already
+    // off the queue when it was dropped still reports its abort, and this
+    // used to put the row back — the one thing "Clear queue" and "Cancel all"
+    // must not do. `enqueue` puts the job in the list before its first update.
+    if (!this.jobs.has(job.id)) return
     // Every update is also a sign of life: the queue uses this to tell a job
     // that is working from one whose link has gone quiet.
     const stamped = { ...job, updatedAt: Date.now() }
@@ -276,6 +341,10 @@ export class RepairRunner {
         }
       ]
     }
+
+    // In the list before anything reports on it, because `update` will not
+    // add a job it has not seen.
+    this.jobs.set(id, base)
 
     if (mode === 'report') {
       const job: Job = {

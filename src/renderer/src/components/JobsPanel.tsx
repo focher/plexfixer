@@ -4,6 +4,7 @@ import { buildDiagnosticsReport, buildJobReport } from '@shared/report.js'
 import { PHASE_LABEL, diagnoseMetrics, formatMs, phase, rankedPhases, summarizeMetrics } from '@shared/metrics.js'
 import { STAGE_DETAIL, describeProgress, stalledSeconds, stepsFor } from '@shared/stages.js'
 import { shortenPath } from '../format.js'
+import MenuButton from './MenuButton.js'
 
 const TONE: Record<Job['state'], string> = {
   queued: 'neutral',
@@ -237,15 +238,71 @@ export default function JobsPanel({
   const finished = jobs.filter((job) => job.state !== 'queued' && job.state !== 'running')
   const queued = jobs.filter((job) => job.state === 'queued')
 
+  /**
+   * The three ways of getting this session out of the app, behind one button.
+   *
+   * They were three buttons, one of which grew a count and shifted the two
+   * beside it. They are also the buttons nobody presses until something has
+   * gone wrong, which is the wrong claim on the width of a toolbar whose other
+   * buttons are the ones that act on the queue.
+   */
+  const diagnosticsMenu = (
+    <MenuButton
+      label="Diagnostics"
+      title="Copy or save a report of this session, for a bug report"
+      items={[
+        {
+          key: 'copy',
+          label: 'Copy diagnostics',
+          hint: 'The build, the settings and every measurement from this session',
+          onSelect: () => void copy('diagnostics', diagnostics())
+        },
+        {
+          key: 'save',
+          label: 'Save diagnostics…',
+          hint: 'The same report, written to a file you pick',
+          onSelect: () => void save()
+        },
+        {
+          key: 'all',
+          label: `Copy all reports${finished.length > 0 ? ` (${finished.length})` : ''}`,
+          hint: 'A full report for every repair that has finished',
+          disabled: finished.length === 0,
+          disabledHint: 'No repair has finished yet',
+          onSelect: () =>
+            void copy('all', finished.map(reportFor).join('\n\n' + '='.repeat(72) + '\n\n'))
+        }
+      ]}
+    />
+  )
+
+  /**
+   * What just happened, beside the menu.
+   *
+   * The menu closes on the click, so the "Copied ✓" that used to live on the
+   * button says so here. The saved path is a tooltip rather than text: it is
+   * long enough to wrap the toolbar onto two rows and push the buttons around,
+   * and the user chose the folder a moment ago in a save dialog.
+   */
+  const note = saved
+    ? { text: 'Diagnostics saved ✓', title: saved }
+    : copied === 'diagnostics'
+      ? { text: 'Diagnostics copied ✓' }
+      : copied === 'all'
+        ? { text: 'Reports copied ✓' }
+        : undefined
+
   if (jobs.length === 0) {
     return (
       <>
         <div className="toolbar queue-toolbar">
           <span className="spacer" />
-          <button onClick={() => void copy('diagnostics', diagnostics())} title="Copy the build, the settings and every measurement from this session">
-            {copied === 'diagnostics' ? 'Copied ✓' : 'Copy diagnostics'}
-          </button>
-          <button onClick={() => void save()}>Save diagnostics…</button>
+          {note ? (
+            <span className="muted nowrap" title={note.title}>
+              {note.text}
+            </span>
+          ) : null}
+          {diagnosticsMenu}
         </div>
         <div className="empty">Nothing in the queue. Scan a folder, then press Repair.</div>
       </>
@@ -259,24 +316,17 @@ export default function JobsPanel({
           {active.length} active · {jobs.length} total
         </span>
         <span className="spacer" />
-        {saved ? <span className="muted nowrap">Saved to {shortenPath(saved, 2)}</span> : null}
+        {note ? (
+          <span className="muted nowrap" title={note.title}>
+            {note.text}
+          </span>
+        ) : null}
+        {diagnosticsMenu}
         <button
-          onClick={() => void copy('diagnostics', diagnostics())}
-          title="Copy the build, the settings and every measurement from this session — the thing to paste into a bug report"
+          onClick={onCancelAll}
+          disabled={active.length === 0}
+          title="Stop everything: what is running, what is waiting, and anything still being added. Repairs that never started are removed; finished ones stay."
         >
-          {copied === 'diagnostics' ? 'Copied ✓' : 'Copy diagnostics'}
-        </button>
-        <button onClick={() => void save()} title="Write the same diagnostics to a file">
-          Save diagnostics…
-        </button>
-        <button
-          onClick={() => void copy('all', finished.map(reportFor).join('\n\n' + '='.repeat(72) + '\n\n'))}
-          disabled={finished.length === 0}
-          title="Copy a full diagnostic report for every finished repair"
-        >
-          {copied === 'all' ? 'Copied ✓' : `Copy all reports${finished.length > 0 ? ` (${finished.length})` : ''}`}
-        </button>
-        <button onClick={onCancelAll} disabled={active.length === 0}>
           Cancel all
         </button>
         <button onClick={onClear} disabled={finished.length === 0}>

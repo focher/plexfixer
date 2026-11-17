@@ -96,6 +96,93 @@ describe('clearQueued', () => {
   })
 })
 
+describe('cancelAll', () => {
+  it('removes what never started and says which ids went', async () => {
+    const { instance } = await runner()
+    const running = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    const waiting = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    await settle(150)
+
+    const dropped = instance.cancelAll()
+    expect(dropped).toEqual([waiting.id])
+    const ids = instance.list().map((job) => job.id)
+    expect(ids).not.toContain(waiting.id)
+    // The one that got part-way keeps its row: it is a record of work done.
+    expect(ids).toContain(running.id)
+  })
+
+  it('does not let a dropped job reappear when its abort lands', async () => {
+    const { instance } = await runner()
+    instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    const waiting = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    await settle(150)
+
+    instance.cancelAll()
+    await settle(400)
+    expect(instance.list().map((job) => job.id)).not.toContain(waiting.id)
+  })
+
+  it('keeps finished jobs, which Clear finished is for', async () => {
+    const { instance } = await runner()
+    const done = instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'report' })
+    await settle(100)
+
+    expect(instance.cancelAll()).toEqual([])
+    expect(instance.list().map((job) => job.id)).toContain(done.id)
+  })
+})
+
+describe('a batch still being added', () => {
+  it('stops part-way, so the queue does not fill back up behind the click', async () => {
+    const { instance } = await runner()
+    const batch = instance.beginBatch()
+
+    // The shape of the caller's loop: check, queue the next file, repeat.
+    const added: string[] = []
+    for (let index = 0; index < 5; index++) {
+      if (batch.cancelled) break
+      added.push(instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' }).id)
+      if (index === 1) instance.cancelAll()
+    }
+    batch.finish()
+
+    expect(added).toHaveLength(2)
+    expect(batch.cancelled).toBe(true)
+  })
+
+  it('is stopped by Clear queue too, which otherwise just makes room', async () => {
+    const { instance } = await runner()
+    const batch = instance.beginBatch()
+    instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    await settle(150)
+
+    instance.clearQueued()
+    expect(batch.cancelled).toBe(true)
+    batch.finish()
+    instance.cancelAll()
+  })
+
+  it('is forgotten once it finishes, so a later cancel does not touch it', async () => {
+    const { instance } = await runner()
+    const batch = instance.beginBatch()
+    batch.finish()
+
+    instance.cancelAll()
+    expect(batch.cancelled).toBe(false)
+  })
+
+  it('does not stop a batch opened after the cancel', async () => {
+    const { instance } = await runner()
+    instance.enqueue({ result, settings: DEFAULT_SETTINGS, mode: 'safe-remux' })
+    await settle(150)
+    instance.cancelAll()
+
+    const batch = instance.beginBatch()
+    expect(batch.cancelled).toBe(false)
+    batch.finish()
+  })
+})
+
 describe('clearFinished', () => {
   it('is the other half: finished go, running and queued stay', async () => {
     const { instance } = await runner()

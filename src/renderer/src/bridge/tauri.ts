@@ -497,34 +497,46 @@ function buildApi() {
     jobs: {
       enqueue: async (requests: RepairRequest[], mode?: RepairMode): Promise<Job[]> => {
         const active = await ensureRunner()
-        const overrides = await invoke<ModeOverrides>('overrides_get')
-        const ready = await toolchain()
-        if ('problem' in ready) throw new Error(ready.problem)
-        const environment = await environmentFor(ready.settings, false)
+        // Opened before the first slow step, so that cancelling during the
+        // setup counts too and not only once files start arriving.
+        const batch = active.beginBatch()
+        try {
+          const overrides = await invoke<ModeOverrides>('overrides_get')
+          const ready = await toolchain()
+          if ('problem' in ready) throw new Error(ready.problem)
+          const environment = await environmentFor(ready.settings, false)
 
-        const jobs: Job[] = []
-        for (const request of requests) {
-          // Analysed now, with today's settings, so the plan matches what the
-          // table shows rather than whatever was true when it was scanned.
-          const probed = await probeFile(request.file.path, {
-            ffprobePath: ready.ffprobePath,
-            host: ready.host
-          })
-          jobs.push(
-            active.enqueue({
-              result: analyzeFile(probed, ready.settings),
-              settings: ready.settings,
-              mode: repairModeFor(probed.path, overrides, ready.settings.defaultMode, mode),
-              caps: environment.capabilities,
-              scanRoot: request.scanRoot
+          const jobs: Job[] = []
+          for (const request of requests) {
+            if (batch.cancelled) break
+            // Analysed now, with today's settings, so the plan matches what the
+            // table shows rather than whatever was true when it was scanned.
+            const probed = await probeFile(request.file.path, {
+              ffprobePath: ready.ffprobePath,
+              host: ready.host
             })
-          )
+            // Checked again: the probe is the slow part, and a file probed
+            // before the click must not be queued after it.
+            if (batch.cancelled) break
+            jobs.push(
+              active.enqueue({
+                result: analyzeFile(probed, ready.settings),
+                settings: ready.settings,
+                mode: repairModeFor(probed.path, overrides, ready.settings.defaultMode, mode),
+                caps: environment.capabilities,
+                scanRoot: request.scanRoot
+              })
+            )
+          }
+          return jobs
+        } finally {
+          batch.finish()
         }
-        return jobs
       },
       list: (): Promise<Job[]> => Promise.resolve(runner?.list() ?? []),
       cancel: async (id: string): Promise<boolean> => runner?.cancel(id) ?? false,
-      cancelAll: async (): Promise<void> => runner?.cancelAll(),
+      /** Resolves to the ids dropped before starting, for the window to remove. */
+      cancelAll: async (): Promise<string[]> => runner?.cancelAll() ?? [],
       clearFinished: async (): Promise<void> => runner?.clearFinished(),
       clearQueued: async (): Promise<number> => runner?.clearQueued() ?? 0,
       onUpdate: (listener: (job: Job) => void): Unsubscribe => jobUpdate.on(listener)

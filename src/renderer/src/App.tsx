@@ -13,7 +13,7 @@ import { resolveMode } from '@shared/mode.js'
 import { DEFAULT_SORT, nextSort, sortResults, type SortState } from '@shared/sort.js'
 import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
-import BulkMenu from './components/BulkMenu.js'
+import MenuButton from './components/MenuButton.js'
 import { repairConfirmation, summarizeRepair } from '@shared/bulk.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
@@ -553,8 +553,11 @@ export default function App(): React.JSX.Element {
       )
       const question = repairConfirmation(summary, requests.length, mode)
       if (question && !window.confirm(question)) return
-      await window.plexfixer.jobs.enqueue(requests, mode)
+      // Switched before the files are queued, not after. Each one is re-probed
+      // on its way in, so a large batch takes a while to arrive — and watching
+      // it arrive, with Cancel all in reach, beats staring at the library.
       setTab('jobs')
+      await window.plexfixer.jobs.enqueue(requests, mode)
     },
     []
   )
@@ -740,7 +743,10 @@ export default function App(): React.JSX.Element {
                 >
                   Clear selection
                 </button>
-                <BulkMenu
+                <MenuButton
+                  label="Bulk"
+                  title="Actions for the selected files"
+                  disabledTitle="Select files to act on them"
                   disabled={selectedPaths.length === 0}
                   items={[
                     {
@@ -1101,7 +1107,14 @@ export default function App(): React.JSX.Element {
             }}
             onSave={(name, contents) => window.plexfixer.app.saveText(name, contents)}
             onCancel={(id) => void window.plexfixer.jobs.cancel(id)}
-            onCancelAll={() => void window.plexfixer.jobs.cancelAll()}
+            onCancelAll={() => {
+              void (async () => {
+                // The runner says which jobs it dropped. Filtering on state
+                // here instead would race a job that started in the meantime.
+                const dropped = new Set(await window.plexfixer.jobs.cancelAll())
+                setJobs((previous) => previous.filter((job) => !dropped.has(job.id)))
+              })()
+            }}
             onClear={() => {
               void window.plexfixer.jobs.clearFinished()
               setJobs((previous) =>
