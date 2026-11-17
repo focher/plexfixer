@@ -14,7 +14,17 @@ import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { explainSshFailure, literalPattern, shellCommand, shellQuote, sshArgs } from '@shared/plex/ssh.js'
+import {
+  canMultiplex,
+  explainSshFailure,
+  literalPattern,
+  shellCommand,
+  shellQuote,
+  sshArgs,
+  sshRun,
+  type SshRunner
+} from '@shared/plex/ssh.js'
+import type { RepairHost } from '@shared/host.js'
 import { checkScript, parseCheck, REQUIRED_UTILITIES } from '@shared/plex/remote-check.js'
 import { parseLsLong, parseStatLine, remoteHost } from '@shared/plex/remote-host.js'
 import { hostFor, localHost, remoteTargetFor } from './node-host.js'
@@ -59,11 +69,11 @@ describe('sshArgs', () => {
     expect(sshArgs({ host: 'nas', port: 2222 }, 'x')).toContain('2222')
   })
 
-  it('shares one connection across every command', () => {
+  it('shares one connection across every command when asked to', () => {
     // Each command used to pay for its own TCP connection, key exchange and
     // authentication. A scan runs one ffprobe per file, so on a large library
     // that handshake was the scan.
-    const args = sshArgs({ host: 'nas' }, 'x')
+    const args = sshArgs({ host: 'nas' }, 'x', { multiplex: true })
     expect(args).toContain('ControlMaster=auto')
     expect(args).toContain('ControlPersist=60')
     const path = args.find((arg) => arg.startsWith('ControlPath='))
@@ -74,6 +84,71 @@ describe('sshArgs', () => {
     // The expansion of this becomes a Unix socket path, capped near 104 bytes,
     // and %C alone spends 40 of them.
     expect(path!.length).toBeLessThan(40)
+  })
+
+  it('says no to sharing outright rather than just leaving it out', () => {
+    // Windows' own ssh.exe cannot multiplex at all, and it still reads the
+    // user's ~/.ssh/config — so omitting these would let a ControlMaster set
+    // there break the connection. A command-line -o beats the config file.
+    const args = sshArgs({ host: 'nas' }, 'x')
+    expect(args).toContain('ControlMaster=no')
+    expect(args).toContain('ControlPath=none')
+    expect(args).not.toContain('ControlMaster=auto')
+  })
+})
+
+describe('which machines can share a connection', () => {
+  const windows = { sep: '\\' } as RepairHost['paths']
+  const posix = { sep: '/' } as RepairHost['paths']
+  const runner = (paths: RepairHost['paths']): SshRunner =>
+    ({ paths, spawnProcess: () => { throw new Error('not started') } }) as unknown as SshRunner
+
+  it('is about the machine running ssh, not the one being reached', () => {
+    expect(canMultiplex(runner(posix))).toBe(true)
+    // A Windows machine talking to a Linux NAS still cannot share the
+    // connection: the limitation is in its own ssh client.
+    expect(canMultiplex(runner(windows))).toBe(false)
+  })
+})
+
+describe('starting ssh on Windows', () => {
+  /** Captures the arguments `ssh` would have been started with. */
+  function capturing(sep: string): { local: SshRunner; args: string[] } {
+    const args: string[] = []
+    const local = {
+      paths: { sep } as RepairHost['paths'],
+      spawnProcess: (_command: string, given: string[]) => {
+        args.push(...given)
+        return {
+          onStdout: () => undefined,
+          onStderr: () => undefined,
+          closed: Promise.resolve({ code: 0 }),
+          terminate: () => undefined
+        }
+      }
+    } as unknown as SshRunner
+    return { local, args }
+  }
+
+  it('never asks for a control socket it cannot make', async () => {
+    // The regression: these options made every remote command fail with
+    // "getsockname failed: Not a socket", so a host that had been green went
+    // red. Windows OpenSSH does not implement connection sharing.
+    const { local, args } = capturing('\\')
+    await sshRun(local, { host: 'nas' }, 'true')
+
+    expect(args).not.toContain('ControlMaster=auto')
+    expect(args).not.toContain('ControlPersist=60')
+    expect(args.some((arg) => arg.startsWith('ControlPath=~'))).toBe(false)
+    expect(args).toContain('ControlMaster=no')
+  })
+
+  it('still shares the connection everywhere else', async () => {
+    const { local, args } = capturing('/')
+    await sshRun(local, { host: 'nas' }, 'true')
+
+    expect(args).toContain('ControlMaster=auto')
+    expect(args).toContain('ControlPersist=60')
   })
 
   it('offers only the chosen key when one is given', () => {

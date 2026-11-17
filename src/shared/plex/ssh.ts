@@ -16,8 +16,12 @@
 
 import type { HostProcess, RepairHost } from '../host.js'
 
-/** Just enough of a host to start `ssh` with: where the command runs from. */
-export type SshRunner = Pick<RepairHost, 'spawnProcess'>
+/**
+ * Just enough of a host to start `ssh` with: where the command runs from, and
+ * what kind of machine that is. The second matters because connection sharing
+ * is a property of the local ssh client, not of the host being reached.
+ */
+export type SshRunner = Pick<RepairHost, 'spawnProcess' | 'paths'>
 
 export interface SshTarget {
   /** `user@host`, or a Host alias from the user's ssh config. */
@@ -105,15 +109,34 @@ export function assertHost(host: string): string {
  */
 const CONTROL_PATH = '~/.ssh/pf-%C'
 
-export function sshArgs(target: SshTarget, remoteCommand: string): string[] {
+/**
+ * Whether the machine running `ssh` can share connections at all.
+ *
+ * Connection sharing needs a Unix-domain socket, and Windows' own
+ * `ssh.exe` — the OpenSSH port that ships with Windows, which is what PlexFixer
+ * runs there — does not implement multiplexing. Asking it to produces
+ * `getsockname failed: Not a socket` and the connection fails outright, so a
+ * remote host that worked went red the moment these options were added.
+ *
+ * This is about the local client, not the far end: a Windows machine talking to
+ * a Linux NAS still cannot share the connection.
+ */
+export function canMultiplex(local: SshRunner): boolean {
+  return local.paths.sep !== '\\'
+}
+
+/**
+ * The connection-sharing options, or the ones that firmly switch it off.
+ *
+ * Leaving the options out is not enough on Windows: `ssh.exe` still reads the
+ * user's `~/.ssh/config`, and a `ControlMaster` set there fails in exactly the
+ * same way. A command-line `-o` beats the config file, so saying no explicitly
+ * is what makes PlexFixer work on a machine whose config asks for sharing that
+ * its own ssh cannot do.
+ */
+function multiplexArgs(enabled: boolean): string[] {
+  if (!enabled) return ['-o', 'ControlMaster=no', '-o', 'ControlPath=none']
   return [
-    '-T',
-    '-o',
-    'BatchMode=yes',
-    '-o',
-    'ConnectTimeout=10',
-    '-o',
-    'ServerAliveInterval=20',
     // One connection, shared. Without this every command — every ffprobe of
     // every file in a scan — paid for its own TCP connection, key exchange and
     // authentication, which on a thousand-file library is the scan.
@@ -125,7 +148,29 @@ export function sshArgs(target: SshTarget, remoteCommand: string): string[] {
     // enough to cover a scan's gaps, short enough that nothing is left running
     // once the app has been shut for a minute.
     '-o',
-    'ControlPersist=60',
+    'ControlPersist=60'
+  ]
+}
+
+export interface SshArgsOptions {
+  /** Defaults to off: sharing is added where it is known to work, not assumed. */
+  multiplex?: boolean
+}
+
+export function sshArgs(
+  target: SshTarget,
+  remoteCommand: string,
+  options: SshArgsOptions = {}
+): string[] {
+  return [
+    '-T',
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ConnectTimeout=10',
+    '-o',
+    'ServerAliveInterval=20',
+    ...multiplexArgs(options.multiplex ?? false),
     ...(target.identityFile ? ['-i', target.identityFile, '-o', 'IdentitiesOnly=yes'] : []),
     ...(target.port ? ['-p', String(target.port)] : []),
     assertHost(target.host),
@@ -195,7 +240,7 @@ export async function sshRun(
 ): Promise<SshResult> {
   let child: HostProcess
   try {
-    child = local.spawnProcess('ssh', sshArgs(target, remoteCommand))
+    child = local.spawnProcess('ssh', sshArgs(target, remoteCommand, { multiplex: canMultiplex(local) }))
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new SshError(
@@ -275,5 +320,5 @@ export async function sshCheck(
 
 /** Start a long-running remote command, streaming its output as it goes. */
 export function sshSpawn(local: SshRunner, target: SshTarget, remoteCommand: string): HostProcess {
-  return local.spawnProcess('ssh', sshArgs(target, remoteCommand))
+  return local.spawnProcess('ssh', sshArgs(target, remoteCommand, { multiplex: canMultiplex(local) }))
 }
