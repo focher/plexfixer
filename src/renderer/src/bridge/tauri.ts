@@ -430,7 +430,11 @@ function buildApi() {
           settings: ready.settings,
           host: ready.host,
           ffprobePath: ready.ffprobePath,
-          findMedia: ready.host.findMedia,
+          // Called on the host, not taken off it: a remote host's `findMedia`
+          // reaches for the rest of the host to do its work, and a bare
+          // reference arrives with nothing to reach for. This is why a scan in
+          // remote mode found nothing at all.
+          findMedia: (roots, extensions, recursive) => ready.host.findMedia(roots, extensions, recursive),
           signal: controller.signal,
           onProgress: (event) => scanProgress.emit(event)
         })

@@ -470,6 +470,28 @@ describe('the remote host, over a stand-in ssh', () => {
     expect(outcome).toBe('SIGTERM')
   })
 
+  it('finds media when its method is taken off the host, as the scan takes it', async () => {
+    // The Tauri shell passes `host.findMedia` to the scan as a bare reference.
+    // Written as a method using `this`, that call arrived with no host to work
+    // through and threw on the first line — so a scan in remote mode found
+    // nothing, every time, for as long as the Tauri build has existed.
+    await mkdir(join(dir, 'Season 1'), { recursive: true })
+    await writeFile(join(dir, 'Season 1', 'ep1.mkv'), 'x')
+    await writeFile(join(dir, 'movie.mp4'), 'x')
+
+    const findMedia = host().findMedia
+
+    const found = await findMedia([dir], ['mkv', 'mp4'], true)
+    expect(found.map((path) => path.replace(`${dir}/`, '')).sort()).toEqual(['Season 1/ep1.mkv', 'movie.mp4'])
+  })
+
+  it('takes a single file as a root, detached as well', async () => {
+    const file = join(dir, 'just one.mkv')
+    await writeFile(file, 'x')
+    const findMedia = host().findMedia
+    expect(await findMedia([file], ['mkv'], true)).toEqual([file])
+  })
+
   it('makes, moves and removes, which is how a repair lands', async () => {
     const remote = host()
     const nested = join(dir, 'out', 'deeper')

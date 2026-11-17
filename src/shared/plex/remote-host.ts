@@ -102,7 +102,11 @@ export function remoteHost(target: SshTarget, local: RepairHost): RepairHost {
     return result.stdout
   }
 
-  return {
+  // Named, and referred to by name below rather than through `this`. A host is
+  // an object of functions, and callers take those functions off it — the Tauri
+  // shell hands `host.findMedia` straight to the scan — at which point `this`
+  // is undefined and the call fails on the first thing it reaches for.
+  const host: RepairHost = {
     kind: 'remote',
     label: target.host,
     paths: remotePaths,
@@ -200,7 +204,7 @@ export function remoteHost(target: SshTarget, local: RepairHost): RepairHost {
       const found = new Set<string>()
 
       for (const root of roots) {
-        const info = await this.stat(root)
+        const info = await host.stat(root)
         if (!info) continue
         if (!info.isDirectory) {
           if (wanted.has(remotePaths.extname(root).slice(1).toLowerCase())) found.add(root)
@@ -236,6 +240,8 @@ export function remoteHost(target: SshTarget, local: RepairHost): RepairHost {
       return [...found].sort((a, b) => a.localeCompare(b))
     }
   }
+
+  return host
 }
 
 /* ------------------------------------------------------------------ *
