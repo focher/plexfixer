@@ -255,7 +255,9 @@ code {
  * and scrolling them off the top to reach the four hundredth row means
  * scrolling back up to change anything. On that tab `.content` stops scrolling
  * and hands the job to `.results`, which also gives the table's column header
- * a scroll box to stick to. Every other tab is a page, and still scrolls as one.
+ * a scroll box to stick to. The queue does the same, so its counts and buttons
+ * stay in view over a long list. Every other tab is a page, and still scrolls
+ * as one.
  */
 .content.split {
   overflow: hidden;
@@ -1686,6 +1688,12 @@ button.expander:hover:not(:disabled) {
   padding: 0 0 12px;
   border-bottom: none;
   background: none;
+}
+
+/* Scrolls under the toolbar, but a short queue keeps its own height rather
+   than stretching an empty box to the bottom of the window. */
+.queue-toolbar ~ .results {
+  flex-grow: 0;
 }
 
 /* The repair's cost, beside its row: never wider than its column. */

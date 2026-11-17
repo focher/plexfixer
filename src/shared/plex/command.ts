@@ -54,6 +54,21 @@ function changeFor(plan: RepairPlan, streamIndex: number): TrackPlanChange | und
   }))
 }
 
+/**
+ * An option name limited to one video output stream: `-preset` becomes
+ * `-preset:v:0`, and `-b:v` becomes `-b:v:0`. With no ordinal it is left
+ * applying to every video stream, the only choice when none was mapped.
+ */
+export function scopeToVideo(flag: string, ordinal: number | undefined): string {
+  if (ordinal == null) return flag
+  return flag.endsWith(':v') ? `${flag}:${ordinal}` : `${flag}:v:${ordinal}`
+}
+
+/** `scopeToVideo` over a flat list of option/value pairs; values are untouched. */
+export function scopeOptionsToVideo(options: string[], ordinal: number | undefined): string[] {
+  return options.map((item, index) => (index % 2 === 0 ? scopeToVideo(item, ordinal) : item))
+}
+
 /* ------------------------------------------------------------------ *
  * Video encoder selection
  * ------------------------------------------------------------------ */
@@ -183,9 +198,11 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
 
   // Embedded artwork is a still-image `video` stream as far as ffprobe is
   // concerned, and the plan never reasons about it. It is kept apart from the
-  // real video tracks because every per-video option (-c:v, -vf, -tag:v,
-  // -profile:v) would otherwise apply to the poster as well — tagging a JPEG
-  // as `hvc1` is what makes the MP4 muxer refuse to write a header. It is
+  // real video tracks because a bare `:v` option (-c:v, -vf, -tag:v,
+  // -profile:v, -crf …) applies to the poster as well — tagging a JPEG as
+  // `hvc1` makes the MP4 muxer refuse to write a header, and ffmpeg applies
+  // `-profile:v high` even to a copied MJPEG stream, which it cannot parse.
+  // Every video option below is therefore scoped to the real track. It is
   // mapped last instead, with its own `copy` codec and `attached_pic`
   // disposition, so a repair does not quietly strip the artwork.
   const videoTracks = file.streams.filter(
@@ -271,7 +288,11 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
     if (spec.deinterlace) filters.push('yadif=mode=0:parity=-1:deint=0')
     if (spec.scaleHeight) filters.push(`scale=-2:${spec.scaleHeight}:flags=lanczos`)
 
-    args.push('-c:v', choice.encoder, ...choice.rateControl)
+    // Every encoder option is scoped to the track being re-encoded, so none of
+    // them lands on cover art, which stays a stream copy.
+    const primary = mapped.find((entry) => entry.specifier === 'v')
+    const scoped = (flag: string): string => scopeToVideo(flag, primary?.ordinal)
+    args.push(scoped('-c:v'), choice.encoder, ...scopeOptionsToVideo(choice.rateControl, primary?.ordinal))
 
     if (spec.forceYuv420p) {
       // Hardware encoders reject 10-bit input for H.264 outright, so the
@@ -281,20 +302,19 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
     if (filters.length > 0) {
       // `-vf` is every video stream; artwork must not be deinterlaced or
       // scaled, so the graph is scoped to the stream being re-encoded.
-      const primary = mapped.find((entry) => entry.specifier === 'v')
       args.push(primary ? `-filter:v:${primary.ordinal}` : '-vf', filters.join(','))
     }
 
     if (spec.codec === 'h264') {
-      args.push('-profile:v', 'high')
+      args.push(scoped('-profile:v'), 'high')
       // Only cap the level where the resolution can actually fit inside it —
       // Level 4.1 cannot express 4K, and ffmpeg would reject the combination.
       const primaryVideo = videoTracks[0]
       const sourceHeight = primaryVideo && primaryVideo.kind === 'video' ? primaryVideo.height : 0
       const outputHeight = spec.scaleHeight ?? sourceHeight
-      if (outputHeight > 0 && outputHeight <= 1080) args.push('-level:v', '4.1')
+      if (outputHeight > 0 && outputHeight <= 1080) args.push(scoped('-level:v'), '4.1')
     } else {
-      args.push('-profile:v', 'main10')
+      args.push(scoped('-profile:v'), 'main10')
     }
 
     if (spec.dolbyVisionToHdr10) {
