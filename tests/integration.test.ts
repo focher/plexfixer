@@ -280,6 +280,53 @@ describe.runIf(enabled)('integration: embedded cover art', () => {
     expect(repaired.streams.filter((s) => s.kind === 'audio')).toHaveLength(1)
     expect(await hasFaststart(outputPath)).toBe(true)
   }, 180_000)
+
+  /**
+   * Regression for a transcode that died with
+   *   Unable to parse "profile" option value "high"
+   *   [vost#0:3/copy] Error setting up codec context options
+   * on files carrying two posters (Dark City). A bare `-profile:v high` also
+   * reached the copied MJPEG streams, which have no such profile.
+   */
+  it('re-encodes a file with two posters and keeps both', async () => {
+    const high10 = await makeFile('high10Art-base.mp4', [
+      ...SOURCES.slice(0, 8),
+      '-map', '0:v', '-map', '1:a',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-profile:v', 'high10', '-pix_fmt', 'yuv420p10le',
+      '-c:a', 'aac',
+      '-metadata:s:v:0', 'language=eng',
+      '-metadata:s:a:0', 'language=eng'
+    ])
+    const poster = await makeFile('poster2.jpg', [
+      '-f', 'lavfi', '-i', 'color=c=blue:size=300x450:duration=1',
+      '-frames:v', '1'
+    ])
+    const path = await makeFile('high10Art.mp4', [
+      '-i', high10, '-i', poster, '-i', poster,
+      '-map', '0', '-map', '1', '-map', '2', '-c', 'copy',
+      '-disposition:v:1', 'attached_pic', '-disposition:v:2', 'attached_pic'
+    ])
+
+    const file = await probeFile(path, { ffprobePath: FFPROBE!, host: localHost() })
+    expect(file.streams.filter((s) => s.kind === 'video')).toHaveLength(3)
+    const result = analyzeFile(file, DEFAULT_SETTINGS)
+    expect(result.plan.videoTranscode?.codec).toBe('h264')
+
+    const outputPath = join(workDir, 'high10Art.fixed.mp4')
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath })
+    // This is the call that used to fail outright.
+    await execFileAsync(FFMPEG!, ['-hide_banner', '-loglevel', 'error', ...args], { timeout: 300_000 })
+
+    const repaired = await probeFile(outputPath, { ffprobePath: FFPROBE!, host: localHost() })
+    const video = repaired.streams.filter((s) => s.kind === 'video')
+    expect(video).toHaveLength(3)
+    const real = video.find((s) => !s.disposition.attachedPic)!
+    expect(real.codec).toBe('h264')
+    expect(real.kind === 'video' && real.profile).toBe('High')
+    expect(real.kind === 'video' && real.bitDepth).toBe(8)
+    const art = video.filter((s) => s.disposition.attachedPic)
+    expect(art.map((s) => s.codec)).toEqual(['mjpeg', 'mjpeg'])
+  }, 300_000)
 })
 
 describe.runIf(enabled)('integration: language codes', () => {

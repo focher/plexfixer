@@ -821,10 +821,10 @@ export default function App(): React.JSX.Element {
 
       {/*
         The library keeps a header of its own: the tiles, the search box and the
-        filter chips stay put while only the file list scrolls. Every other tab
-        scrolls as one page.
+        filter chips stay put while only the file list scrolls. The queue does
+        the same with its toolbar. Every other tab scrolls as one page.
       */}
-      <div className={`content${tab === 'library' ? ' split' : ''}`}>
+      <div className={`content${tab === 'library' || tab === 'jobs' ? ' split' : ''}`}>
         {environment && !environment.ready ? (
           <div className="banner error">
             <strong>FFmpeg not available.</strong> {environment.problem}

@@ -217,6 +217,15 @@ describe('buildRepairCommand — video re-encode', () => {
     amf: false,
     libplacebo: false
   }
+  const hardware: EncoderCapabilities[] = (['qsv', 'amf', 'videotoolbox'] as const).map((kind) => ({
+    platform: 'darwin',
+    available: [],
+    nvenc: false,
+    videotoolbox: kind === 'videotoolbox',
+    qsv: kind === 'qsv',
+    amf: kind === 'amf',
+    libplacebo: false
+  }))
 
   it('uses NVENC with constant-quality VBR when it is available', () => {
     const result = analyzeFile(
@@ -230,13 +239,13 @@ describe('buildRepairCommand — video re-encode', () => {
       outputPath: OUT
     })
 
-    expect(valueAfter(args, '-c:v')).toBe('h264_nvenc')
-    expect(valueAfter(args, '-cq')).toBe(String(DEFAULT_SETTINGS.videoQuality))
-    expect(valueAfter(args, '-b:v')).toBe('0')
+    expect(valueAfter(args, '-c:v:0')).toBe('h264_nvenc')
+    expect(valueAfter(args, '-cq:v:0')).toBe(String(DEFAULT_SETTINGS.videoQuality))
+    expect(valueAfter(args, '-b:v:0')).toBe('0')
     expect(encoderLabel).toContain('NVENC')
     // 10-bit source targeting H.264 must be converted down to 8-bit 4:2:0.
     expect(valueAfter(args, '-filter:v:0')).toContain('format=yuv420p')
-    expect(valueAfter(args, '-level:v')).toBe('4.1')
+    expect(valueAfter(args, '-level:v:0')).toBe('4.1')
   })
 
   it('falls back to libx264 when no hardware encoder is usable', () => {
@@ -245,8 +254,8 @@ describe('buildRepairCommand — video re-encode', () => {
       DEFAULT_SETTINGS
     )
     const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: OUT })
-    expect(valueAfter(args, '-c:v')).toBe('libx264')
-    expect(valueAfter(args, '-crf')).toBe(String(DEFAULT_SETTINGS.videoQuality))
+    expect(valueAfter(args, '-c:v:0')).toBe('libx264')
+    expect(valueAfter(args, '-crf:v:0')).toBe(String(DEFAULT_SETTINGS.videoQuality))
   })
 
   it('deinterlaces and downscales in one filter chain', () => {
@@ -266,7 +275,35 @@ describe('buildRepairCommand — video re-encode', () => {
       DEFAULT_SETTINGS
     )
     const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: OUT })
-    expect(args).not.toContain('-level:v')
+    expect(args.some((arg) => arg.startsWith('-level'))).toBe(false)
+  })
+
+  it('keeps every encoder option off embedded cover art', () => {
+    // Dark City: two MJPEG posters after the real track. A bare `-profile:v high`
+    // reaches the copied posters too, and ffmpeg refuses to open the output.
+    const result = analyzeFile(
+      mp4([
+        video({ language: 'eng', profile: 'High 10', pixFmt: 'yuv420p10le', bitDepth: 10 }),
+        mainAudio({ index: 1, language: 'eng' }),
+        coverArt({ index: 2 }),
+        coverArt({ index: 3 })
+      ]),
+      DEFAULT_SETTINGS
+    )
+    for (const caps of [undefined, nvidia, ...hardware]) {
+      const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, caps, outputPath: OUT })
+      expect(result.plan.videoTranscode).toBeDefined()
+      expect(valueAfter(args, '-profile:v:0')).toBe('high')
+      // Every option after the encoder is chosen names the real track, until
+      // the posters are switched back to a copy.
+      const start = args.findIndex((arg) => arg.startsWith('-c:v'))
+      const end = args.indexOf('-c:v:1')
+      const encoderOptions = args.slice(start, end).filter((_, index) => index % 2 === 0)
+      expect(encoderOptions.length).toBeGreaterThan(2)
+      for (const flag of encoderOptions) expect(flag).toMatch(/:v:0$/)
+      expect(valueAfter(args, '-c:v:1')).toBe('copy')
+      expect(valueAfter(args, '-c:v:2')).toBe('copy')
+    }
   })
 })
 
