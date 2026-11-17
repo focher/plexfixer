@@ -25,8 +25,8 @@ first.
 
 | Platform | Source | Build |
 | --- | --- | --- |
-| Windows x64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | `ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip` |
-| Linux x64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | `ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz` (not shipped; fetched by name only) |
+| Windows x64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | release tag `autobuild-2026-10-31-12-59`, `ffmpeg-n8.1.3-27-g8dca1586f4-win64-gpl-shared-8.1.zip` |
+| Linux x64 | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | release tag `autobuild-2026-10-31-12-59`, `ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-shared-8.1.tar.xz` (not shipped; fetched by name only) |
 | macOS arm64 | [Vodes/ffmpeg-mt](https://github.com/Vodes/ffmpeg-mt) | release tag `v9.0.2-r1`, `ffmpeg-9.0.2-macos-arm64.tar.zst` (GPL v3, static, libplacebo + MoltenVK) |
 | macOS x64 | [shaka-project/static-ffmpeg-binaries](https://github.com/shaka-project/static-ffmpeg-binaries) | release tag `n8.1.2-2`, `ffmpeg-osx-x64` / `ffprobe-osx-x64` |
 
@@ -35,12 +35,37 @@ Both macOS architectures come from one upstream build, configured
 is deliberate: 0.1.1 took the two architectures from two different projects,
 and only one of them turned out to be redistributable.
 
-`scripts/fetch-ffmpeg.mjs` is the single place these URLs are defined; change
-them there to pin a different build.
+Every download is pinned to a release tag and checked against a SHA-256 before
+it is used, so a build either ships the bytes that were chosen or stops.
+`scripts/fetch-ffmpeg.mjs` is the single place these URLs and checksums are
+defined; change the tag and the checksum together to pin a different build.
 
 The binaries are not committed to this repository. They are downloaded at build
 time by `npm run fetch:ffmpeg`, so a clone of this repository contains no
 GPL-licensed material.
+
+## qt-faststart
+
+PlexFixer also bundles `qt-faststart`, which moves an MP4's index to the front
+in one read and one write — the job ffmpeg does by remuxing the file and then
+rewriting the whole of it a second time. It is run as a subprocess like the
+others, and the app works without it.
+
+It is not taken from a build; none of the ffmpeg builds above ships one. It is
+compiled here from `tools/qt-faststart.c` in FFmpeg's own source tree, pinned
+to release `n8.1.3` and checked against its SHA-256. The file is self-contained
+— standard C headers, nothing linked — and is **placed in the public domain**
+by its author, Mike Melanson, so unlike the ffmpeg binaries it carries no
+licence obligation.
+
+| Component | Source | File |
+| --- | --- | --- |
+| qt-faststart | [FFmpeg](https://github.com/FFmpeg/FFmpeg) | release tag `n8.1.3`, `tools/qt-faststart.c` (public domain) |
+
+Compiling it needs a C compiler on the machine that fetches: Apple's clang
+covers both macOS architectures from one Mac, and Windows uses the MSVC that
+building PlexFixer already requires. A machine without one simply does not get
+it, and ffmpeg moves the index instead.
 
 ### Withdraw the 0.1.1 macOS arm64 artifacts
 

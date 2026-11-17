@@ -32,6 +32,11 @@
  * to a newer build, change the tag and the checksum together — GitHub lists a
  * `digest` for every release asset.
  *
+ * `qt-faststart` is fetched too, as source, and compiled here: none of these
+ * builds ships one, and without it the app remuxes a whole file to move an
+ * MP4's index. It is optional — a machine with no C compiler simply does not
+ * get it, and the app does what it always did.
+ *
  * `npm run fetch:ffmpeg` fetches this machine's platform; `-- --all` fetches
  * every platform, which is what building installers needs. `-- --force`
  * re-downloads binaries that are already present.
@@ -49,6 +54,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { assertChecksum, hashingTap } from './lib/checksum.mjs'
 import { licenseOf } from './lib/ffmpeg-license.mjs'
+import { ensureQtFaststart } from './lib/qt-faststart.mjs'
 
 const execFileAsync = promisify(execFile)
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -278,6 +284,29 @@ async function move(from, to) {
   await rm(from, { force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
 }
 
+/**
+ * Build `qt-faststart` into the platform folder, and say what happened.
+ *
+ * Never throws: the app falls back to ffmpeg's own two-pass move without it,
+ * which is what it did before this existed, and an optional speed-up must not
+ * fail a fetch that otherwise worked.
+ */
+async function addQtFaststart(platformKey, outputDir, workDir, force) {
+  const result = await ensureQtFaststart({
+    platformKey,
+    outputDir,
+    workDir: join(workDir, 'qt-faststart'),
+    force,
+    download,
+  })
+  if (result.state === 'built') {
+    console.log(`  → qt-faststart (compiled with ${result.compiler})`)
+  } else if (result.state === 'skipped') {
+    console.log(`  no qt-faststart: ${result.reason}`)
+    console.log('    ffmpeg moves the MP4 index instead, by rewriting the file twice.')
+  }
+}
+
 async function fetchTarget(platformKey, { force, allowNonfree }) {
   const target = TARGETS[platformKey]
   if (!target) {
@@ -290,19 +319,25 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
     WANTED.map((name) => [name, join(outputDir, exeName(platformKey, name))])
   )
 
-  if (!force) {
-    const present = await Promise.all(WANTED.map((name) => fileExists(finalPaths[name])))
-    if (present.every(Boolean)) {
-      console.log(`\n${platformKey}: already present, skipping (use --force to replace).`)
-      return
-    }
+  const present = await Promise.all(WANTED.map((name) => fileExists(finalPaths[name])))
+  const haveFfmpeg = !force && present.every(Boolean)
+  if (haveFfmpeg) {
+    console.log(`\n${platformKey}: ffmpeg already present, skipping (use --force to replace).`)
+  } else {
+    console.log(`\n${platformKey}:`)
   }
 
-  console.log(`\n${platformKey}:`)
   await mkdir(outputDir, { recursive: true })
   const workDir = await mkdtemp(join(tmpdir(), 'plexfixer-ffmpeg-'))
 
   try {
+    // Always, even when the binaries above were already here: qt-faststart is
+    // newer than they are, so a checkout that predates it has ffmpeg and no
+    // qt-faststart, and skipping the whole target would never add one.
+    if (haveFfmpeg) {
+      await addQtFaststart(platformKey, outputDir, workDir, force)
+      return
+    }
     if (target.kind === 'files') {
       for (const name of WANTED) {
         const url = target.urls[name]
@@ -353,6 +388,8 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
       }
       console.log(`  → ${libraries.length} shared libraries (${(bytes / 1048576).toFixed(0)} MB)`)
     }
+
+    await addQtFaststart(platformKey, outputDir, workDir, force)
   } finally {
     // Retries for the same reason `move` has them: a scanner still holding one
     // of the files it just unpacked would otherwise fail a fetch that worked.

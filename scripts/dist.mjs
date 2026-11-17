@@ -220,7 +220,14 @@ function ensureFfmpeg(target) {
   const missing = target.ffmpeg.filter((folder) => {
     const dir = join(ROOT, 'resources', 'bin', folder)
     if (!existsSync(dir)) return true
-    return readdirSync(dir).filter((entry) => !entry.startsWith('.')).length === 0
+    const entries = readdirSync(dir).filter((entry) => !entry.startsWith('.'))
+    if (entries.length === 0) return true
+    // qt-faststart arrived after the binaries did, so a folder filled in
+    // before it exists has ffmpeg and no qt-faststart. The fetch is cheap when
+    // everything is there, and it leaves a dot-file behind on a machine that
+    // cannot compile one, so this asks again at most once per checkout.
+    const name = folder.startsWith('win32') ? 'qt-faststart.exe' : 'qt-faststart'
+    return !existsSync(join(dir, name)) && !existsSync(join(dir, '.qt-faststart-unavailable'))
   })
   if (missing.length === 0) return
 

@@ -244,6 +244,14 @@ installer, so what ships is what was chosen, not what a URL served that day.
 To move to a newer build, change the tag and the checksum together in
 `scripts/fetch-ffmpeg.mjs` — GitHub lists a `digest` for every release asset.
 
+`qt-faststart` is fetched as source and compiled, because none of those builds
+ships one. It moves an MP4's index in a single pass where ffmpeg rewrites the
+whole file twice, and the app uses it when moving the index is the entire
+repair. It needs a C compiler on the machine doing the fetch — one Mac builds
+both macOS architectures, and Windows uses the MSVC that building PlexFixer
+already requires. Without one the fetch says so, notes it in the platform
+folder so it does not ask again, and ffmpeg does the job as before.
+
 Windows and Linux use FFmpeg's *shared* builds, so the folder holds two small
 executables plus the libav* libraries they load from beside them — half the
 size of bundling two static binaries that each embed the whole library. Both

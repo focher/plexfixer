@@ -74,8 +74,9 @@ export default function AboutDialog({
         )}
 
         <p className="muted about-note">
-          MIT licensed. The bundled FFmpeg binaries are GPL builds, shipped as separate executables
-          and run as subprocesses — see NOTICE.md in the repository.
+          MIT licensed. The bundled FFmpeg binaries are GPL builds, and qt-faststart is public
+          domain; all are shipped as separate executables and run as subprocesses — see NOTICE.md
+          in the repository.
         </p>
 
         <div className="about-actions">
