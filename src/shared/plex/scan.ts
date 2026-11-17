@@ -41,29 +41,56 @@ export interface ScanRequest {
   cleanTemporaries?: (paths: string[]) => Promise<{ path: string; bytes: number }[]>
 }
 
+/** A scanned path and the folder it stands for. */
+export interface ScanRoot {
+  /** The path as it was given to the scan. */
+  input: string
+  /** That path if it is a folder, otherwise the folder holding it. */
+  root: string
+}
+
+/**
+ * Resolve each scanned path to the folder it stands for, once.
+ *
+ * This used to be worked out again for every file found, which meant a `stat`
+ * per input path per file. On another machine each of those is a command over
+ * the link, so a thousand files under one folder asked the same question a
+ * thousand times and got the same answer every time. The inputs do not change
+ * during a scan, so neither does this.
+ */
+export async function resolveScanRoots(inputPaths: string[], host: ProbeHost): Promise<ScanRoot[]> {
+  const { dirname } = host.paths
+  const roots: ScanRoot[] = []
+  for (const input of inputPaths) {
+    const info = await host.stat(input)
+    if (!info) continue
+    roots.push({ input, root: info.isDirectory ? input : dirname(input) })
+  }
+  return roots
+}
+
 /**
  * Which of the scanned paths a file came from.
  *
  * Used to re-scan the right folder later, and to tell a file that is still in
- * the library from one whose folder is no longer being watched.
+ * the library from one whose folder is no longer being watched. Pure, and
+ * decided from roots resolved up front, so it costs nothing per file.
  */
-export async function scanRootFor(
-  inputPaths: string[],
-  filePath: string,
-  host: ProbeHost
-): Promise<string | undefined> {
-  const { sep, dirname } = host.paths
-  for (const input of inputPaths) {
-    const info = await host.stat(input)
-    if (!info) continue
-    const root = info.isDirectory ? input : dirname(input)
-    if (filePath === input || filePath.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)) return root
+export function scanRootOf(roots: ScanRoot[], filePath: string, sep: string): string | undefined {
+  for (const { input, root } of roots) {
+    if (filePath === input) return root
+    if (filePath.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)) return root
   }
   return undefined
 }
 
 export async function runScan(request: ScanRequest): Promise<ScanCompleteEvent> {
   const { scanId, inputPaths, settings, host, signal, onProgress } = request
+
+  // Resolved once, before anything is probed: on a remote host each of these
+  // is a command over the link, and the answer is the same for every file.
+  const roots = await resolveScanRoots(inputPaths, host)
+  const { sep } = host.paths
 
   const found = await request.findMedia(inputPaths, settings.mediaExtensions, settings.recursive)
   // A repair's temporary file has a media extension but is not a library file:
@@ -93,7 +120,7 @@ export async function runScan(request: ScanRequest): Promise<ScanCompleteEvent> 
         result = {
           ...analyzeFile(probed, settings),
           scannedAt: Date.now(),
-          scanRoot: await scanRootFor(inputPaths, filePath, host)
+          scanRoot: scanRootOf(roots, filePath, sep)
         }
       } catch (error) {
         errors.push({

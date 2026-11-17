@@ -90,6 +90,21 @@ export function assertHost(host: string): string {
  * `-T` because none of this wants a terminal, and `-n` would close stdin,
  * which ffmpeg's `-progress pipe:1` does not need but a future caller might.
  */
+/**
+ * Where the shared connection's socket lives.
+ *
+ * `%C` is ssh's own hash of where it is connecting from and to, so each
+ * destination gets its own socket and no name has to be invented. `~/.ssh` is
+ * the conventional home for these and is certain to exist here: `BatchMode`
+ * means a key or an agent, and that is where keys live. The name is kept short
+ * on purpose — this becomes a Unix socket path, which the kernel caps at about
+ * 104 bytes, and the hash alone is 40 of them.
+ *
+ * If the socket cannot be made, ssh says so and connects normally, so nothing
+ * here can stop a connection that would otherwise have worked.
+ */
+const CONTROL_PATH = '~/.ssh/pf-%C'
+
 export function sshArgs(target: SshTarget, remoteCommand: string): string[] {
   return [
     '-T',
@@ -99,6 +114,18 @@ export function sshArgs(target: SshTarget, remoteCommand: string): string[] {
     'ConnectTimeout=10',
     '-o',
     'ServerAliveInterval=20',
+    // One connection, shared. Without this every command — every ffprobe of
+    // every file in a scan — paid for its own TCP connection, key exchange and
+    // authentication, which on a thousand-file library is the scan.
+    '-o',
+    'ControlMaster=auto',
+    '-o',
+    `ControlPath=${CONTROL_PATH}`,
+    // Outlives the command that opened it, so the next one reuses it. Long
+    // enough to cover a scan's gaps, short enough that nothing is left running
+    // once the app has been shut for a minute.
+    '-o',
+    'ControlPersist=60',
     ...(target.identityFile ? ['-i', target.identityFile, '-o', 'IdentitiesOnly=yes'] : []),
     ...(target.port ? ['-p', String(target.port)] : []),
     assertHost(target.host),

@@ -59,6 +59,23 @@ describe('sshArgs', () => {
     expect(sshArgs({ host: 'nas', port: 2222 }, 'x')).toContain('2222')
   })
 
+  it('shares one connection across every command', () => {
+    // Each command used to pay for its own TCP connection, key exchange and
+    // authentication. A scan runs one ffprobe per file, so on a large library
+    // that handshake was the scan.
+    const args = sshArgs({ host: 'nas' }, 'x')
+    expect(args).toContain('ControlMaster=auto')
+    expect(args).toContain('ControlPersist=60')
+    const path = args.find((arg) => arg.startsWith('ControlPath='))
+    expect(path).toBeDefined()
+    // %C is ssh's hash of the endpoints, so each destination gets its own
+    // socket without this having to invent a name.
+    expect(path).toContain('%C')
+    // The expansion of this becomes a Unix socket path, capped near 104 bytes,
+    // and %C alone spends 40 of them.
+    expect(path!.length).toBeLessThan(40)
+  })
+
   it('offers only the chosen key when one is given', () => {
     const args = sshArgs({ host: 'nas', identityFile: '/Users/me/.ssh/id_ed25519' }, 'x')
     expect(args).toContain('-i')
