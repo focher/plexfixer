@@ -566,6 +566,18 @@ function FfmpegSection(props: SettingsPanelProps): React.JSX.Element {
           ? environment.ffmpegVersion ?? 'Found and working.'
           : environment?.problem ?? 'Looking for ffmpeg…'}
       </p>
+      {environment?.ready ? (
+        <p className="section-hint">
+          {environment.qtFaststartPath ? (
+            <>
+              qt-faststart: <span className="mono">{environment.qtFaststartPath}</span> — used when moving the MP4
+              index is the whole repair, which takes one pass instead of two.
+            </>
+          ) : (
+            'qt-faststart not found — files that only need their MP4 index moved are remuxed by ffmpeg instead.'
+          )}
+        </p>
+      ) : null}
 
       {settings.remoteEnabled && environment?.remote ? (
         <p className="section-hint">

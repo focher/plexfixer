@@ -22,7 +22,7 @@ use tauri::{AppHandle, Manager};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-use crate::locate::locate;
+use crate::locate::{locate, locate_qt_faststart};
 use crate::settings::Store;
 
 /// Directories that never hold library media and cost time to walk.
@@ -87,6 +87,10 @@ fn is_allowed(command: &str, chosen: &[Option<String>], located: &[PathBuf]) -> 
 /// and it is read here, from the settings this side saved. It used to arrive
 /// as an argument beside the command it was vouching for, which made the check
 /// one the caller could pass by naming the same path twice.
+///
+/// `qt-faststart` is resolved the same way the environment resolves it: beside
+/// the ffmpeg in use (which is itself one of these), or bundled, or on PATH.
+/// Nothing the caller says can widen that.
 pub async fn allowed_binary(app: &AppHandle, command: &str) -> bool {
     let settings = app.state::<Store>().settings().await;
     let chosen = |key: &str| {
@@ -97,10 +101,14 @@ pub async fn allowed_binary(app: &AppHandle, command: &str) -> bool {
             .filter(|path| !path.is_empty())
             .map(str::to_owned)
     };
-    let located: Vec<PathBuf> = ["ffmpeg", "ffprobe"]
+    let mut located: Vec<PathBuf> = ["ffmpeg", "ffprobe"]
         .iter()
         .filter_map(|name| locate(app, name, None).map(|found| found.path))
         .collect();
+    let ffmpeg = locate(app, "ffmpeg", chosen("ffmpegPath").as_deref()).map(|found| found.path);
+    if let Some(qt) = ffmpeg.and_then(|ffmpeg| locate_qt_faststart(app, &ffmpeg)) {
+        located.push(qt);
+    }
 
     is_allowed(command, &[chosen("ffmpegPath"), chosen("ffprobePath")], &located)
 }

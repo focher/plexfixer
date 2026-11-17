@@ -39,7 +39,7 @@ export const STAGE_DETAIL: Record<JobStage, string> = {
   waiting: 'Queued, waiting for a slot',
   connecting: 'Reaching the machine that holds the file',
   planning: 'Working out what to run',
-  copying: 'ffmpeg is copying the file',
+  copying: 'Copying the file — with ffmpeg, or qt-faststart when only the index moves',
   finalising: 'Moving the MP4 index to the front — a second pass over the whole file',
   verifying: 'Re-probing the output to confirm it has the streams it should',
   promoting: 'Backing up the original and moving the repaired file into place',

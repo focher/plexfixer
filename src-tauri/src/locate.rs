@@ -1,4 +1,4 @@
-//! Finding the ffmpeg and ffprobe binaries.
+//! Finding the ffmpeg and ffprobe binaries, and the optional qt-faststart.
 //!
 //! Packaged builds ship static binaries under `bin/<platform>-<arch>/`; a dev
 //! run uses the repo's `resources/bin/<platform>-<arch>/` if `npm run
@@ -126,4 +126,43 @@ pub fn locate(app: &AppHandle, name: &str, override_path: Option<&str>) -> Optio
         path,
         source: "path",
     })
+}
+
+/// `qt-faststart` in the same folder as this ffmpeg, where Homebrew and most
+/// static builds put it.
+pub fn qt_faststart_beside(ffmpeg: &Path) -> Option<PathBuf> {
+    let candidate = ffmpeg.parent()?.join(exe_name("qt-faststart"));
+    candidate.is_file().then_some(candidate)
+}
+
+/// `qt-faststart`, which moves an MP4's index in one pass. Optional: without
+/// it the index is moved by ffmpeg's slower `+faststart` remux. Beside the
+/// ffmpeg in use first, so the two come from the same build, then the bundled
+/// folder and PATH.
+pub fn locate_qt_faststart(app: &AppHandle, ffmpeg: &Path) -> Option<PathBuf> {
+    qt_faststart_beside(ffmpeg).or_else(|| locate(app, "qt-faststart", None).map(|found| found.path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_qt_faststart_only_beside_ffmpeg() {
+        let dir = std::env::temp_dir().join(format!("plexfixer-locate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ffmpeg = dir.join(exe_name("ffmpeg"));
+        std::fs::write(&ffmpeg, b"").unwrap();
+
+        assert_eq!(qt_faststart_beside(&ffmpeg), None);
+
+        let qt = dir.join(exe_name("qt-faststart"));
+        std::fs::write(&qt, b"").unwrap();
+        assert_eq!(qt_faststart_beside(&ffmpeg), Some(qt));
+
+        // A bare name has no folder to look in.
+        assert_eq!(qt_faststart_beside(Path::new("")), None);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
