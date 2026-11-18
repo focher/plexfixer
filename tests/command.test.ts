@@ -62,6 +62,66 @@ describe('buildRepairCommand — remux', () => {
     )
   })
 
+  /**
+   * 0.2.5 failed a stream copy on a file whose subtitles ffmpeg had written
+   * itself. The repair asked for `-c:s mov_text` on tracks that were already
+   * tx3g, which decodes and re-encodes them; the tx3g held bytes that are not
+   * valid UTF-8, and ffmpeg quit on the decode error rate — after copying 4.5
+   * GB, because the rate only passes its threshold near the end.
+   */
+  it('copies subtitles that are already tx3g rather than re-encoding them', () => {
+    const result = analyzeFile(
+      mp4(
+        [
+          video({ language: 'eng' }),
+          mainAudio({ index: 1, language: 'eng' }),
+          subtitle({ index: 2, codec: 'mov_text', language: 'eng' }),
+          subtitle({ index: 3, codec: 'mov_text', language: 'rus' })
+        ],
+        { faststart: false }
+      ),
+      DEFAULT_SETTINGS
+    )
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: OUT })
+
+    expect(valueAfter(args, '-c:s')).toBe('copy')
+    // Not per track either: nothing here needs converting.
+    expect(args.filter((arg) => arg === 'mov_text')).toEqual([])
+  })
+
+  it('converts only the tracks that are not already tx3g', () => {
+    // A single file holding both is unusual, but the choice is per track and
+    // one copied track must not drag the other into a copy it cannot survive.
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng' }),
+        mainAudio({ index: 1, language: 'eng' }),
+        subtitle({ index: 2, codec: 'mov_text', language: 'eng' }),
+        subtitle({ index: 3, codec: 'subrip', language: 'fre' })
+      ]),
+      DEFAULT_SETTINGS
+    )
+    const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: OUT })
+
+    expect(valueAfter(args, '-c:s')).toBe('copy')
+    expect(valueAfter(args, '-c:s:1')).toBe('mov_text')
+    expect(args).not.toContain('-c:s:0')
+  })
+
+  it('leaves tx3g alone when the target is MKV', () => {
+    // An MP4 source keeps its container whatever the setting says, so the one
+    // way to reach an MKV target is to start from one.
+    const settings = { ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
+    const result = analyzeFile(
+      mkv([video({ language: 'eng' }), mainAudio({ index: 1 }), subtitle({ index: 2, codec: 'mov_text' })]),
+      settings
+    )
+    expect(result.plan?.targetContainer).toBe('mkv')
+
+    const { args } = buildRepairCommand({ result, settings, outputPath: '/out/x.mkv' })
+    expect(valueAfter(args, '-c:s')).toBe('copy')
+  })
+
   it('retags hev1 as hvc1 without re-encoding', () => {
     const settings = { ...DEFAULT_SETTINGS, allowHevc: true }
     const result = analyzeFile(

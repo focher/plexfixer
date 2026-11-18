@@ -231,6 +231,16 @@ export const MP4_AUDIO_CODECS = new Set(['aac', 'ac3', 'eac3', 'mp3', 'alac', 'd
 export const MP4_SUBTITLE_CODECS = new Set(['mov_text'])
 
 /**
+ * Whether a subtitle track is already in MP4's own format.
+ *
+ * Worth asking before converting: `-c:s mov_text` on a track that is already
+ * tx3g is a decode and a re-encode, not a pass-through.
+ */
+export function isMp4NativeSubtitle(codec: string): boolean {
+  return MP4_SUBTITLE_CODECS.has(codec.toLowerCase())
+}
+
+/**
  * Subtitle codecs that can be converted to `mov_text` during a stream copy.
  * Image formats cannot: tx3g is a text format.
  */

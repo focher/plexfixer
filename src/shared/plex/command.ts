@@ -15,7 +15,7 @@ import type {
   RepairPlan,
   TrackPlanChange
 } from '../types.js'
-import { canStreamCopyIntoMp4, DOLBY_VISION_HDR10_FILTER } from './rules.js'
+import { canStreamCopyIntoMp4, DOLBY_VISION_HDR10_FILTER, isMp4NativeSubtitle } from './rules.js'
 import { UNDEFINED_LANGUAGE, languageForContainer } from '../languages.js'
 import { h264LevelLabel } from './h264-level.js'
 import { isCoverArt } from './tracks.js'
@@ -350,8 +350,29 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
   }
 
   if (counters.s > 0) {
-    // MP4 stores text subtitles as tx3g; MKV keeps whatever came in.
-    args.push('-c:s', toMp4 ? 'mov_text' : 'copy')
+    // MP4 stores text subtitles as tx3g; MKV keeps whatever came in. Asking
+    // for tx3g is a conversion, though, not a container note: `-c:s mov_text`
+    // on a track that is *already* tx3g decodes it and encodes it again. That
+    // is how a stream copy came to fail on a file whose subtitles ffmpeg had
+    // written itself — tx3g in the wild carries bytes that are not valid
+    // UTF-8, the decoder rejects them, and once enough have been rejected
+    // ffmpeg gives up. Late, too: the error rate only passes its threshold
+    // near the end, so the whole copy is thrown away after running.
+    //
+    // Copying leaves those bytes alone. Only the tracks that are in some
+    // other format are converted, because only those have to be.
+    const subtitles = mapped.filter((entry) => entry.specifier === 's')
+    const converting = toMp4
+      ? subtitles.filter((entry) => !isMp4NativeSubtitle(entry.source.codec))
+      : []
+
+    if (converting.length === subtitles.length && converting.length > 0) {
+      args.push('-c:s', 'mov_text')
+    } else {
+      args.push('-c:s', 'copy')
+      // A mixed file converts per track; the copy above covers the rest.
+      for (const entry of converting) args.push(`-c:s:${entry.ordinal}`, 'mov_text')
+    }
   }
   if (counters.t > 0) args.push('-c:t', 'copy')
 
