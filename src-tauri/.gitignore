@@ -1,8 +1,8 @@
 /target
 /gen/schemas
-# The ffmpeg staging directory is filled per build and never committed, but
-# the path itself has to exist: tauri-build checks every `resources` entry
-# while the crate compiles, which is long before the hook that fills it. A
-# fresh clone without this could not build or even `npm run dev`.
-/resources/bin/*
-!/resources/bin/.gitkeep
+# The ffmpeg staging directory is filled per build and never committed. The
+# path has to exist before the crate compiles, because tauri-build checks
+# every `resources` entry — so build.rs creates it, rather than a committed
+# .gitkeep holding it open. Nothing in here is tracked, which is what keeps
+# the installers from shipping a stray file out of it.
+/resources/bin/
