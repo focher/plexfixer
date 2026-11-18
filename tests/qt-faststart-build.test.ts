@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 // prettier-ignore
 // @ts-expect-error -- plain ESM helper shared with the build scripts
-import { RECIPE, SOURCE, UNAVAILABLE, archFlagFor, canBuildHere, ensureQtFaststart, markerIsCurrent, markerReason, markerText, msvcBatchScript, msvcCompileArgs, unixCompileArgs } from '../scripts/lib/qt-faststart.mjs'
+import { RECIPE, SOURCE, UNAVAILABLE, archFlagFor, canBuildHere, ensureQtFaststart, markerIsCurrent, markerReason, markerText, msvcBatchScript, msvcCompileArgs, qtFaststartName, qtFaststartPending, unixCompileArgs } from '../scripts/lib/qt-faststart.mjs'
 
 let dir: string
 beforeEach(async () => {
@@ -219,5 +219,45 @@ describe('the note left when it could not be built', () => {
 
   it('copes with a note that has no reason in it', () => {
     expect(markerReason(`recipe ${RECIPE}\n`)).toBe('no reason recorded')
+  })
+})
+
+describe('whether a platform folder is still owed an attempt', () => {
+  // The build asks this before starting the fetch, and the fetch asks it again
+  // before compiling. They have to agree, and once they did not.
+  it('is settled by a compiled binary', () => {
+    expect(qtFaststartPending({ hasBinary: true, note: undefined })).toBe(false)
+    // Even a note alongside one: the binary is the thing that matters.
+    expect(qtFaststartPending({ hasBinary: true, note: markerText('whatever') })).toBe(false)
+  })
+
+  it('is owed when the folder has neither', () => {
+    expect(qtFaststartPending({ hasBinary: false, note: undefined })).toBe(true)
+  })
+
+  it('is settled by a note about how this builds today', () => {
+    expect(qtFaststartPending({ hasBinary: false, note: markerText('no compiler here') })).toBe(false)
+  })
+
+  it('is owed again when the note is about an older recipe', () => {
+    // The regression this guards, in the shape it actually took: the note from
+    // the first Windows attempt, written before the compile was fixed. The
+    // build treated its mere presence as settled and never started the fetch,
+    // so the recipe check inside the fetch never ran and the fix never got
+    // tried — on every build after it, indefinitely.
+    const ancient =
+      'Command failed: cmd /c C:\\Temp\\build-qt-faststart.bat\n' +
+      'cl : Command line error D8003 : missing source filename\n'
+    expect(markerIsCurrent(ancient)).toBe(false)
+    expect(qtFaststartPending({ hasBinary: false, note: ancient })).toBe(true)
+
+    // And a note from a recipe that is merely older, rather than unstamped.
+    expect(qtFaststartPending({ hasBinary: false, note: markerText('old', RECIPE - 1) })).toBe(true)
+  })
+
+  it('knows what the binary is called on each platform', () => {
+    expect(qtFaststartName('win32-x64')).toBe('qt-faststart.exe')
+    expect(qtFaststartName('darwin-arm64')).toBe('qt-faststart')
+    expect(qtFaststartName('linux-x64')).toBe('qt-faststart')
   })
 })

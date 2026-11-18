@@ -79,6 +79,31 @@ export function markerIsCurrent(text, recipe = RECIPE) {
   return first === `recipe ${recipe}`
 }
 
+/** What a compiled qt-faststart is called in a given platform folder. */
+export function qtFaststartName(folder) {
+  return String(folder).startsWith('win32') ? 'qt-faststart.exe' : 'qt-faststart'
+}
+
+/**
+ * Whether a platform folder is still owed an attempt at qt-faststart.
+ *
+ * The build asks this *before* starting the fetch, and the fetch asks the same
+ * question again before compiling — so the two have to agree. They did not: the
+ * gate treated the mere presence of a note as "settled, nothing more to do",
+ * which meant a stale note stopped the fetch from running at all, and the
+ * recipe check inside it never got the chance to discard that note. The note
+ * from the very first Windows attempt therefore suppressed every build after
+ * it, including the ones carrying the fix for what it described.
+ *
+ * `note` is the note's text, or undefined when there is none.
+ */
+export function qtFaststartPending({ hasBinary, note }) {
+  if (hasBinary) return false
+  if (note == null) return true
+  // Only a note about how this builds today settles anything.
+  return !markerIsCurrent(note)
+}
+
 /** Why the last attempt failed, for the caller to report. */
 export function markerReason(text) {
   const lines = String(text ?? '')

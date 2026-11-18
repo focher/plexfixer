@@ -50,6 +50,7 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadEnv } from './lib/env.mjs'
 import { repository } from './lib/github.mjs'
+import { UNAVAILABLE, qtFaststartName, qtFaststartPending } from './lib/qt-faststart.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -224,10 +225,16 @@ function ensureFfmpeg(target) {
     if (entries.length === 0) return true
     // qt-faststart arrived after the binaries did, so a folder filled in
     // before it exists has ffmpeg and no qt-faststart. The fetch is cheap when
-    // everything is there, and it leaves a dot-file behind on a machine that
-    // cannot compile one, so this asks again at most once per checkout.
-    const name = folder.startsWith('win32') ? 'qt-faststart.exe' : 'qt-faststart'
-    return !existsSync(join(dir, name)) && !existsSync(join(dir, '.qt-faststart-unavailable'))
+    // everything is there, and it leaves a note behind on a machine that
+    // cannot compile one, so this does not ask again for nothing — but a note
+    // only settles the question while it still describes how this builds
+    // today. Deciding that here from the note's own text is what lets a build
+    // carrying a fix retry what the note was complaining about.
+    const marker = join(dir, UNAVAILABLE)
+    return qtFaststartPending({
+      hasBinary: existsSync(join(dir, qtFaststartName(folder))),
+      note: existsSync(marker) ? readFileSync(marker, 'utf8') : undefined,
+    })
   })
   if (missing.length === 0) return
 
