@@ -24,6 +24,7 @@ import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { pruneSelection } from '@shared/selection.js'
 import { formatBytes } from './format.js'
+import { readPref, writePref } from './prefs.js'
 import {
   codecFilterActive,
   countCodecs,
@@ -71,18 +72,6 @@ const STATUS_TILES: { key: FileStatus; label: string; tone: string; hint: string
   { key: 'manual', label: 'Blocked', tone: 'fail', hint: 'Show only files no automatic repair can fix' }
 ]
 
-/**
- * Per-viewer UI preferences. Storage can be unavailable or cleared, so every
- * access is guarded and a missing value just means the default.
- */
-function readPref(key: string): boolean {
-  try {
-    return localStorage.getItem(`plexfixer.${key}`) === 'true'
-  } catch {
-    return false
-  }
-}
-
 function readSort(): SortState {
   try {
     const raw = localStorage.getItem('plexfixer.sort')
@@ -93,14 +82,6 @@ function readSort(): SortState {
     return parsed.key && parsed.direction ? parsed : DEFAULT_SORT
   } catch {
     return DEFAULT_SORT
-  }
-}
-
-function writePref(key: string, value: boolean): void {
-  try {
-    localStorage.setItem(`plexfixer.${key}`, String(value))
-  } catch {
-    /* not worth surfacing */
   }
 }
 

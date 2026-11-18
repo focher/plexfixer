@@ -3,7 +3,9 @@ import type { AboutInfo, AnalysisResult, AppSettings, EnvironmentInfo, Job, JobL
 import { buildDiagnosticsReport, buildJobReport } from '@shared/report.js'
 import { PHASE_LABEL, diagnoseMetrics, formatMs, phase, rankedPhases, summarizeMetrics } from '@shared/metrics.js'
 import { STAGE_DETAIL, describeProgress, stalledSeconds, stepsFor } from '@shared/stages.js'
+import { countCompleted, visibleJobs } from '@shared/jobs.js'
 import { shortenPath } from '../format.js'
+import { readPref, writePref } from '../prefs.js'
 import MenuButton from './MenuButton.js'
 
 const TONE: Record<Job['state'], string> = {
@@ -174,6 +176,7 @@ export default function JobsPanel({
   }, [running])
   const [copied, setCopied] = useState<string>()
   const [saved, setSaved] = useState<string>()
+  const [hideCompleted, setHideCompleted] = useState(() => readPref('hideCompleted'))
 
   const toggle = (id: string): void =>
     setExpanded((previous) => {
@@ -237,6 +240,33 @@ export default function JobsPanel({
 
   const finished = jobs.filter((job) => job.state !== 'queued' && job.state !== 'running')
   const queued = jobs.filter((job) => job.state === 'queued')
+  const completed = countCompleted(jobs)
+  const visible = visibleJobs(jobs, hideCompleted)
+
+  /**
+   * The same switch the library has over "Hide passed", and there for the same
+   * reason: once a long run is mostly successes, the few rows worth reading are
+   * buried. It only hides repairs that succeeded, so a failure stays put.
+   */
+  const hideSwitch = (
+    <label
+      className={`toggle${hideCompleted ? ' on' : ''}`}
+      title="Leave out repairs that finished successfully. Failures, cancellations and skips stay."
+    >
+      <input
+        type="checkbox"
+        checked={hideCompleted}
+        onChange={(event) => {
+          const on = event.target.checked
+          setHideCompleted(on)
+          writePref('hideCompleted', on)
+        }}
+      />
+      <span className="switch" aria-hidden="true" />
+      Hide completed
+      <span className="count">{completed}</span>
+    </label>
+  )
 
   /**
    * The three ways of getting this session out of the app, behind one button.
@@ -316,6 +346,7 @@ export default function JobsPanel({
           {active.length} active · {jobs.length} total
         </span>
         <span className="spacer" />
+        {hideSwitch}
         {note ? (
           <span className="muted nowrap" title={note.title}>
             {note.text}
@@ -341,8 +372,12 @@ export default function JobsPanel({
         </button>
       </div>
 
+      {hideCompleted && visible.length === 0 ? (
+        <div className="empty">Every repair here succeeded. Turn off Hide completed to see them.</div>
+      ) : null}
+
       <div className="results">
-        {jobs.map((job) => {
+        {visible.map((job) => {
           const open = expanded.has(job.id)
           const summary = summarizeMetrics(job.metrics)
           return (
