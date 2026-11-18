@@ -275,13 +275,37 @@ interface NativeAbout {
   userDataPath: string
 }
 
+/**
+ * Settings the queue reads while it is already running.
+ *
+ * How many repairs run at once used to be picked up only when the next batch
+ * was queued, so changing it did nothing to the run in front of you. It is now
+ * handed over as soon as it is saved: raising it starts more straight away,
+ * lowering it starts nothing further until enough have finished. Neither
+ * touches a repair that is already under way.
+ *
+ * Everything else the runner holds — binaries, the host — is deliberately left
+ * to the next batch, because those decide what a repair *does* and a queue
+ * half-run under each would be two different jobs.
+ */
+function applyToRunningQueue(settings: AppSettings): void {
+  runner?.setConcurrency(settings.concurrency)
+}
+
 function buildApi() {
   return {
     settings: {
       get: (): Promise<AppSettings> => settingsFrom(invoke('settings_get')),
-      update: (patch: Partial<AppSettings>): Promise<AppSettings> =>
-        settingsFrom(invoke('settings_update', { patch })),
-      reset: (): Promise<AppSettings> => settingsFrom(invoke('settings_reset'))
+      update: async (patch: Partial<AppSettings>): Promise<AppSettings> => {
+        const settings = await settingsFrom(invoke('settings_update', { patch }))
+        applyToRunningQueue(settings)
+        return settings
+      },
+      reset: async (): Promise<AppSettings> => {
+        const settings = await settingsFrom(invoke('settings_reset'))
+        applyToRunningQueue(settings)
+        return settings
+      }
     },
     overrides: {
       get: (): Promise<ModeOverrides> => invoke('overrides_get'),

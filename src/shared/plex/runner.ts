@@ -142,16 +142,30 @@ export class RepairRunner {
    *
    * The caller checks `cancelled` between files and calls `finish()` when it
    * is done either way.
+   *
+   * A batch that arrives into an idle queue holds it until the whole batch is
+   * in. Adding is slow — every file is probed on the way — so without this the
+   * first file would start repairing while the rest were still being looked
+   * at, which puts a repair and a run of probes on the same disk at once and
+   * leaves the queue looking half-built. Nothing is lost by waiting: the files
+   * are going to be repaired either way, and now they all arrive before any of
+   * them competes for the disk.
+   *
+   * A batch added to a queue that is *already* working does not hold it. That
+   * queue has made its start, the running repairs would carry on regardless,
+   * and holding would only idle the slots they leave behind.
    */
   beginBatch(): QueueBatch {
     const batch = { cancelled: false }
     this.batches.add(batch)
+    const release = this.queue.activeCount === 0 ? this.queue.hold() : undefined
     return {
       get cancelled(): boolean {
         return batch.cancelled
       },
       finish: () => {
         this.batches.delete(batch)
+        release?.()
       }
     }
   }

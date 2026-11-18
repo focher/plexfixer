@@ -14,12 +14,50 @@ export class TaskQueue {
   private readonly pending: QueuedTask<unknown>[] = []
   private readonly controllers = new Map<string, AbortController>()
   private active = 0
+  /** How many callers are currently keeping new tasks from starting. */
+  private holds = 0
 
   constructor(private concurrency: number) {}
 
+  /**
+   * Change how many run at once, with effect now rather than next time.
+   *
+   * Raising it starts more immediately. Lowering it never stops anything that
+   * is already running — a repair part-way through writing a file is not worth
+   * throwing away to satisfy a number — so the queue simply starts nothing new
+   * until enough have finished to be back under the limit.
+   */
   setConcurrency(value: number): void {
     this.concurrency = Math.max(1, Math.min(16, value))
     this.pump()
+  }
+
+  /**
+   * Keep new tasks from starting until the returned function is called.
+   *
+   * This is what lets a whole batch be added before any of it runs. Adding is
+   * slow — every file is probed on the way in — and without this the first few
+   * files would be running, and competing for the same disk, long before the
+   * last one had even been looked at.
+   *
+   * Holds nest: tasks start again once the last one is released. Releasing
+   * twice does nothing. Anything already running carries on regardless; this
+   * only governs what has not started.
+   */
+  hold(): () => void {
+    this.holds++
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.holds--
+      this.pump()
+    }
+  }
+
+  /** Whether anything is keeping tasks from starting. */
+  get held(): boolean {
+    return this.holds > 0
   }
 
   get activeCount(): number {
@@ -71,7 +109,7 @@ export class TaskQueue {
   }
 
   private pump(): void {
-    while (this.active < this.concurrency && this.pending.length > 0) {
+    while (this.holds === 0 && this.active < this.concurrency && this.pending.length > 0) {
       const task = this.pending.shift()
       if (!task) return
       const controller = new AbortController()
