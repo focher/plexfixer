@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
-import { defaultAudioStream, resolvePrimaryLanguage, resolveTracks } from '@shared/plex/tracks.js'
+import { defaultAudioStream, resolvePrimaryLanguage } from '@shared/plex/tracks.js'
+import { resolveTracks } from '@shared/plex/modules/track-resolution.js'
 import { audio, flags, mainAudio, mkv, subtitle, video } from './fixtures.js'
 
 const settings = DEFAULT_SETTINGS

@@ -9,6 +9,11 @@ import {
   type SettingsSectionId
 } from '@shared/settings-sections.js'
 import { shortenPath } from '../format.js'
+import { CHECK_MODULES, REPAIR_MODULES } from '@shared/plex/modules/registry.js'
+import { isModuleEnabled, withModuleEnabled, type ModuleDescription } from '@shared/plex/modules/framework.js'
+import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
+import { parseScript } from '@shared/plex/modules/script/parse.js'
+import ModuleEditor, { NEW_RULE_TEMPLATE } from './ModuleEditor.js'
 
 /** Where the chosen section is remembered between visits. */
 const SECTION_KEY = 'plexfixer.settingsSection'
@@ -117,6 +122,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         {section === 'languages' ? <LanguagesSection {...props} /> : null}
         {section === 'modes' ? <ModesSection {...props} /> : null}
         {section === 'compatibility' ? <CompatibilitySection {...props} /> : null}
+        {section === 'modules' ? <ModulesSection {...props} /> : null}
         {section === 'output' ? <OutputSection {...props} /> : null}
         {section === 'transcoding' ? <TranscodingSection {...props} /> : null}
         {section === 'remote' ? (
@@ -125,6 +131,261 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         {section === 'ffmpeg' ? <FfmpegSection {...props} /> : null}
       </div>
     </div>
+  )
+}
+
+/**
+ * One rule, with its own switch and its own explanation.
+ *
+ * The explanation is folded away rather than left out: the list is only useful
+ * as a list if you can run your eye down it, and the prose is only useful when
+ * you have stopped on one and want to know what turning it off would cost.
+ *
+ * Not a `<details>`, though it looks like one. The switch has to sit inside the
+ * row, and a checkbox inside a `<summary>` cannot both toggle the rule and
+ * leave the fold alone: suppressing the fold also suppresses the browser's own
+ * tick, and the box ends up showing the opposite of what it controls. A button
+ * beside the switch does the folding instead, and each does exactly one thing.
+ */
+function ModuleRow({
+  module,
+  enabled,
+  reports,
+  onToggle,
+  onEdit,
+  onDelete,
+  problems
+}: {
+  module: ModuleDescription
+  enabled: boolean
+  /** "Reports" for a check, "Fixes" for a repair — and what. */
+  reports: { label: string; codes: readonly string[] }
+  onToggle: (enabled: boolean) => void
+  /** Only a rule the user wrote can be edited; a built-in one has nowhere to save to. */
+  onEdit?: () => void
+  onDelete?: () => void
+  /** What is wrong with a hand-written rule, when something is. */
+  problems?: { line: number; message: string }[]
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const bodyId = `${module.id}-body`
+  const broken = (problems?.length ?? 0) > 0
+
+  return (
+    <div className={`module${enabled && !broken ? '' : ' off'}`}>
+      <div className="module-head">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={broken}
+          aria-label={`${module.title} — ${enabled ? 'on' : 'off'}`}
+          title={broken ? 'A rule that will not run cannot be switched on' : undefined}
+          onChange={(event) => onToggle(event.target.checked)}
+        />
+        <button
+          type="button"
+          className="module-toggle"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={() => setOpen((previous) => !previous)}
+        >
+          <span className="module-text">
+            <span className="module-title">{module.title}</span>
+            <span className="module-summary">{module.summary}</span>
+          </span>
+          {broken ? <span className="module-broken">Will not run</span> : null}
+          <span className="module-state">{broken ? '' : enabled ? 'On' : 'Off'}</span>
+          <span className="module-caret" aria-hidden="true">
+            {open ? '▴' : '▾'}
+          </span>
+        </button>
+        {onEdit ? (
+          <button type="button" className="ghost module-action" onClick={onEdit}>
+            Edit
+          </button>
+        ) : null}
+        {onDelete ? (
+          <button
+            type="button"
+            className="ghost module-action"
+            onClick={() => {
+              if (confirmingDelete) onDelete()
+              else setConfirmingDelete(true)
+            }}
+            onBlur={() => setConfirmingDelete(false)}
+          >
+            {confirmingDelete ? 'Really delete?' : 'Delete'}
+          </button>
+        ) : null}
+      </div>
+
+      {open ? (
+        <div className="module-body" id={bodyId}>
+          {broken ? (
+            <>
+              <h4>This rule is not running</h4>
+              <ul className="module-problems">
+                {problems?.map((problem, index) => (
+                  <li key={`${problem.line}-${index}`}>
+                    Line {problem.line}: {problem.message}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          <h4>What it does</h4>
+          <p>{module.whatItDoes}</p>
+          <h4>How it works</h4>
+          <p>{module.howItWorks}</p>
+          <h4>If you turn it off</h4>
+          <p>{module.ifDisabled}</p>
+          {reports.codes.length > 0 ? (
+            <p className="module-codes">
+              <span className="module-codes-label">{reports.label}</span>
+              {reports.codes.join(', ')}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
+  const { settings } = props
+  const set = props.onChange
+
+  // `undefined` means no editor is open; an entry with no id is a new rule.
+  const [editing, setEditing] = useState<{ id?: string; script: string } | undefined>()
+
+  const toggle = (id: string, enabled: boolean): void => {
+    set({ disabledModules: withModuleEnabled(settings.disabledModules, id, enabled) })
+  }
+
+  const userModules = readUserModules(settings)
+  const offCount = settings.disabledModules.length
+  const total = CHECK_MODULES.length + REPAIR_MODULES.length + userModules.length
+
+  const save = (script: string): void => {
+    const list = [...settings.userModules]
+    if (editing?.id) {
+      const at = list.findIndex((record) => record.id === editing.id)
+      // The id never changes with the script: it is what "switched off" is
+      // remembered against, and renaming a rule should not switch it back on.
+      if (at >= 0) list[at] = { ...list[at], script }
+    } else {
+      const name = parseScript(script).script?.name ?? 'rule'
+      list.push({ id: newUserModuleId(name, list.map((record) => record.id)), script })
+    }
+    set({ userModules: list })
+    setEditing(undefined)
+  }
+
+  const remove = (id: string): void => {
+    set({
+      userModules: settings.userModules.filter((record) => record.id !== id),
+      // Nothing should be left behind pointing at a rule that is gone.
+      disabledModules: settings.disabledModules.filter((entry) => entry !== id)
+    })
+  }
+
+  return (
+    <section>
+      <h3>Checks &amp; repairs</h3>
+      <p className="section-hint">
+        Every rule the app knows, one at a time. A <strong>check</strong> looks for one thing that can be wrong with a
+        file; a <strong>repair</strong> does one thing about it. Open any of them to read what it looks for, how it
+        decides, and what you give up by switching it off. Switching a check off means it is never reported; switching
+        a repair off means the problem is still reported, but listed as something the app will not fix.
+      </p>
+
+      <div className="modules-actions">
+        <span className="muted">
+          {offCount === 0 ? 'Everything is on.' : `${offCount} switched off — ${total - offCount} still running.`}
+        </span>
+        <span className="spacer" />
+        <button className="ghost" disabled={offCount === 0} onClick={() => set({ disabledModules: [] })}>
+          Turn everything back on
+        </button>
+      </div>
+
+      <h4 className="modules-heading">Your own rules</h4>
+      <p className="section-hint">
+        Rules you write yourself, in a few lines each. They run after everything below and can report what they find
+        and ask for a repair the app already has — they cannot invent a new way of writing a file.
+      </p>
+      {userModules.length > 0 ? (
+        <div className="modules">
+          {userModules.map((read) => (
+            <ModuleRow
+              key={read.id}
+              module={
+                read.module ?? {
+                  id: read.id,
+                  title: read.title,
+                  summary: 'This rule has mistakes in it and is not running',
+                  whatItDoes: 'Nothing, until the problems below are fixed.',
+                  howItWorks: 'A rule that cannot be read is left out of the scan rather than guessed at.',
+                  ifDisabled: 'It is already not running.'
+                }
+              }
+              enabled={isModuleEnabled(read.id, settings) && read.problems.length === 0}
+              problems={read.problems}
+              reports={{ label: 'Reports', codes: read.module?.raises ?? [] }}
+              onToggle={(enabled) => toggle(read.id, enabled)}
+              onEdit={() => setEditing({ id: read.id, script: read.script })}
+              onDelete={() => remove(read.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="muted modules-empty">You have not written any rules yet.</p>
+      )}
+      <div className="modules-actions">
+        <button onClick={() => setEditing({ script: NEW_RULE_TEMPLATE })}>New rule</button>
+      </div>
+
+      <h4 className="modules-heading">Checks — what the app looks for</h4>
+      <div className="modules">
+        {CHECK_MODULES.map((module) => (
+          <ModuleRow
+            key={module.id}
+            module={module}
+            enabled={isModuleEnabled(module.id, settings)}
+            reports={{ label: 'Reports', codes: module.raises }}
+            onToggle={(enabled) => toggle(module.id, enabled)}
+          />
+        ))}
+      </div>
+
+      <h4 className="modules-heading">Repairs — what the app does about it</h4>
+      <div className="modules">
+        {REPAIR_MODULES.map((module) => (
+          <ModuleRow
+            key={module.id}
+            module={module}
+            enabled={isModuleEnabled(module.id, settings)}
+            reports={{ label: 'Fixes', codes: module.answers }}
+            onToggle={(enabled) => toggle(module.id, enabled)}
+          />
+        ))}
+      </div>
+
+      <p className="muted modules-footnote">
+        The checks and repairs above ship with PlexFixer. They can be switched off, but not edited or deleted — they
+        are part of the app rather than part of your settings, so there would be nowhere to keep a change to one.
+      </p>
+
+      {editing ? (
+        <ModuleEditor
+          initialScript={editing.script}
+          isNew={editing.id === undefined}
+          onSave={save}
+          onCancel={() => setEditing(undefined)}
+        />
+      ) : null}
+    </section>
   )
 }
 

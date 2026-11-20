@@ -67,7 +67,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   dolbyVision5: 'keep',
 
   mediaExtensions: ['mkv', 'm4v', 'mp4'],
-  recursive: true
+  recursive: true,
+
+  // Every check and every repair, on. The list names what has been switched
+  // off, so there is nothing to say here until someone switches something off.
+  disabledModules: [],
+
+  // No rules of your own until you write one.
+  userModules: []
 }
 
 /** Merge persisted settings over the defaults, dropping unknown keys. */
