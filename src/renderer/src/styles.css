@@ -1523,6 +1523,50 @@ button.expander:hover:not(:disabled) {
   color: var(--info);
 }
 
+/* ---------- what's new ---------- */
+
+/* Read top to bottom rather than scanned like the About rows, so it is given
+   a little more width; the dialog's own scroll handles several releases. */
+.dialog.whats-new {
+  max-width: 620px;
+}
+
+.release {
+  margin-top: 18px;
+}
+
+/* Only drawn when more than one release is being shown at once, which is the
+   only time the version a change belongs to is in question. */
+.release h3 {
+  margin: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.release-headline {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+
+.release-change {
+  margin-top: 14px;
+}
+
+.release-change h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.release-change p {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
 /* ---------- sortable columns ---------- */
 
 .row.header .sortable {

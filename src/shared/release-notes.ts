@@ -1,0 +1,154 @@
+/**
+ * What changed, told once — the first time a version runs.
+ *
+ * The notes on the releases page are written for someone deciding whether to
+ * update. These are for someone who already has: shorter, and only the part
+ * that changes what they see. Each release links out to its full notes.
+ *
+ * Kept here rather than fetched, so the app can say what it is without a
+ * network call, and so the text ships with the build it describes — a copy
+ * downloaded in a year still explains itself.
+ *
+ * Adding a release means adding an entry here, newest first, in the same
+ * commit as the version bump. A test fails if the version in package.json has
+ * no entry, which is the reminder.
+ */
+
+import { RELEASES_URL } from './about.js'
+
+export interface ReleaseChange {
+  /** A heading that says what changed, not what area it was in. */
+  title: string
+  /** One short paragraph. The rest is on the releases page. */
+  body: string
+}
+
+export interface ReleaseNote {
+  /** Plain `x.y.z`, matching the version the app reports. */
+  version: string
+  /** The line under the version: what this release is about. */
+  headline: string
+  changes: ReleaseChange[]
+}
+
+/** Newest first. */
+export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: '0.2.6',
+    headline: 'A repair that promised a stream copy was quietly re-encoding subtitles — and failing on them.',
+    changes: [
+      {
+        title: 'Subtitles that are already in MP4 format are copied, not re-encoded',
+        body: 'A remux into MP4 asked ffmpeg to encode every subtitle track to tx3g, including tracks that already were tx3g. That is a decode and a re-encode, and real-world subtitles routinely hold bytes that are not valid UTF-8, so the repair failed — after copying most of a multi-gigabyte file. Only a track in some other format is converted now, and a file holding both kinds converts per track.'
+      },
+      {
+        title: 'The queue fills before it starts working',
+        body: 'Every file is probed on its way into the queue. A batch used to start repairing its first file during that wait, putting one repair and a long run of probes on the same disk. A batch added to an idle queue now waits until all of it is in. A batch added to a queue that is already working does not hold it up.'
+      },
+      {
+        title: '"Files at once" applies to the queue you are watching',
+        body: 'Changing how many repairs run at the same time used to do nothing until the next batch was queued. Raise it and more start immediately; lower it and nothing further starts until enough have finished. Neither stops a repair that is already running.'
+      },
+      {
+        title: 'Hide completed',
+        body: 'The queue page has the switch the library page has had. It hides repairs that succeeded, and only those — a failure stays on screen, because it is the row worth reading.'
+      }
+    ]
+  },
+  {
+    version: '0.2.5',
+    headline: 'Scanning a library on another machine is dramatically faster on macOS and Linux.',
+    changes: [
+      {
+        title: 'A remote scan no longer pays for a connection per file',
+        body: 'The scan really was running on the remote host, but every command opened its own ssh connection — on a thousand-file library those handshakes were the scan. ssh now multiplexes one connection per host, and the scan root is resolved once instead of once per file. Windows keeps the second fix only: its own ssh.exe cannot share connections at all.'
+      },
+      {
+        title: 'The Windows installer stopped carrying files it should never have had',
+        body: 'Two stray files had been shipping inside the installer — a note the build leaves itself, and an empty placeholder holding a folder open. Neither had any business being there, and neither is there now.'
+      }
+    ]
+  }
+]
+
+/**
+ * `-1`, `0` or `1`, comparing `0.2.10` above `0.2.9` rather than below it.
+ *
+ * Anything after a `-` or `+` is ignored, and a part that is not a number
+ * counts as zero: a version this cannot read sorts low rather than throwing,
+ * which at worst shows notes that have been seen before.
+ */
+export function compareVersions(a: string, b: string): number {
+  const parts = (version: string): number[] =>
+    version
+      .trim()
+      .split(/[-+]/)[0]
+      .split('.')
+      .map((part) => {
+        const value = Number.parseInt(part, 10)
+        return Number.isFinite(value) ? value : 0
+      })
+
+  const left = parts(a)
+  const right = parts(b)
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0)
+    if (difference !== 0) return difference < 0 ? -1 : 1
+  }
+  return 0
+}
+
+/** Newest first, whatever order the table was written in. */
+function newestFirst(notes: readonly ReleaseNote[]): ReleaseNote[] {
+  return [...notes].sort((a, b) => compareVersions(b.version, a.version))
+}
+
+/** The notes for `version` and everything older, newest first. */
+function upTo(version: string, notes: readonly ReleaseNote[]): ReleaseNote[] {
+  return newestFirst(notes).filter((note) => compareVersions(note.version, version) <= 0)
+}
+
+/**
+ * What this run should show, newest first — empty when there is nothing to say.
+ *
+ * `lastSeen` is the version that last showed its notes, or `undefined` on a
+ * machine that has never recorded one. That covers two different people: a
+ * fresh install, and someone who updated from a version released before this
+ * screen existed. They are told apart by nothing available here, so both are
+ * shown the current release and no further back. A new user gets one screen
+ * saying what the thing they just installed recently gained, rather than a
+ * history of releases they never ran.
+ *
+ * Skipping versions is not skipping notes: updating from 0.2.4 straight to
+ * 0.2.6 shows both. Notes newer than what is running are never shown — a
+ * downgraded install is not told about a version it does not have.
+ */
+export function notesSince(
+  lastSeen: string | undefined,
+  current: string,
+  notes: readonly ReleaseNote[] = RELEASE_NOTES
+): ReleaseNote[] {
+  const available = upTo(current, notes)
+  if (lastSeen === undefined) {
+    // Only the current release, and only if it has an entry at all.
+    return available[0]?.version === current ? [available[0]] : []
+  }
+  return available.filter((note) => compareVersions(note.version, lastSeen) > 0)
+}
+
+/**
+ * What "What's new" shows when it is asked for rather than shown.
+ *
+ * The newest notes this build has, which is normally its own version — and on
+ * a build whose notes were never written, the release before it rather than
+ * nothing.
+ */
+export function latestNotes(current: string, notes: readonly ReleaseNote[] = RELEASE_NOTES): ReleaseNote[] {
+  const available = upTo(current, notes)
+  return available.length > 0 ? [available[0]] : []
+}
+
+/** The releases page, at this version's entry. */
+export function releaseUrl(version: string): string {
+  return `${RELEASES_URL}/tag/v${version}`
+}

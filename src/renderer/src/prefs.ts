@@ -21,3 +21,23 @@ export function writePref(key: string, value: boolean): void {
     /* not worth surfacing */
   }
 }
+
+/**
+ * The same storage for a value that is not a switch — the version whose notes
+ * have been shown, so far the only one.
+ */
+export function readText(key: string): string | undefined {
+  try {
+    return localStorage.getItem(`plexfixer.${key}`) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function writeText(key: string, value: string): void {
+  try {
+    localStorage.setItem(`plexfixer.${key}`, value)
+  } catch {
+    /* not worth surfacing */
+  }
+}
