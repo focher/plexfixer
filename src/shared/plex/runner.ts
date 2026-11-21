@@ -24,7 +24,12 @@ import { FfmpegError, runFfmpeg } from './ffmpeg-run.js'
 import { probeFile } from './probe.js'
 import { QtFaststartError, runQtFaststart } from './qt-faststart.js'
 import { indexMoveMismatch, isIndexMoveOnly } from './faststart.js'
-import { buildRepairCommand, buildSubtitleExtractCommands } from './command.js'
+import {
+  buildRepairCommand,
+  buildSubtitleExtractCommand,
+  buildSubtitleExtractCommands,
+  sidecarTargets
+} from './command.js'
 import {
   PromoteError,
   cloneToBackup,
@@ -760,7 +765,12 @@ export class RepairRunner {
       // picks them up automatically.
       if (result.plan.extractSubtitles.length > 0) this.setStage(id, 'subtitles')
       const subtitlesStarted = performance.now()
-      const extracted = await this.extractSubtitles(result, finalPath, signal, id)
+      // Sidecars are cut from the file the tracks are actually in. After an
+      // in-place repair the original has been moved into the backup folder and
+      // the repaired file has taken its place — and the repaired file is
+      // usually missing the very tracks being extracted, because needing to be
+      // dropped is why they are being extracted.
+      const extracted = await this.extractSubtitles(result, finalPath, backupPath ?? result.file.path, signal, id)
       if (result.plan.extractSubtitles.length > 0) {
         this.addPhase(id, 'subtitles', performance.now() - subtitlesStarted, {
           note: `${extracted} of ${result.plan.extractSubtitles.length} written`
@@ -1071,29 +1081,82 @@ export class RepairRunner {
   private async extractSubtitles(
     result: AnalysisResult,
     finalPath: string,
+    sourcePath: string,
     signal: AbortSignal,
     jobId: string
   ): Promise<number> {
     if (result.plan.extractSubtitles.length === 0) return 0
     const paths = this.host.paths
     const stem = paths.join(paths.dirname(finalPath), paths.basename(finalPath, paths.extname(finalPath)))
-    const commands = buildSubtitleExtractCommands(result, stem)
-    let written = 0
-    for (const command of commands) {
-      if (signal.aborted) break
+
+    const wanted: { streamIndex: number; outputPath: string }[] = []
+    for (const target of sidecarTargets(result, stem)) {
+      if (signal.aborted) return 0
       // A sidecar already there is somebody's: downloaded, corrected by hand,
       // or written by an earlier repair. ffmpeg is told to overwrite, so the
       // check has to be here — and a track Plex can already read from a file
       // beside the film does not need writing again.
-      if (await this.host.exists(command.outputPath).catch(() => false)) {
+      if (await this.host.exists(target.outputPath).catch(() => false)) {
         this.log(
           jobId,
           'info',
-          `Kept the existing sidecar ${this.host.paths.basename(command.outputPath)}`,
+          `Kept the existing sidecar ${paths.basename(target.outputPath)}`,
           'A subtitle file with this name was already there, so it was not overwritten.'
         )
         continue
       }
+      wanted.push(target)
+    }
+    if (wanted.length === 0 || signal.aborted) return 0
+
+    // One run over the film writes all of them. ffmpeg reads an input once and
+    // demuxes it to as many outputs as it is given; a run per track meant
+    // reading the whole film again for each one.
+    try {
+      await runFfmpeg({
+        ffmpegPath: this.binaries.ffmpegPath,
+        args: buildSubtitleExtractCommand(sourcePath, wanted),
+        signal,
+        spawn: (binary, binaryArgs) => this.host.spawnProcess(binary, binaryArgs)
+      })
+      for (const target of wanted) {
+        this.log(jobId, 'info', `Wrote sidecar ${paths.basename(target.outputPath)}`)
+      }
+      return wanted.length
+    } catch (error) {
+      if (signal.aborted) return 0
+      // One unconvertible track fails the whole run, and the run cannot say
+      // which. Trying them separately costs a read each, which is what this
+      // used to cost always — and now only happens when something is wrong.
+      this.log(
+        jobId,
+        'info',
+        'Writing the sidecars in one pass did not work, so they are being written one at a time',
+        describeFfmpegFailure(error)
+      )
+      return this.extractSubtitlesOneAtATime(result, stem, sourcePath, wanted, signal, jobId)
+    }
+  }
+
+  /** The fallback: a run per track, so one bad track does not lose the others. */
+  private async extractSubtitlesOneAtATime(
+    result: AnalysisResult,
+    stem: string,
+    sourcePath: string,
+    wanted: readonly { streamIndex: number; outputPath: string }[],
+    signal: AbortSignal,
+    jobId: string
+  ): Promise<number> {
+    const paths = this.host.paths
+    const byOutput = new Map(
+      buildSubtitleExtractCommands(result, stem, sourcePath).map((command) => [command.outputPath, command])
+    )
+    let written = 0
+
+    for (const target of wanted) {
+      if (signal.aborted) break
+      const command = byOutput.get(target.outputPath)
+      if (!command) continue
       try {
         await runFfmpeg({
           ffmpegPath: this.binaries.ffmpegPath,
@@ -1102,7 +1165,7 @@ export class RepairRunner {
           spawn: (binary, binaryArgs) => this.host.spawnProcess(binary, binaryArgs)
         })
         written++
-        this.log(jobId, 'info', `Wrote sidecar ${this.host.paths.basename(command.outputPath)}`)
+        this.log(jobId, 'info', `Wrote sidecar ${paths.basename(command.outputPath)}`)
       } catch (error) {
         // A single unconvertible track should not fail the whole repair, but it
         // should not vanish either — an image-based track that slipped through
@@ -1110,17 +1173,22 @@ export class RepairRunner {
         this.log(
           jobId,
           'warn',
-          `Could not write sidecar ${this.host.paths.basename(command.outputPath)}`,
-          error instanceof FfmpegError
-            ? `exit code ${error.exitCode ?? 'unknown'}\n\n${error.stderrTail}`
-            : error instanceof Error
-              ? error.message
-              : String(error)
+          `Could not write sidecar ${paths.basename(command.outputPath)}`,
+          describeFfmpegFailure(error)
         )
       }
     }
+
     return written
   }
+}
+
+/** What went wrong, in whatever detail the failure carried. */
+function describeFfmpegFailure(error: unknown): string {
+  if (error instanceof FfmpegError) {
+    return `exit code ${error.exitCode ?? 'unknown'}\n\n${error.stderrTail}`
+  }
+  return error instanceof Error ? error.message : String(error)
 }
 
 const BACKUP_LABEL = '.plexfixer-backups'
