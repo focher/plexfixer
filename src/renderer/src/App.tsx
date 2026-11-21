@@ -18,13 +18,15 @@ import { repairConfirmation, summarizeRepair } from '@shared/bulk.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
 import AboutDialog from './components/AboutDialog.js'
+import WhatsNewDialog from './components/WhatsNewDialog.js'
 import RemoteBrowser from './components/RemoteBrowser.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { pruneSelection } from '@shared/selection.js'
+import { latestNotes, notesSince, type ReleaseNote } from '@shared/release-notes.js'
 import { formatBytes } from './format.js'
-import { readPref, writePref } from './prefs.js'
+import { readPref, readText, writePref, writeText } from './prefs.js'
 import {
   codecFilterActive,
   countCodecs,
@@ -103,6 +105,7 @@ export default function App(): React.JSX.Element {
   const [environment, setEnvironment] = useState<EnvironmentInfo>()
   const [about, setAbout] = useState<AboutInfo>()
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [whatsNew, setWhatsNew] = useState<ReleaseNote[]>([])
   const [browsingRemote, setBrowsingRemote] = useState(false)
   // Every file ever scanned, by path; mirrored to IndexedDB.
   const [library, setLibrary] = useState<Map<string, LibraryEntry>>(new Map())
@@ -162,6 +165,12 @@ export default function App(): React.JSX.Element {
       // Held from startup rather than fetched when the panel opens: the
       // version belongs in every diagnostic report too.
       setAbout(loadedAbout)
+      // The release notes, once per version. The version is recorded as soon
+      // as it has been worked out rather than when the dialog closes: a quit
+      // before reading them is still having been shown them, and the same
+      // notes opening again every launch would be worse than missing them.
+      setWhatsNew(notesSince(readText('lastSeenVersion'), loadedAbout.version))
+      writeText('lastSeenVersion', loadedAbout.version)
       // Merged rather than replaced: a scan started from the command line may
       // already have streamed fresher entries in while the database opened.
       setLibrary((previous) => {
@@ -1178,7 +1187,25 @@ export default function App(): React.JSX.Element {
       </div>
 
       {aboutOpen ? (
-        <AboutDialog about={about} environment={environment} onClose={() => setAboutOpen(false)} />
+        <AboutDialog
+          about={about}
+          environment={environment}
+          onClose={() => setAboutOpen(false)}
+          // Offered only when this build has notes to show: a button that
+          // opens an empty dialog is worse than no button.
+          onWhatsNew={
+            about && latestNotes(about.version).length > 0
+              ? () => {
+                  setAboutOpen(false)
+                  setWhatsNew(latestNotes(about.version))
+                }
+              : undefined
+          }
+        />
+      ) : null}
+
+      {whatsNew.length > 0 ? (
+        <WhatsNewDialog notes={whatsNew} onClose={() => setWhatsNew([])} />
       ) : null}
 
       {browsingRemote ? (

@@ -19,6 +19,19 @@ commentary track — carries the default flag.
 
 ## What it checks
 
+Every check in the list below is a module of its own, and so is every repair.
+**Settings → Checks & repairs** lists all forty, each with a switch and a plain
+English account of what it looks for, how it decides, and what you give up by
+turning it off. Nothing is hidden behind a general "strictness" dial: if a rule
+is reporting something you do not care about, you can read exactly what it does
+and switch that one rule off.
+
+Switching a **check** off means it is never reported. Switching a **repair** off
+means the problem is still reported, and listed as something the app will not
+fix — which is how you run a library you only ever want remuxed, by turning off
+*Re-encode video* and leaving every check running.
+
+
 **Container**
 - MKV, which forces a Direct Stream remux on browsers, Chromecast and several TVs
 - MP4 files whose index (`moov` atom) sits at the end, so remote clients stall
@@ -66,6 +79,112 @@ Nothing is written until you ask, per file or for the selection:
 | **Repair** | Use the file's own mode — see *Repair modes* below. |
 | **Safe remux** | Apply every fix that is a stream copy. Skips files needing a re-encode. |
 | **Force transcode** | Also re-encode the video, with GPU acceleration where available. |
+
+### Checks and repairs are modules
+
+The rules are not one long function with a settings object threaded through it.
+Each one is a small file that says what it is for before it says what it does:
+
+```
+src/shared/plex/modules/
+  framework.ts     What a check is, what a repair is, and how they talk
+  engine.ts        Runs them: checks, then repairs, then the plan
+  registry.ts      Every module, in the order it runs
+  checks/          One file per thing that can be wrong with a file
+  repairs/         One file per thing that can be done about it
+```
+
+A **check** reads a file and reports findings. A **repair** reads what the
+checks concluded and says what to do. Neither imports the other: a check raises
+a finding code, a repair declares which codes it answers, and that is the whole
+of the coupling. It is what lets either be switched off without the other
+noticing.
+
+Checks run in registry order and each is handed what the ones before it
+concluded, because some questions cannot be asked until an earlier one is
+answered — whether a subtitle track can stay depends on the container, and the
+container depends on what the video and audio turned out to be. The order *is*
+the pipeline, rather than a dependency graph pretending the rules are
+independent.
+
+Adding a rule means adding a file beside the others and a line in the registry.
+Nothing else in the app has to know it exists; it appears in Settings with its
+own switch because it described itself.
+
+The checks and repairs that ship with the app are **read-only**: they can be
+switched off, but not edited or deleted. They are code rather than settings, so
+there would be nowhere to keep a change to one.
+
+### Writing your own rule
+
+**Settings → Checks & repairs → New rule** opens an editor with two views of
+the same rule, switchable at any time.
+
+**Blocks** is the one that opens first. Everything a rule can ask about is
+listed down the side; drag one into the rule, or click it, and it becomes a
+condition with a dropdown of only the comparisons that fit — so `video.codec
+above 3` is unwritable rather than an error message. Repairs drag in the same
+way, conditions can be dragged to reorder, and nothing needs a mouse: every
+item in the list is a button too.
+
+Two things the blocks are honest about. The order of conditions **does not mean
+anything** — they all have to hold — so dragging one above another is tidying,
+not logic. And the four explanations are written from the rule itself unless
+you fill them in, so a three-line rule still appears in Settings with the same
+account of itself as a built-in one.
+
+**Text** is the same rule as lines. Editing in blocks rewrites the text as you
+go, and that rewrite is canonical: the steps come out in a fixed order — name,
+explanations, conditions, report, fixes — however they were typed. Your
+comments survive, attached to the step they sat above, so a note about a
+condition follows that condition when it moves. What is not kept is the order
+you wrote the steps in and how you spaced them, because the block editor has no
+way to express "this fix was written above that condition" and inventing one
+would be inventing meaning the language does not have.
+
+A rule is a few lines, one step per line:
+
+```
+name Flag DivX video
+when video.codec in divx, dx50, xvid
+report blocker "DivX video"
+       "No mainstream client can decode DivX, so the server re-encodes
+        it on every play."
+fix transcode-video
+```
+
+| Line | What it does |
+| --- | --- |
+| `name` | What the rule is called. Required. |
+| `when` | One question about the file. Several `when` lines must *all* hold. At least one is required, so a rule cannot match the whole library. |
+| `report` | `info`, `warning` or `blocker`, then a title and an optional explanation, both in quotes. |
+| `fix` | `transcode-video`, `remux`, `drop-track` or `extract-subtitles`. |
+| `summary` / `does` / `how` / `off` | Your own wording for the four explanations. Written for you from the rule if you leave them out. |
+
+Lines starting with `#` are ignored, and an indented line continues the one
+above it, so a long explanation can be laid out as a paragraph. The whole
+script is un-indented before it is read, so indenting all of it is harmless —
+only being indented *further* than the script makes a line a continuation.
+
+A `when` line is a subject, a comparison and a value — `video.codec`,
+`audio.channels`, `subtitle.language`, `container`, `file.path` and the rest,
+compared with `is`, `is not`, `in`, `not in`, `contains`, `above`, `below`,
+`at least`, `at most`, `is set` or `is missing`. The editor lists every subject
+with what it means, and says your rule back in English as you type it, which is
+how you notice it says something other than what you meant.
+
+Two things worth knowing. A question the file does not answer is never true —
+`video.profile is not high` is false on a file that does not say what its
+profile is, and `is missing` is the way to ask about silence. And a question
+about tracks is asked of every track and matches if any one answers: the tracks
+that answered are the ones the finding points at, and the ones `drop-track`
+acts on.
+
+**Nothing in a rule is executed.** There are no expressions, no variables and
+no way to call anything: a script is read into a handful of comparisons, and
+the app compares values. A rule directs the repairs the app already has — it
+cannot describe a new way of writing a file, so every ffmpeg command that runs
+was still built by code that ships with PlexFixer.
 
 ### When a file is blocked
 
@@ -146,6 +265,18 @@ that binary came from, the hardware encoders that were actually detected, and th
 folder settings live in. **Copy details** puts the same lines on the clipboard, which
 is what a useful bug report starts with; the version now appears in the per-file and
 per-job diagnostic reports too.
+
+### What's new
+
+The first time a version runs, it says what changed in it — a short screen,
+one paragraph per change, with a link to the full notes on the releases page.
+It is shown once per version and never again, and an update that skipped a
+release shows each release it skipped rather than only the last. A machine
+that has no recorded version, which is a fresh install and also anyone
+updating from before this screen existed, is shown the release it just
+installed and nothing older.
+
+The same notes are in **About → What's new** whenever you want them back.
 
 ## Running it on the machine that holds the files
 
@@ -377,6 +508,13 @@ build, which is worth knowing before publishing one.
 
 ### Publishing a build
 
+A version bump is not finished until its notes are written. The screen the app
+shows on first run reads `src/shared/release-notes.ts`, newest entry first, and
+a test fails when the version in `package.json` has no entry there — so the
+bump commit carries the notes with it. The text is the short version: a
+headline and a paragraph per change, with the full story left to the release
+on GitHub.
+
 The build writes to `release/` and stops there. `--publish` attaches what it
 just built to a GitHub release:
 
@@ -484,9 +622,14 @@ src/
     languages.ts    ISO 639 normalisation
     plex/rules.ts   The compatibility tables
     plex/tracks.ts  Default/forced track resolution
-    plex/analyze.ts Findings and repair planning
+    plex/analyze.ts The door the modules are behind
+    plex/modules/   One file per check, one per repair, and the engine
+    plex/modules/script/  The little language rules are written in
+                          (parse, serialize, evaluate, edit — the blocks
+                           and the text are two views of one structure)
     plex/probe.ts   ffprobe output, normalised
     plex/command.ts The ffmpeg arguments a plan becomes
+    release-notes.ts What changed, and which versions a run is shown
     plex/runner.ts  Running repairs: queue, progress, promotion, backups
     plex/ssh.ts     The ssh transport, and the host that speaks it
     host.ts         What the code needs from a machine, local or remote

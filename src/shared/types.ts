@@ -193,6 +193,14 @@ export type FindingCode =
   | 'default-subtitle-language-mismatch'
   | 'forced-subtitle-not-flagged'
   | 'preferred-audio-language-absent'
+  /**
+   * Anything a rule the user wrote reported.
+   *
+   * One code for all of them rather than a code each: a code is how the rest
+   * of the app recognises a finding it has built-in knowledge about, and there
+   * is none to have about a rule written this morning.
+   */
+  | 'custom'
 
 export interface Finding {
   code: FindingCode
@@ -460,6 +468,26 @@ export interface AppSettings {
   mediaExtensions: string[]
   /** Recurse into subfolders when a folder is scanned. */
   recursive: boolean
+
+  /**
+   * Check and repair modules the user has switched off, by id.
+   *
+   * A list of what is *off* rather than what is on, so a module added in a
+   * later version arrives switched on. The opposite — storing what is enabled —
+   * would silently leave every new rule out for anyone who had ever opened
+   * this screen.
+   */
+  disabledModules: string[]
+
+  /**
+   * Rules the user wrote, as the text they typed.
+   *
+   * Only the script is kept: the name, the explanations and everything else
+   * are read back out of it, so there is one copy of each and no way for the
+   * two to disagree. A script that no longer parses keeps its place in the
+   * list and is shown as broken rather than being dropped.
+   */
+  userModules: { id: string; script: string }[]
 }
 
 /**

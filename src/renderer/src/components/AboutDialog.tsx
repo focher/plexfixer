@@ -13,11 +13,14 @@ import { PRODUCT_NAME, RELEASES_URL, aboutRows, buildAboutText, versionLine } fr
 export default function AboutDialog({
   about,
   environment,
-  onClose
+  onClose,
+  onWhatsNew
 }: {
   about?: AboutInfo
   environment?: EnvironmentInfo
   onClose: () => void
+  /** Opens the release notes for this version; absent when there are none. */
+  onWhatsNew?: () => void
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const closeButton = useRef<HTMLButtonElement>(null)
@@ -83,6 +86,11 @@ export default function AboutDialog({
           <a href={RELEASES_URL} target="_blank" rel="noreferrer">
             Releases
           </a>
+          {onWhatsNew ? (
+            <button onClick={onWhatsNew} title="What changed in this version">
+              What&rsquo;s new
+            </button>
+          ) : null}
           <span className="spacer" />
           <button onClick={() => void copy()} disabled={!about} title="Copy these details for a bug report">
             {copied ? 'Copied ✓' : 'Copy details'}
