@@ -491,11 +491,18 @@ export function sidecarLanguage(language: string): string {
  * Separate invocations rather than one multi-output command: a single bad
  * track then fails on its own instead of taking the others with it.
  */
-export function buildSubtitleExtractCommands(
+/**
+ * Where each extracted subtitle track is written.
+ *
+ * Plex matches a sidecar to a film by its name — `<film>.<lang>[.forced].srt` —
+ * so the names are the whole of how these are found, and two tracks in the same
+ * language have to be told apart without breaking that pattern.
+ */
+export function sidecarTargets(
   result: AnalysisResult,
   outputStem: string
-): { args: string[]; outputPath: string }[] {
-  const commands: { args: string[]; outputPath: string }[] = []
+): { streamIndex: number; outputPath: string }[] {
+  const targets: { streamIndex: number; outputPath: string }[] = []
   const used = new Set<string>()
 
   for (const entry of result.plan.extractSubtitles) {
@@ -510,12 +517,45 @@ export function buildSubtitleExtractCommands(
       candidate = `${outputStem}.${suffix}.srt`
     }
     used.add(candidate)
-
-    commands.push({
-      outputPath: candidate,
-      args: ['-i', result.file.path, '-map', `0:${entry.streamIndex}`, '-c:s', 'srt', '-y', candidate]
-    })
+    targets.push({ streamIndex: entry.streamIndex, outputPath: candidate })
   }
 
-  return commands
+  return targets
+}
+
+/**
+ * One ffmpeg run per sidecar.
+ *
+ * Kept for the case where the single run below has failed: one unconvertible
+ * track should not take the rest with it, and finding out which one it was
+ * means trying them separately.
+ */
+export function buildSubtitleExtractCommands(
+  result: AnalysisResult,
+  outputStem: string,
+  sourcePath: string = result.file.path
+): { args: string[]; outputPath: string }[] {
+  return sidecarTargets(result, outputStem).map((target) => ({
+    outputPath: target.outputPath,
+    args: ['-i', sourcePath, '-map', `0:${target.streamIndex}`, '-c:s', 'srt', '-y', target.outputPath]
+  }))
+}
+
+/**
+ * One ffmpeg run that writes every sidecar.
+ *
+ * ffmpeg reads an input once and can demux it to as many outputs as it is
+ * given. Running it once per track meant reading the whole film again for each
+ * one — three tracks on a 4.6 GB film is fourteen gigabytes of reading to
+ * recover a few hundred kilobytes of text.
+ */
+export function buildSubtitleExtractCommand(
+  sourcePath: string,
+  targets: readonly { streamIndex: number; outputPath: string }[]
+): string[] {
+  const args = ['-i', sourcePath]
+  for (const target of targets) {
+    args.push('-map', `0:${target.streamIndex}`, '-c:s', 'srt', '-y', target.outputPath)
+  }
+  return args
 }
