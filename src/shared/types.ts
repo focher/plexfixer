@@ -233,6 +233,14 @@ export interface TrackPlanChange {
   kind: TrackKind
   /** Language to write, when it differs from what is in the file. */
   setLanguage?: string
+  /**
+   * Track name to write.
+   *
+   * Only ever set by hand: nothing in the rules has an opinion about what a
+   * track should be called. Unlike a language or a flag it is not a
+   * fixed-width field, so writing one means rewriting the file.
+   */
+  setTitle?: string
   setDefault?: boolean
   setForced?: boolean
   /** Stream is dropped from the output entirely. */
@@ -306,6 +314,13 @@ export interface RepairPlan {
    * label is too high but its demands fit. Only set when the video is copied.
    */
   videoLevel?: number
+  /**
+   * File-level tags to write, by the names ffmpeg knows.
+   *
+   * Only ever set by hand, like `setTitle`, and only from a closed list of
+   * keys — nothing reaches ffmpeg's argument list that was not on it.
+   */
+  metadataTags?: Record<string, string>
   /** Findings this plan does not address. */
   unresolved: Finding[]
   /** True when a safe (lossless) plan cannot fix every blocker. */
@@ -463,6 +478,16 @@ export interface AppSettings {
    * come out right on every client instead of only on DV-capable ones.
    */
   dolbyVision5: 'keep' | 'hdr10'
+
+  /**
+   * A key of your own for themoviedb.org, used to look a film up.
+   *
+   * Yours rather than one shipped with the app: TMDB gives one away for the
+   * asking and asks that it not be passed around, which rules out putting one
+   * in a binary anybody can open. Empty until you paste one in, and the lookup
+   * simply says so until then.
+   */
+  tmdbApiKey: string
 
   /** Extensions treated as media when walking folders. */
   mediaExtensions: string[]
@@ -713,9 +738,43 @@ export interface ScanCompleteEvent {
  * from an earlier session; the main process uses it only if the file on disk
  * still matches, and re-probes otherwise.
  */
+/** What a person can change about one track, on the metadata screen. */
+export interface TrackEdit {
+  /** The track's name, as a player shows it. */
+  title?: string
+  /** ISO 639-2 code. */
+  language?: string
+  /** Plays, or appears, without being chosen. */
+  default?: boolean
+  /** Shown automatically for foreign dialogue. */
+  forced?: boolean
+}
+
+/**
+ * Metadata asked for by hand.
+ *
+ * The one instruction this app takes rather than works out. The rules that
+ * apply it, and the list of file tags that may be written, are in
+ * `plex/metadata.ts`; only the shape is here, with the other domain types.
+ */
+export interface MetadataEdit {
+  /** File-level tags, by the names ffmpeg knows. */
+  tags?: Record<string, string>
+  /** Per-track changes, by stream index. */
+  tracks?: Record<number, TrackEdit>
+}
+
 export interface RepairRequest {
   file: MediaFile
   scanRoot?: string
+  /**
+   * Metadata asked for by hand, when this came from the metadata screen.
+   *
+   * Carried with the request rather than stored anywhere: an edit is made,
+   * previewed and applied in one go, so there is no pending state to go stale
+   * against a file that changed underneath it.
+   */
+  edits?: MetadataEdit
 }
 
 /** What the main process found when it looked for the ffmpeg toolchain. */

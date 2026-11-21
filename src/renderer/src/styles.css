@@ -1547,6 +1547,124 @@ button.expander:hover:not(:disabled) {
   color: var(--text-dim);
 }
 
+/* ---------- the metadata screen ---------- */
+
+.dialog.metadata-dialog {
+  max-width: 940px;
+}
+
+.metadata-body {
+  margin-top: 14px;
+}
+
+.metadata-body section + section {
+  margin-top: 20px;
+}
+
+.metadata-tags .block-field input,
+.metadata-tags .block-field textarea {
+  width: 100%;
+}
+
+.metadata-search {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.metadata-year {
+  width: 72px;
+}
+
+.metadata-problem {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--warn);
+}
+
+.metadata-matches {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 210px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.metadata-matches li + li {
+  border-top: 1px solid var(--border);
+}
+
+.metadata-matches button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.metadata-matches button:hover {
+  background: var(--bg-hover);
+}
+
+.metadata-match-title {
+  display: block;
+  font-size: 13px;
+}
+
+.metadata-match-overview {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  /* Two lines is enough to tell two films of the same name apart. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.metadata-track-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 12.5px;
+}
+
+.metadata-track-table th {
+  text-align: left;
+  font-weight: normal;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 4px 6px;
+}
+
+.metadata-track-table td {
+  padding: 3px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.metadata-track-table input[type='text'],
+.metadata-track-table select {
+  width: 100%;
+  font-size: 12px;
+  padding: 3px 5px;
+}
+
+.metadata-preview ul {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .field {
   display: grid;
   grid-template-columns: 230px 1fr;

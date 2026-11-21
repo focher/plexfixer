@@ -123,6 +123,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         {section === 'modes' ? <ModesSection {...props} /> : null}
         {section === 'compatibility' ? <CompatibilitySection {...props} /> : null}
         {section === 'modules' ? <ModulesSection {...props} /> : null}
+        {section === 'metadata' ? <MetadataSection {...props} /> : null}
         {section === 'output' ? <OutputSection {...props} /> : null}
         {section === 'transcoding' ? <TranscodingSection {...props} /> : null}
         {section === 'remote' ? (
@@ -385,6 +386,46 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           onCancel={() => setEditing(undefined)}
         />
       ) : null}
+    </section>
+  )
+}
+
+function MetadataSection(props: SettingsPanelProps): React.JSX.Element {
+  const { settings } = props
+  const set = props.onChange
+  const key = settings.tmdbApiKey.trim()
+
+  return (
+    <section>
+      <h3>Metadata</h3>
+      <p className="section-hint">
+        Changing what a file says about itself is done per file, from <strong>Edit metadata</strong> on any row.
+        This is only the key that lets it look a title up.
+      </p>
+
+      <Field
+        label="themoviedb.org key"
+        hint="Yours, not one shipped with PlexFixer. TMDB gives one away for the asking and asks that it not be passed around — which rules out putting one inside a program anybody can open."
+      >
+        <input
+          type="password"
+          value={settings.tmdbApiKey}
+          placeholder="Paste your API Key (v3 auth)"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => set({ tmdbApiKey: event.target.value })}
+        />
+      </Field>
+
+      <p className="section-hint">
+        {key === ''
+          ? 'Without one, everything on the metadata screen still works — you just fill it in yourself.'
+          : 'Set. Searching sends the title you typed and nothing else about the file.'}
+      </p>
+      <p className="section-hint">
+        Get one free at <code>themoviedb.org</code> → your account → Settings → API. PlexFixer is not endorsed
+        by or affiliated with TMDB.
+      </p>
     </section>
   )
 }

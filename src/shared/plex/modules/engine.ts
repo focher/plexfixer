@@ -30,6 +30,7 @@ import type {
   TrackPlanChange
 } from '../../types.js'
 import { preferredHevcTag } from '../rules.js'
+import type { MetadataEdit } from '../metadata.js'
 import { audioStreams, resolvePrimaryLanguage, subtitleStreams, videoStreams } from '../tracks.js'
 import { CHECK_MODULES, REPAIR_MODULES } from './registry.js'
 import { userCheckModules } from './script/module.js'
@@ -51,10 +52,11 @@ export interface ModuleRun {
   plan: RepairPlan
 }
 
-function mediaContext(file: MediaFile, settings: AppSettings): MediaContext {
+function mediaContext(file: MediaFile, settings: AppSettings, edits?: MetadataEdit): MediaContext {
   return {
     file,
     settings,
+    edits,
     video: videoStreams(file),
     audio: audioStreams(file),
     subtitles: subtitleStreams(file),
@@ -86,8 +88,12 @@ function runChecks(media: MediaContext): { findings: Finding[]; state: ScanState
   return { findings, state }
 }
 
-export function analyzeWithModules(file: MediaFile, settings: AppSettings): AnalysisResult {
-  const media = mediaContext(file, settings)
+export function analyzeWithModules(
+  file: MediaFile,
+  settings: AppSettings,
+  edits?: MetadataEdit
+): AnalysisResult {
+  const media = mediaContext(file, settings, edits)
   const { findings: rawFindings, state } = runChecks(media)
 
   /* --- repairs ------------------------------------------------------- */
@@ -148,6 +154,7 @@ export function analyzeWithModules(file: MediaFile, settings: AppSettings): Anal
     if (fragment?.addCompatibilityAudio) plan.addCompatibilityAudio = fragment.addCompatibilityAudio
     if (fragment?.extractSubtitles?.length) plan.extractSubtitles.push(...fragment.extractSubtitles)
     if (fragment?.videoLevel !== undefined) plan.videoLevel = fragment.videoLevel
+    if (fragment?.metadataTags) plan.metadataTags = { ...plan.metadataTags, ...fragment.metadataTags }
   }
 
   for (const module of REPAIR_MODULES) {

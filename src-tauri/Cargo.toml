@@ -22,6 +22,13 @@ tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 libc = "0.2"
 serde_json = "1"
+# Already compiled in — the updater uses it — so naming it here costs nothing
+# but the line. See src/tmdb.rs for why the request is made from Rust at all.
+# Already compiled in, and already configured for TLS, because the updater
+# fetches over https with it. No TLS feature is named here on purpose: cargo
+# unions features across the build, so this gets whatever the updater asked
+# for — naming a different stack would pull a second one in beside it.
+reqwest = { version = "0.13", default-features = false, features = ["charset", "http2"] }
 tokio = { version = "1", features = ["process", "fs", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]

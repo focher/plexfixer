@@ -17,6 +17,7 @@ mod locate;
 mod menu;
 mod process;
 mod settings;
+mod tmdb;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -246,6 +247,7 @@ pub fn run() {
             settings_reset,
             overrides_get,
             overrides_set,
+            tmdb::tmdb_get,
             environment_resolve,
             about,
             launch_args,
