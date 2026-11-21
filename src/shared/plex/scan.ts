@@ -31,6 +31,16 @@ export interface ScanRequest {
   ffprobePath: string
   /** Every media file under these roots, as absolute paths. */
   findMedia: (roots: string[], extensions: string[], recursive: boolean) => Promise<string[]>
+  /**
+   * What the library already holds, so a file that has not changed since it
+   * was last looked at is not read again.
+   *
+   * A probe spawns ffprobe and reads the file's headers; a `stat` is one call
+   * that returns in microseconds locally and a single round trip on a share.
+   * Asking the cheap question first turns a re-scan of a settled library from
+   * a full sweep into a walk.
+   */
+  known?: ReadonlyMap<string, KnownFile>
   signal: AbortSignal
   onProgress: (event: ScanProgressEvent) => void
   /**
@@ -39,6 +49,28 @@ export interface ScanRequest {
    * library files.
    */
   cleanTemporaries?: (paths: string[]) => Promise<{ path: string; bytes: number }[]>
+}
+
+/**
+ * Enough of a file to tell whether it is the same one as last time.
+ *
+ * Size and modification time, which is what every backup tool in existence
+ * uses for the same decision. A file edited in place without its timestamp
+ * moving would be missed — possible, and not something any normal tool does.
+ * Clearing the list forces everything to be read again.
+ */
+export interface KnownFile {
+  sizeBytes: number
+  modifiedMs?: number
+}
+
+/** Whether what is on disk matches what was last probed. */
+export function isUnchanged(known: KnownFile | undefined, now: { sizeBytes: number; modifiedMs?: number } | undefined): boolean {
+  if (!known || !now) return false
+  // A stored entry from before modification times were recorded cannot be
+  // trusted to still be current, so it is read again rather than assumed.
+  if (known.modifiedMs === undefined || now.modifiedMs === undefined) return false
+  return known.sizeBytes === now.sizeBytes && known.modifiedMs === now.modifiedMs
 }
 
 /** A scanned path and the folder it stands for. */
@@ -116,6 +148,20 @@ export async function runScan(request: ScanRequest): Promise<ScanCompleteEvent> 
       const filePath = files[index]
       let result: AnalysisResult | undefined
       try {
+        // Already in the library, and untouched since: report it as seen and
+        // move on. No result is sent, so the entry already stored stays put —
+        // and the analysis of it is worked out from the stored streams
+        // whenever the settings change, which never needed a re-read anyway.
+        const previously = request.known?.get(filePath)
+        if (previously) {
+          const now = await host.stat(filePath).catch(() => undefined)
+          if (isUnchanged(previously, now)) {
+            processed++
+            onProgress({ scanId, processed, total: files.length, currentPath: filePath })
+            continue
+          }
+        }
+
         const probed = await probeFile(filePath, { ffprobePath: request.ffprobePath, host })
         result = {
           ...analyzeFile(probed, settings),

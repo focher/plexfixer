@@ -23,7 +23,8 @@ import { parseLaunchArgs } from '@shared/launch.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { ProbeError, probeFile } from '@shared/plex/probe.js'
 import { DOLBY_VISION_HDR10_FILTER } from '@shared/plex/rules.js'
-import { runScan } from '@shared/plex/scan.js'
+import { runScan, type KnownFile } from '@shared/plex/scan.js'
+import { loadLibrary } from '../library.js'
 import { RepairRunner } from '@shared/plex/runner.js'
 import { createBackupRegistry, findBackups } from '@shared/plex/backups-store.js'
 import { repairModeFor } from '@shared/mode.js'
@@ -446,6 +447,21 @@ function buildApi() {
           return scanId
         }
 
+        // What has already been probed, so the scan can leave untouched files
+        // alone. Read here rather than handed in: the library is this window's
+        // own database, and threading thousands of entries through the bridge
+        // to give them straight back would be work for its own sake.
+        const known = new Map<string, KnownFile>()
+        try {
+          for (const entry of await loadLibrary()) {
+            known.set(entry.path, { sizeBytes: entry.file.sizeBytes, modifiedMs: entry.file.modifiedMs })
+          }
+        } catch (error) {
+          // A library that cannot be read is not a reason to refuse to scan;
+          // it only means everything is read again, as it used to be.
+          console.error('Could not read the library, so everything will be probed', error)
+        }
+
         // Deliberately not awaited: the UI records the id and then watches the
         // events, exactly as it does under Electron.
         void runScan({
@@ -459,6 +475,7 @@ function buildApi() {
           // reference arrives with nothing to reach for. This is why a scan in
           // remote mode found nothing at all.
           findMedia: (roots, extensions, recursive) => ready.host.findMedia(roots, extensions, recursive),
+          known,
           signal: controller.signal,
           onProgress: (event) => scanProgress.emit(event)
         })
