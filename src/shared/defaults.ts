@@ -75,6 +75,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Every check and every repair, on. The list names what has been switched
   // off, so there is nothing to say here until someone switches something off.
   disabledModules: [],
+  enabledModules: [],
 
   // No rules of your own until you write one.
   userModules: []

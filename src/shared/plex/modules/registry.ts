@@ -42,6 +42,7 @@ import { trackAudioMissing } from './checks/track-audio-missing.js'
 import { trackDefaultAudio } from './checks/track-default-audio.js'
 import { trackDefaultSubtitle } from './checks/track-default-subtitle.js'
 import { trackForcedSubtitle } from './checks/track-forced-subtitle.js'
+import { metadataMissing } from './checks/metadata-missing.js'
 
 import { transcodeVideo } from './repairs/transcode-video.js'
 import { rewrapContainer } from './repairs/rewrap-container.js'
@@ -65,7 +66,9 @@ import { dropCoverArt } from './repairs/drop-cover-art.js'
  * codec MP4 cannot hold actually blocks the move to MP4. Then audio, then the
  * container itself, then the subtitles — which cannot be judged until the
  * container is settled, since what can be stored depends on where it is going.
- * The track metadata comes last and depends on none of it.
+ * The track metadata comes last and depends on none of it, and what the file
+ * says about itself comes after even that, since it is the one check here that
+ * is not about playback.
  */
 export const CHECK_MODULES: readonly CheckModule[] = [
   drmProtected,
@@ -95,7 +98,8 @@ export const CHECK_MODULES: readonly CheckModule[] = [
   trackAudioMissing,
   trackDefaultAudio,
   trackDefaultSubtitle,
-  trackForcedSubtitle
+  trackForcedSubtitle,
+  metadataMissing
 ]
 
 /**

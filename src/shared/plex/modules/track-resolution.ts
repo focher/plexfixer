@@ -58,7 +58,7 @@ export function resolveTracks(file: MediaFile, settings: AppSettings, primary: P
   const findings: Finding[] = []
 
   for (const module of TRACK_CHECK_MODULES) {
-    if (!isModuleEnabled(module.id, settings)) continue
+    if (!isModuleEnabled(module, settings)) continue
     const result = module.run({ ...media, state })
     if (result.findings?.length) findings.push(...result.findings)
     state = mergeSignals(state, result.signals)

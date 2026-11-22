@@ -77,7 +77,10 @@ describe('the registry', () => {
     'video-missing',
     'audio-missing',
     'container-blocked-by-stream',
-    'preferred-audio-language-absent'
+    'preferred-audio-language-absent',
+    // Reported for somebody to act on by hand, on the metadata screen. No
+    // repair could answer it: picking the right film is the whole of it.
+    'metadata-missing'
   ]
 
   it('has a repair for everything a check reports, or says why not', () => {
@@ -159,22 +162,54 @@ describe('how much work the run turns out to be', () => {
  * ------------------------------------------------------------------ */
 
 describe('switching a module off', () => {
+  const ordinary = { id: 'check.video-codec' }
+  const optIn = { id: 'check.metadata-missing', startsOff: true } as const
+
   it('treats anything not named as on, including a module added later', () => {
     const settings = settingsWithout('check.video-codec')
-    expect(isModuleEnabled('check.video-codec', settings)).toBe(false)
-    expect(isModuleEnabled('check.something-invented-next-year', settings)).toBe(true)
+    expect(isModuleEnabled(ordinary, settings)).toBe(false)
+    expect(isModuleEnabled({ id: 'check.something-invented-next-year' }, settings)).toBe(true)
+  })
+
+  it('treats a module that ships quiet as off until it is asked for', () => {
+    expect(isModuleEnabled(optIn, DEFAULT_SETTINGS)).toBe(false)
+    expect(isModuleEnabled(optIn, { ...DEFAULT_SETTINGS, enabledModules: [optIn.id] })).toBe(true)
+    // Not in `disabledModules` is what every other module calls "on". For
+    // this kind it has to mean nothing at all.
+    expect(isModuleEnabled(optIn, { ...DEFAULT_SETTINGS, disabledModules: [] })).toBe(false)
   })
 
   it('keeps the list sorted, with no duplicates', () => {
-    let list = withModuleEnabled([], 'check.b', false)
-    list = withModuleEnabled(list, 'check.a', false)
-    list = withModuleEnabled(list, 'check.b', false)
-    expect(list).toEqual(['check.a', 'check.b'])
+    let settings = DEFAULT_SETTINGS
+    for (const id of ['check.b', 'check.a', 'check.b']) {
+      settings = { ...settings, ...withModuleEnabled({ id }, false, settings) }
+    }
+    expect(settings.disabledModules).toEqual(['check.a', 'check.b'])
   })
 
   it('removes a module from the list when it is turned back on', () => {
-    expect(withModuleEnabled(['check.a', 'check.b'], 'check.a', true)).toEqual(['check.b'])
-    expect(withModuleEnabled(['check.a'], 'check.not-in-it', true)).toEqual(['check.a'])
+    const settings = { ...DEFAULT_SETTINGS, disabledModules: ['check.a', 'check.b'] }
+    expect(withModuleEnabled({ id: 'check.a' }, true, settings).disabledModules).toEqual(['check.b'])
+    expect(withModuleEnabled({ id: 'check.not-in-it' }, true, settings).disabledModules).toEqual([
+      'check.a',
+      'check.b'
+    ])
+  })
+
+  it('writes an opt-in module to the other list, and clears it from the wrong one', () => {
+    const confused = { ...DEFAULT_SETTINGS, disabledModules: [optIn.id], enabledModules: [] }
+    expect(withModuleEnabled(optIn, true, confused)).toEqual({
+      disabledModules: [],
+      enabledModules: [optIn.id]
+    })
+    expect(withModuleEnabled(optIn, false, confused)).toEqual({ disabledModules: [], enabledModules: [] })
+  })
+
+  it('does not let an id sit in both lists at once', () => {
+    const both = { ...DEFAULT_SETTINGS, disabledModules: ['check.a'], enabledModules: ['check.a'] }
+    const after = withModuleEnabled({ id: 'check.a' }, true, both)
+    expect(after.disabledModules).toEqual([])
+    expect(after.enabledModules).toEqual([])
   })
 })
 

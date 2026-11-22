@@ -80,6 +80,16 @@ export interface ModuleDescription {
    * anyway would be lying about what it could keep.
    */
   source?: 'custom'
+  /**
+   * Ships quiet, and runs only once somebody asks for it.
+   *
+   * For a rule that is right but not wanted by default: one that reports
+   * something true of most of a library and clears only by hand, one file at
+   * a time. Arriving switched on, it would hand every user a few hundred rows
+   * they cannot work through, and the cost of that is not the rows — it is
+   * that the next module's rows get ignored too.
+   */
+  startsOff?: true
 }
 
 /** True for a rule the user wrote, which is the only kind that can be edited. */
@@ -391,21 +401,48 @@ export function strongerStrategy(a: PlanStrategy, b: PlanStrategy): PlanStrategy
  * added in a later version is on for everyone rather than silently absent for
  * anyone who has ever touched this screen.
  */
-export function isModuleEnabled(id: string, settings: AppSettings): boolean {
-  return !settings.disabledModules.includes(id)
+/**
+ * Just enough of a module to say whether it runs.
+ *
+ * A rule the user wrote can be too broken to build a module from and still
+ * has to be switchable, so this asks for the two fields that decide it rather
+ * than for a whole module.
+ */
+export type ModuleSwitch = Pick<ModuleDescription, 'id' | 'startsOff'>
+
+export function isModuleEnabled(module: ModuleSwitch, settings: AppSettings): boolean {
+  return module.startsOff
+    ? settings.enabledModules.includes(module.id)
+    : !settings.disabledModules.includes(module.id)
 }
 
 /** The same list with one module switched on or off, kept sorted and unique. */
-export function withModuleEnabled(disabled: readonly string[], id: string, enabled: boolean): string[] {
-  const next = new Set(disabled)
-  if (enabled) next.delete(id)
-  else next.add(id)
-  return [...next].sort()
+export function withModuleEnabled(
+  module: ModuleSwitch,
+  enabled: boolean,
+  settings: AppSettings
+): Pick<AppSettings, 'disabledModules' | 'enabledModules'> {
+  const drop = (list: readonly string[]): string[] => list.filter((entry) => entry !== module.id)
+  const add = (list: readonly string[]): string[] => [...new Set([...list, module.id])].sort()
+
+  // Whichever list this module does not belong in is cleared of it either
+  // way: an id left in both says two things at once, and a module that is
+  // marked `startsOff` later would then come back on for whoever had once
+  // switched it off.
+  return module.startsOff
+    ? {
+        disabledModules: drop(settings.disabledModules),
+        enabledModules: enabled ? add(settings.enabledModules) : drop(settings.enabledModules)
+      }
+    : {
+        enabledModules: drop(settings.enabledModules),
+        disabledModules: enabled ? drop(settings.disabledModules) : add(settings.disabledModules)
+      }
 }
 
-export function enabledModules<T extends ModuleDescription>(
+export function runningModules<T extends ModuleDescription>(
   modules: readonly T[],
   settings: AppSettings
 ): T[] {
-  return modules.filter((module) => isModuleEnabled(module.id, settings))
+  return modules.filter((module) => isModuleEnabled(module, settings))
 }

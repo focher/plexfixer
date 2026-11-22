@@ -191,6 +191,17 @@ const BRACKETED_YEAR = /[([](19\d{2}|20\d{2})(?:[-./]\d{1,2}){0,2}[)\]]/
 /** A year standing on its own, for names written without the brackets. */
 const BARE_YEAR = /\b(19\d{2}|20\d{2})\b/g
 
+/**
+ * Whether a piece of text still has a release's details in it.
+ *
+ * The same vocabulary the file name is stripped with, offered because a title
+ * tag reading `Heat.1080p.BluRay.x264` is a ripper's placeholder rather than a
+ * title, and is worth noticing wherever it turns up.
+ */
+export function looksLikeARelease(text: string): boolean {
+  return NOISE.test(text)
+}
+
 export interface GuessedTitle {
   title: string
   year?: string

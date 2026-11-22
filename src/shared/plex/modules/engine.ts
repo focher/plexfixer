@@ -78,7 +78,7 @@ function runChecks(media: MediaContext): { findings: Finding[]; state: ScanState
   const findings: Finding[] = []
 
   for (const module of [...CHECK_MODULES, ...userCheckModules(media.settings)]) {
-    if (!isModuleEnabled(module.id, media.settings)) continue
+    if (!isModuleEnabled(module, media.settings)) continue
     const context: CheckContext = { ...media, state }
     const result = module.run(context)
     if (result.findings?.length) findings.push(...result.findings)
@@ -125,7 +125,7 @@ export function analyzeWithModules(
   let remuxActionAt = 0
 
   const runRepair = (module: (typeof REPAIR_MODULES)[number]): void => {
-    if (!isModuleEnabled(module.id, settings)) {
+    if (!isModuleEnabled(module, settings)) {
       for (const code of module.answers) unrepaired.add(code)
       return
     }

@@ -10,7 +10,7 @@ import {
 } from '@shared/settings-sections.js'
 import { shortenPath } from '../format.js'
 import { CHECK_MODULES, REPAIR_MODULES } from '@shared/plex/modules/registry.js'
-import { isModuleEnabled, withModuleEnabled, type ModuleDescription } from '@shared/plex/modules/framework.js'
+import { isModuleEnabled, withModuleEnabled, type ModuleDescription, type ModuleSwitch } from '@shared/plex/modules/framework.js'
 import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
 import { readCredential } from '@shared/tmdb.js'
 import { parseScript } from '@shared/plex/modules/script/parse.js'
@@ -261,12 +261,16 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
   // `undefined` means no editor is open; an entry with no id is a new rule.
   const [editing, setEditing] = useState<{ id?: string; script: string } | undefined>()
 
-  const toggle = (id: string, enabled: boolean): void => {
-    set({ disabledModules: withModuleEnabled(settings.disabledModules, id, enabled) })
+  const toggle = (module: ModuleSwitch, enabled: boolean): void => {
+    set(withModuleEnabled(module, enabled, settings))
   }
 
   const userModules = readUserModules(settings)
-  const offCount = settings.disabledModules.length
+  // Both kinds of "not running": switched off, and never switched on.
+  const quiet = [...CHECK_MODULES, ...REPAIR_MODULES, ...userModules].filter(
+    (module) => !isModuleEnabled(module, settings)
+  )
+  const offCount = quiet.length
   const total = CHECK_MODULES.length + REPAIR_MODULES.length + userModules.length
 
   const save = (script: string): void => {
@@ -288,7 +292,8 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
     set({
       userModules: settings.userModules.filter((record) => record.id !== id),
       // Nothing should be left behind pointing at a rule that is gone.
-      disabledModules: settings.disabledModules.filter((entry) => entry !== id)
+      disabledModules: settings.disabledModules.filter((entry) => entry !== id),
+      enabledModules: settings.enabledModules.filter((entry) => entry !== id)
     })
   }
 
@@ -304,11 +309,15 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
 
       <div className="modules-actions">
         <span className="muted">
-          {offCount === 0 ? 'Everything is on.' : `${offCount} switched off — ${total - offCount} still running.`}
+          {offCount === 0 ? 'Everything is on.' : `${offCount} not running — ${total - offCount} still on.`}
         </span>
         <span className="spacer" />
-        <button className="ghost" disabled={offCount === 0} onClick={() => set({ disabledModules: [] })}>
-          Turn everything back on
+        <button
+          className="ghost"
+          disabled={offCount === 0 && settings.enabledModules.length === 0}
+          onClick={() => set({ disabledModules: [], enabledModules: [] })}
+        >
+          Put them all back
         </button>
       </div>
 
@@ -332,10 +341,10 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
                   ifDisabled: 'It is already not running.'
                 }
               }
-              enabled={isModuleEnabled(read.id, settings) && read.problems.length === 0}
+              enabled={isModuleEnabled({ id: read.id }, settings) && read.problems.length === 0}
               problems={read.problems}
               reports={{ label: 'Reports', codes: read.module?.raises ?? [] }}
-              onToggle={(enabled) => toggle(read.id, enabled)}
+              onToggle={(enabled) => toggle({ id: read.id }, enabled)}
               onEdit={() => setEditing({ id: read.id, script: read.script })}
               onDelete={() => remove(read.id)}
             />
@@ -354,9 +363,9 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           <ModuleRow
             key={module.id}
             module={module}
-            enabled={isModuleEnabled(module.id, settings)}
+            enabled={isModuleEnabled(module, settings)}
             reports={{ label: 'Reports', codes: module.raises }}
-            onToggle={(enabled) => toggle(module.id, enabled)}
+            onToggle={(enabled) => toggle(module, enabled)}
           />
         ))}
       </div>
@@ -367,9 +376,9 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           <ModuleRow
             key={module.id}
             module={module}
-            enabled={isModuleEnabled(module.id, settings)}
+            enabled={isModuleEnabled(module, settings)}
             reports={{ label: 'Fixes', codes: module.answers }}
-            onToggle={(enabled) => toggle(module.id, enabled)}
+            onToggle={(enabled) => toggle(module, enabled)}
           />
         ))}
       </div>

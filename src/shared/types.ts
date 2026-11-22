@@ -193,6 +193,8 @@ export type FindingCode =
   | 'default-subtitle-language-mismatch'
   | 'forced-subtitle-not-flagged'
   | 'preferred-audio-language-absent'
+  // what the file says about itself
+  | 'metadata-missing'
   /**
    * Anything a rule the user wrote reported.
    *
@@ -503,6 +505,14 @@ export interface AppSettings {
    * this screen.
    */
   disabledModules: string[]
+  /**
+   * Modules that ship switched off, and that you have switched on.
+   *
+   * The mirror of `disabledModules`, and a separate list because an id that
+   * is absent from one list has to be able to mean "on" in one case and
+   * "off" in the other.
+   */
+  enabledModules: string[]
 
   /**
    * Rules the user wrote, as the text they typed.
