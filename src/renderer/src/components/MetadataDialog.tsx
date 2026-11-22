@@ -18,7 +18,18 @@ import type { AnalysisResult, AppSettings, MetadataEdit, TrackEdit } from '@shar
 import { EDITABLE_TAGS, changesAnything, isEmptyEdit, tagsOf } from '@shared/plex/metadata.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { languageOptions } from '@shared/languages.js'
-import { detailsUrl, guessTitle, parseDetails, parseSearch, searchUrl, tagsFromMatch, type TmdbKind, type TmdbMatch } from '@shared/tmdb.js'
+import {
+  authHeader,
+  detailsUrl,
+  guessTitle,
+  parseDetails,
+  parseSearch,
+  readCredential,
+  searchUrl,
+  tagsFromMatch,
+  type TmdbKind,
+  type TmdbMatch
+} from '@shared/tmdb.js'
 
 type Lookup = { state: 'idle' } | { state: 'looking' } | { state: 'failed'; message: string } | { state: 'found'; matches: TmdbMatch[] }
 
@@ -77,14 +88,22 @@ export default function MetadataDialog({
     return set === undefined ? fallback : set
   }
 
+  const credential = useMemo(() => readCredential(settings.tmdbCredential), [settings.tmdbCredential])
+
   async function lookItUp(): Promise<void> {
-    if (settings.tmdbApiKey.trim() === '') {
-      setLookup({ state: 'failed', message: 'No themoviedb.org key yet — paste one into Settings → Metadata.' })
+    if (!credential) {
+      setLookup({
+        state: 'failed',
+        message: 'Nothing from themoviedb.org yet — paste your API key, or your read access token, into Settings → Metadata.'
+      })
       return
     }
     setLookup({ state: 'looking' })
     try {
-      const body = await window.plexfixer.tmdb.get(searchUrl(settings.tmdbApiKey.trim(), kind, query.trim(), year.trim()))
+      const body = await window.plexfixer.tmdb.get(
+        searchUrl(credential, kind, query.trim(), year.trim()),
+        authHeader(credential)
+      )
       const matches = parseSearch(body, kind)
       setLookup(
         matches.length > 0
@@ -100,7 +119,11 @@ export default function MetadataDialog({
   async function take(match: TmdbMatch): Promise<void> {
     let full = match
     try {
-      const body = await window.plexfixer.tmdb.get(detailsUrl(settings.tmdbApiKey.trim(), match.kind, match.id))
+      if (!credential) throw new Error('no credential')
+      const body = await window.plexfixer.tmdb.get(
+        detailsUrl(credential, match.kind, match.id),
+        authHeader(credential)
+      )
       full = parseDetails(body, match.kind) ?? match
     } catch {
       // The search already gave a title, a year and a summary. Losing the

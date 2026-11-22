@@ -12,6 +12,7 @@ import { shortenPath } from '../format.js'
 import { CHECK_MODULES, REPAIR_MODULES } from '@shared/plex/modules/registry.js'
 import { isModuleEnabled, withModuleEnabled, type ModuleDescription } from '@shared/plex/modules/framework.js'
 import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
+import { readCredential } from '@shared/tmdb.js'
 import { parseScript } from '@shared/plex/modules/script/parse.js'
 import ModuleEditor, { NEW_RULE_TEMPLATE } from './ModuleEditor.js'
 
@@ -393,7 +394,7 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
 function MetadataSection(props: SettingsPanelProps): React.JSX.Element {
   const { settings } = props
   const set = props.onChange
-  const key = settings.tmdbApiKey.trim()
+  const credential = readCredential(settings.tmdbCredential)
 
   return (
     <section>
@@ -404,27 +405,30 @@ function MetadataSection(props: SettingsPanelProps): React.JSX.Element {
       </p>
 
       <Field
-        label="themoviedb.org key"
-        hint="Yours, not one shipped with PlexFixer. TMDB gives one away for the asking and asks that it not be passed around — which rules out putting one inside a program anybody can open."
+        label="themoviedb.org"
+        hint="Your own, not one shipped with PlexFixer. TMDB gives these away for the asking and asks that they not be passed around — which rules out putting one inside a program anybody can open."
       >
         <input
           type="password"
-          value={settings.tmdbApiKey}
-          placeholder="Paste your API Key (v3 auth)"
+          value={settings.tmdbCredential}
+          placeholder="API Key, or API Read Access Token"
           autoComplete="off"
           spellCheck={false}
-          onChange={(event) => set({ tmdbApiKey: event.target.value })}
+          onChange={(event) => set({ tmdbCredential: event.target.value })}
         />
       </Field>
 
       <p className="section-hint">
-        {key === ''
-          ? 'Without one, everything on the metadata screen still works — you just fill it in yourself.'
-          : 'Set. Searching sends the title you typed and nothing else about the file.'}
+        {credential === undefined
+          ? 'Either of the two will do, and PlexFixer works out which you pasted. Without one, everything on the metadata screen still works — you just fill it in yourself.'
+          : credential.kind === 'token'
+            ? 'That is a read access token, and it is sent as a header rather than in the address. Searching sends the title you typed and nothing else about the file.'
+            : 'That is an API key, and it is sent in the address. Searching sends the title you typed and nothing else about the file.'}
       </p>
       <p className="section-hint">
-        Get one free at <code>themoviedb.org</code> → your account → Settings → API. PlexFixer is not endorsed
-        by or affiliated with TMDB.
+        Both are free, on <code>themoviedb.org</code> → your account → Settings → API, where they are listed as
+        <strong> API Key</strong> and <strong>API Read Access Token</strong>. Either works; you do not need both.
+        PlexFixer is not endorsed by or affiliated with TMDB.
       </p>
     </section>
   )

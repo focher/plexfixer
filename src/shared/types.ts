@@ -487,7 +487,7 @@ export interface AppSettings {
    * in a binary anybody can open. Empty until you paste one in, and the lookup
    * simply says so until then.
    */
-  tmdbApiKey: string
+  tmdbCredential: string
 
   /** Extensions treated as media when walking folders. */
   mediaExtensions: string[]

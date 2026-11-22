@@ -212,12 +212,20 @@ A **title, or any file tag, is text of any length**, so it cannot be slotted
 into the space the old one occupied: setting one rewrites the file. The plan
 says so before you agree to it.
 
-**Looking a title up.** Settings → Metadata takes an API key for
+**Looking a title up.** Settings → Metadata takes a credential for
 [themoviedb.org](https://www.themoviedb.org), and the search box on the
-metadata screen fills the tags in from a result. The key is yours rather than
-one shipped with PlexFixer: TMDB gives one away for the asking and asks that it
-not be passed around, which rules out putting one inside a program anybody can
-open. Without a key the screen still works — you type the fields yourself.
+metadata screen fills the tags in from a result.
+
+TMDB hands out two and does not make it obvious that either will do: an **API
+Key**, which is 32 characters and travels in the address, and an **API Read
+Access Token**, which is much longer and travels in a header. Paste whichever
+you have — PlexFixer reads the shape and works out which it is. A token is
+never put in a URL, so nothing that logs one gets to keep it.
+
+Either way it is yours rather than one shipped with PlexFixer: TMDB gives them
+away for the asking and asks that they not be passed around, which rules out
+putting one inside a program anybody can open. Without one the screen still
+works — you type the fields yourself.
 
 The search term is guessed from the file name (`Casino.Royale.2006.1080p…`
 becomes *Casino Royale*, 2006) and is editable. **Only that term is sent.**

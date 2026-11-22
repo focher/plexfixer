@@ -8,22 +8,25 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  authHeader,
   detailsUrl,
   guessTitle,
   parseDetails,
   parseSearch,
+  readCredential,
   searchUrl,
   tagsFromMatch
 } from '@shared/tmdb.js'
 
-const KEY = 'abcdef0123456789abcdef0123456789'
+const KEY = readCredential('abcdef0123456789abcdef0123456789')!
+const TOKEN = readCredential('eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ4In0.c2lnbmF0dXJl')!
 
 describe('the address asked for', () => {
   it('searches for a film by name', () => {
     const url = new URL(searchUrl(KEY, 'movie', 'Casino Royale'))
     expect(url.origin + url.pathname).toBe('https://api.themoviedb.org/3/search/movie')
     expect(url.searchParams.get('query')).toBe('Casino Royale')
-    expect(url.searchParams.get('api_key')).toBe(KEY)
+    expect(url.searchParams.get('api_key')).toBe(KEY.value)
     expect(url.searchParams.get('year')).toBeNull()
   })
 
@@ -54,6 +57,48 @@ describe('the address asked for', () => {
     for (const built of [searchUrl(KEY, 'movie', '../../evil'), detailsUrl(KEY, 'tv', 1)]) {
       expect(built.startsWith('https://api.themoviedb.org/3/')).toBe(true)
     }
+  })
+})
+
+describe('which credential was pasted in', () => {
+  it('reads a 32-character API key', () => {
+    expect(readCredential('abcdef0123456789abcdef0123456789')).toEqual({
+      kind: 'key',
+      value: 'abcdef0123456789abcdef0123456789'
+    })
+  })
+
+  it('reads a read access token by its shape', () => {
+    expect(readCredential('  eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ4In0.c2ln  ')).toEqual({
+      kind: 'token',
+      value: 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ4In0.c2ln'
+    })
+  })
+
+  it('has nothing to say about an empty box', () => {
+    expect(readCredential('')).toBeUndefined()
+    expect(readCredential('   ')).toBeUndefined()
+  })
+
+  it('guesses key for anything else, which fails with a message rather than in silence', () => {
+    expect(readCredential('something-else')?.kind).toBe('key')
+  })
+
+  it('sends a token in a header and a key in the query, never the other way round', () => {
+    expect(authHeader(TOKEN)).toBe(`Bearer ${TOKEN.value}`)
+    expect(authHeader(KEY)).toBeUndefined()
+
+    // A token must not end up in a URL: anything that logs one would keep it.
+    const withToken = searchUrl(TOKEN, 'movie', 'Heat')
+    expect(withToken).not.toContain(TOKEN.value)
+    expect(new URL(withToken).searchParams.get('api_key')).toBeNull()
+    expect(new URL(withToken).searchParams.get('query')).toBe('Heat')
+
+    expect(searchUrl(KEY, 'movie', 'Heat')).toContain(KEY.value)
+  })
+
+  it('builds a details address for a token with no query string at all', () => {
+    expect(detailsUrl(TOKEN, 'movie', 36557)).toBe('https://api.themoviedb.org/3/movie/36557')
   })
 })
 

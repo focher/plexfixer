@@ -316,7 +316,7 @@ function buildApi() {
        * to talk to this app and nothing else, and widening that would widen it
        * for everything the page could be made to do.
        */
-      get: (url: string): Promise<string> => invoke('tmdb_get', { url })
+      get: (url: string, bearer?: string): Promise<string> => invoke('tmdb_get', { url, bearer })
     },
 
     overrides: {

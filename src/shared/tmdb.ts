@@ -28,25 +28,64 @@ export type TmdbKind = 'movie' | 'tv'
 
 const BASE = 'https://api.themoviedb.org/3/'
 
+/* ------------------------------------------------------------------ *
+ * Which of the two things TMDB gives you
+ * ------------------------------------------------------------------ */
+
+/**
+ * TMDB hands out two credentials and does not make it obvious that either
+ * will do.
+ *
+ * The **API Key** is 32 hex characters and goes in the query string. The
+ * **API Read Access Token** is a JWT and goes in an Authorization header.
+ * Both work against the same endpoints, so rather than asking somebody to
+ * know which one they copied, the shape is read off it.
+ */
+export type TmdbCredential = { kind: 'key'; value: string } | { kind: 'token'; value: string }
+
+/** A JWT: three dot-separated parts, and the first always begins `ey`. */
+const JWT = /^ey[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+
+/**
+ * Nothing, or whichever of the two was pasted in.
+ *
+ * Anything that is not plainly a token is treated as a key, which is the
+ * forgiving way round: a key is what most people have, and a wrong guess
+ * produces TMDB's own "invalid API key" rather than silence.
+ */
+export function readCredential(raw: string): TmdbCredential | undefined {
+  const value = raw.trim()
+  if (value === '') return undefined
+  return JWT.test(value) ? { kind: 'token', value } : { kind: 'key', value }
+}
+
+/** What to send in the Authorization header, for the credential that needs one. */
+export function authHeader(credential: TmdbCredential): string | undefined {
+  return credential.kind === 'token' ? `Bearer ${credential.value}` : undefined
+}
+
 /** TMDB calls a film's name `title` and a series' name `name`. */
 const NAME_KEY: Record<TmdbKind, string> = { movie: 'title', tv: 'name' }
 const DATE_KEY: Record<TmdbKind, string> = { movie: 'release_date', tv: 'first_air_date' }
 
-function url(path: string, apiKey: string, params: Record<string, string>): string {
-  const query = new URLSearchParams({ api_key: apiKey, ...params })
-  return `${BASE}${path}?${query.toString()}`
+function url(path: string, credential: TmdbCredential, params: Record<string, string>): string {
+  // A token travels in a header instead, so it never goes near the query
+  // string — nothing that logs a URL gets to keep it.
+  const query = new URLSearchParams(credential.kind === 'key' ? { api_key: credential.value, ...params } : params)
+  const tail = query.toString()
+  return tail === '' ? `${BASE}${path}` : `${BASE}${path}?${tail}`
 }
 
-export function searchUrl(apiKey: string, kind: TmdbKind, query: string, year?: string): string {
+export function searchUrl(credential: TmdbCredential, kind: TmdbKind, query: string, year?: string): string {
   const params: Record<string, string> = { query, include_adult: 'false' }
   // The year narrows a search hard, so it is only sent when it looks like one:
   // a wrong year finds nothing at all, which reads as "no such film".
   if (year && /^\d{4}$/.test(year)) params[kind === 'movie' ? 'year' : 'first_air_date_year'] = year
-  return url(`search/${kind}`, apiKey, params)
+  return url(`search/${kind}`, credential, params)
 }
 
-export function detailsUrl(apiKey: string, kind: TmdbKind, id: number): string {
-  return url(`${kind}/${id}`, apiKey, {})
+export function detailsUrl(credential: TmdbCredential, kind: TmdbKind, id: number): string {
+  return url(`${kind}/${id}`, credential, {})
 }
 
 function asString(value: unknown): string {

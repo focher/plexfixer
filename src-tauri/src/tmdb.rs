@@ -18,10 +18,22 @@ const ALLOWED: &str = "https://api.themoviedb.org/3/";
 /// pull something enormous into memory.
 const MAX_BYTES: usize = 2 * 1024 * 1024;
 
+/// TMDB hands out two credentials: an API key, which travels in the query
+/// string, and a read access token, which travels in a header. The caller has
+/// already worked out which it has; this only has to carry the header when
+/// there is one.
 #[tauri::command]
-pub async fn tmdb_get(url: String) -> Result<String, String> {
+pub async fn tmdb_get(url: String, bearer: Option<String>) -> Result<String, String> {
     if !url.starts_with(ALLOWED) {
         return Err(format!("Only {ALLOWED} can be fetched, and that was not it"));
+    }
+
+    // A header value is terminated by a line ending. A token carrying one
+    // would not be a token, it would be the start of a second header.
+    if let Some(token) = bearer.as_deref() {
+        if token.chars().any(|c| c.is_control()) {
+            return Err("That read access token has characters in it that cannot go in a header".to_string());
+        }
     }
 
     let client = reqwest::Client::builder()
@@ -32,9 +44,12 @@ pub async fn tmdb_get(url: String) -> Result<String, String> {
         .build()
         .map_err(|error| error.to_string())?;
 
-    let response = client
-        .get(&url)
-        .header("Accept", "application/json")
+    let mut request = client.get(&url).header("Accept", "application/json");
+    if let Some(token) = bearer {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+
+    let response = request
         .send()
         .await
         .map_err(|error| format!("Could not reach themoviedb.org: {error}"))?;
