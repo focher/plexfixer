@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // A week to notice a repair that went wrong, then the space comes back.
   backupRetentionDays: 7,
   outputSuffix: '.plexfixed',
+  filenameTemplate: '',
 
   hardwareEncoder: 'auto',
   videoQuality: 21,

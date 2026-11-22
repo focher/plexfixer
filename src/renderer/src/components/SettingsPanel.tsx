@@ -13,6 +13,7 @@ import { CHECK_MODULES, REPAIR_MODULES } from '@shared/plex/modules/registry.js'
 import { isModuleEnabled, withModuleEnabled, type ModuleDescription, type ModuleSwitch } from '@shared/plex/modules/framework.js'
 import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
 import { readCredential } from '@shared/tmdb.js'
+import { SUGGESTED_TEMPLATES, TEMPLATE_TOKENS, explainProblem, nameFor } from '@shared/plex/naming.js'
 import { parseScript } from '@shared/plex/modules/script/parse.js'
 import ModuleEditor, { NEW_RULE_TEMPLATE } from './ModuleEditor.js'
 
@@ -697,6 +698,83 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
   )
 }
 
+/**
+ * The naming pattern, with a worked example under it.
+ *
+ * A pattern is written blind otherwise: the tokens are invented by this app,
+ * the tags come out of the file, and nothing on screen would say which of the
+ * two was wrong until a folder had been renamed. So the example is live, and
+ * it is a file that lacks a release date as often as not — because the rule
+ * that matters is what happens then.
+ */
+function FilenameTemplateField({
+  settings,
+  set
+}: {
+  settings: AppSettings
+  set: (patch: Partial<AppSettings>) => void
+}): React.JSX.Element {
+  const example = { title: 'Casino Royale', date: '2006-11-14', genre: 'Action', show: 'Breaking Bad', season_number: '5', episode_id: '14' }
+  const preview = nameFor(settings.filenameTemplate, example, 'Casino.Royale.2006.1080p.BluRay.x264')
+  const bare = nameFor(settings.filenameTemplate, { title: 'Casino Royale' }, 'Casino.Royale.1080p')
+
+  return (
+    <Field
+      label="Name repaired files"
+      hint="Leave empty to keep the name each file already has."
+    >
+      <input
+        type="text"
+        value={settings.filenameTemplate}
+        placeholder="{title} ({year})"
+        spellCheck={false}
+        onChange={(event) => set({ filenameTemplate: event.target.value })}
+      />
+      <div className="template-presets">
+        {SUGGESTED_TEMPLATES.map((preset) => (
+          <button
+            key={preset.template}
+            className="ghost"
+            title={preset.label}
+            onClick={() => set({ filenameTemplate: preset.template })}
+          >
+            {preset.template}
+          </button>
+        ))}
+        {settings.filenameTemplate === '' ? null : (
+          <button className="ghost" onClick={() => set({ filenameTemplate: '' })}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      {settings.filenameTemplate.trim() === '' ? null : (
+        <div className="template-preview">
+          {preview.problem ? (
+            <p className="metadata-problem">{explainProblem(preview.problem)}</p>
+          ) : (
+            <>
+              <p className="block-note">
+                A film tagged <em>Casino Royale</em>, released 14 November 2006, would be written as{' '}
+                <strong className="mono">{preview.stem}</strong>
+              </p>
+              <p className="block-note">
+                {bare.problem?.kind === 'empty'
+                  ? `A file with a title but no release date keeps the name it has — ${explainProblem(bare.problem).replace(/^This file has/, 'it has')}`
+                  : `The same file without a release date would be written as ${bare.stem}`}
+              </p>
+            </>
+          )}
+          <p className="block-note">
+            Fields: {TEMPLATE_TOKENS.map((token) => `{${token.key}}`).join(' ')} — a file missing any field you
+            use keeps the name it has, so nothing is ever written as half a title.
+          </p>
+        </div>
+      )}
+    </Field>
+  )
+}
+
 function OutputSection(props: SettingsPanelProps): React.JSX.Element {
   const { settings } = props
   const set = props.onChange
@@ -735,6 +813,8 @@ function OutputSection(props: SettingsPanelProps): React.JSX.Element {
           </div>
         </Field>
       ) : null}
+
+      <FilenameTemplateField settings={settings} set={set} />
 
       <Field
         label="Originals"

@@ -427,6 +427,14 @@ export interface AppSettings {
   backupRetentionDays: number
   /** Suffix used for sibling output. */
   outputSuffix: string
+  /**
+   * A pattern for naming repaired files, in `{field}` tokens.
+   *
+   * Empty, the default, means a repaired file keeps the name its source had.
+   * See src/shared/plex/naming.ts for what a token may be and for what
+   * happens when one of them has nothing behind it.
+   */
+  filenameTemplate: string
 
   /** Hardware encoder preference for forced transcodes. */
   hardwareEncoder: 'auto' | 'nvenc' | 'videotoolbox' | 'qsv' | 'amf' | 'none'

@@ -2634,3 +2634,34 @@ button.browser-row:hover:not(:disabled) {
 .stage-stall {
   color: var(--warn);
 }
+
+/* --- the filename pattern, and its worked example ------------------------ */
+
+.template-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.template-presets button {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 3px 7px;
+}
+
+.template-preview {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.template-preview p {
+  margin: 0 0 4px;
+}
+
+.template-preview p:last-child {
+  margin-bottom: 0;
+}

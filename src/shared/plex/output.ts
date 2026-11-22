@@ -5,6 +5,7 @@
 import type { AppSettings } from '../types.js'
 import type { RepairHost } from '../host.js'
 import { newId } from '../ids.js'
+import { nameFor, type NamingProblem } from './naming.js'
 
 /**
  * A tag that is this run of the app and no other.
@@ -51,6 +52,19 @@ function extensionFor(sourcePath: string, targetContainer: 'mp4' | 'mkv', host: 
     : `.${targetContainer}`
 }
 
+/**
+ * The final destination for a repaired file, and why it is named that.
+ *
+ * Reported together because a rename the user did not ask for is alarming and
+ * a rename that did not happen is baffling, and both are answered by the same
+ * sentence in the job's log.
+ */
+export interface OutputPath {
+  path: string
+  /** Why the naming pattern was not used, when it was not. */
+  problem?: NamingProblem
+}
+
 /** The final destination for a repaired file. */
 export function resolveOutputPath(
   sourcePath: string,
@@ -58,32 +72,55 @@ export function resolveOutputPath(
   settings: AppSettings,
   host: RepairHost,
   /** Root the source was scanned from, used to mirror the tree in output-dir mode. */
-  scanRoot?: string
+  scanRoot?: string,
+  /**
+   * What the file will say about itself once the repair is done — its own
+   * tags with anything the plan is about to write over the top. A lookup
+   * applied in the same job therefore names the file it just retitled.
+   */
+  tags: Record<string, string> = {}
 ): string {
+  return resolveOutput(sourcePath, targetContainer, settings, host, scanRoot, tags).path
+}
+
+export function resolveOutput(
+  sourcePath: string,
+  targetContainer: 'mp4' | 'mkv',
+  settings: AppSettings,
+  host: RepairHost,
+  scanRoot?: string,
+  tags: Record<string, string> = {}
+): OutputPath {
   const { join, dirname, basename, extname, isAbsolute, relative } = host.paths
   const dir = dirname(sourcePath)
-  const stem = basename(sourcePath, extname(sourcePath))
+  const sourceStem = basename(sourcePath, extname(sourcePath))
+  const named = nameFor(settings.filenameTemplate, tags, sourceStem)
+  const stem = named.stem
+  const problem = named.problem
   const extension = extensionFor(sourcePath, targetContainer, host)
 
   switch (settings.outputPlacement) {
     case 'in-place':
-      return join(dir, `${stem}${extension}`)
+      return { path: join(dir, `${stem}${extension}`), problem }
 
     case 'output-dir': {
       const root = settings.outputDirectory
       if (!root || !isAbsolute(root)) {
         // Misconfigured output directory: fall back to a sibling file rather
         // than writing somewhere surprising.
-        return join(dir, `${stem}${settings.outputSuffix}${extension}`)
+        return { path: join(dir, `${stem}${settings.outputSuffix}${extension}`), problem }
       }
       const relativeDir = scanRoot ? relative(scanRoot, dir) : ''
       const safeRelative = relativeDir.startsWith('..') ? '' : relativeDir
-      return join(root, safeRelative, `${stem}${extension}`)
+      return { path: join(root, safeRelative, `${stem}${extension}`), problem }
     }
 
     case 'sibling':
     default:
-      return join(dir, `${stem}${settings.outputSuffix}${extension}`)
+      // The suffix stays even with a pattern set: beside the original is the
+      // one placement where the name *must* differ from the source, and a
+      // pattern that happened to reproduce it would overwrite the file.
+      return { path: join(dir, `${stem}${settings.outputSuffix}${extension}`), problem }
   }
 }
 

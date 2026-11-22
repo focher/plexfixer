@@ -36,12 +36,14 @@ import {
   discardTemporary,
   promoteOutput,
   redirectOutput,
-  resolveOutputPath,
+  resolveOutput,
   temporaryPathFor
 } from './output.js'
 import { outputProblem } from './verify.js'
 import { TaskQueue } from './queue.js'
 import { REFUSAL_REASON, inPlaceVerdict } from './inplace.js'
+import { explainProblem } from './naming.js'
+import { tagsOf } from './metadata.js'
 import type { BackupRecord } from '../backups.js'
 import { languageForContainer, sameLanguage } from '../languages.js'
 import { applyPatches, packLanguage, readMp4Tracks, revertPatches, type BytePatch } from './mp4-patch.js'
@@ -332,7 +334,19 @@ export class RepairRunner {
   enqueue(options: EnqueueOptions): Job {
     const { result, settings, mode, scanRoot } = options
     const id = newId()
-    const outputPath = resolveOutputPath(result.file.path, result.plan.targetContainer, settings, this.host, scanRoot)
+    // What the file will say about itself once this job is done: its own tags
+    // with whatever the plan is about to write over the top. A naming pattern
+    // then sees the title a lookup set in this very job, not the one it is
+    // replacing.
+    const tags = { ...tagsOf(result.file), ...(result.plan.metadataTags ?? {}) }
+    const { path: outputPath, problem: namingProblem } = resolveOutput(
+      result.file.path,
+      result.plan.targetContainer,
+      settings,
+      this.host,
+      scanRoot,
+      tags
+    )
 
     const base: Job = {
       id,
@@ -356,7 +370,12 @@ export class RepairRunner {
             `target     ${outputPath}\n` +
             `container  ${result.file.container} -> ${result.plan.targetContainer}\n` +
             `mode       ${mode}\n` +
-            `plan       ${result.plan.costNote}`
+            `plan       ${result.plan.costNote}` +
+            // Silence here would read as "the pattern did nothing", which is
+            // the one thing it never does: it either renamed or it said why.
+            (namingProblem && namingProblem.kind !== 'no-template'
+              ? `\nnaming     ${explainProblem(namingProblem)}`
+              : '')
         }
       ]
     }

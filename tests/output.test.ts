@@ -15,6 +15,7 @@ import {
   discardTemporary,
   promoteOutput,
   redirectOutput,
+  resolveOutput,
   resolveOutputPath
 } from '@shared/plex/output.js'
 
@@ -286,5 +287,77 @@ describe('redirectOutput', () => {
   it('leaves the arguments alone when the output is not among them', () => {
     const args = ['-i', '/m/Episode.mkv', '-y', '/m/Other.mp4']
     expect(redirectOutput(args, '/m/Episode.mp4', scratch)).toEqual(args)
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Naming from the tags
+ * ------------------------------------------------------------------ */
+
+describe('resolveOutputPath — a naming pattern', () => {
+  const tags = { title: 'Casino Royale', date: '2006-11-14' }
+  const pattern = settings({ filenameTemplate: '{title} ({year})' })
+
+  it('renames the file in place', () => {
+    expect(resolveOutputPath('/m/Casino.Royale.2006.1080p.mkv', 'mp4', pattern, localHost(), undefined, tags)).toBe(
+      '/m/Casino Royale (2006).mp4'
+    )
+  })
+
+  it('names the file in the output folder too', () => {
+    const out = settings({
+      filenameTemplate: '{title} ({year})',
+      outputPlacement: 'output-dir',
+      outputDirectory: '/out'
+    })
+    expect(resolveOutputPath('/lib/Movies/Casino.Royale.mkv', 'mp4', out, localHost(), '/lib', tags)).toBe(
+      '/out/Movies/Casino Royale (2006).mp4'
+    )
+  })
+
+  it('keeps the suffix beside the original, where the name has to differ', () => {
+    // A pattern that reproduced the source name would otherwise point the
+    // output at the input.
+    const sibling = settings({ filenameTemplate: '{title} ({year})', outputPlacement: 'sibling' })
+    expect(resolveOutputPath('/m/Casino Royale (2006).mkv', 'mp4', sibling, localHost(), undefined, tags)).toBe(
+      '/m/Casino Royale (2006).plexfixed.mp4'
+    )
+  })
+
+  it('leaves the name alone when the file has nothing to name it from', () => {
+    expect(resolveOutputPath('/m/Casino.Royale.2006.1080p.mkv', 'mp4', pattern, localHost(), undefined, {})).toBe(
+      '/m/Casino.Royale.2006.1080p.mp4'
+    )
+    // A title but no date: still not enough for this pattern.
+    const half = { title: 'Casino Royale' }
+    expect(resolveOutputPath('/m/Casino.Royale.1080p.mkv', 'mp4', pattern, localHost(), undefined, half)).toBe(
+      '/m/Casino.Royale.1080p.mp4'
+    )
+  })
+
+  it('leaves the name alone when no pattern is set', () => {
+    expect(resolveOutputPath('/m/Movie.mkv', 'mp4', settings(), localHost(), undefined, tags)).toBe('/m/Movie.mp4')
+  })
+
+  it('cannot be made to write outside the folder it was given', () => {
+    const escape = { title: '../../../etc/cron.d/evil' }
+    const path = resolveOutputPath(
+      '/m/Movie.mkv',
+      'mp4',
+      settings({ filenameTemplate: '{title}' }),
+      localHost(),
+      undefined,
+      escape
+    )
+    expect(path.startsWith('/m/')).toBe(true)
+    expect(path).toBe('/m/-..-..-etc-cron.d-evil.mp4')
+  })
+
+  it('reports why it did not rename, for the job log', () => {
+    expect(resolveOutput('/m/Movie.mkv', 'mp4', pattern, localHost(), undefined, {}).problem).toEqual({
+      kind: 'empty',
+      token: 'title'
+    })
+    expect(resolveOutput('/m/Movie.mkv', 'mp4', pattern, localHost(), undefined, tags).problem).toBeUndefined()
   })
 })
