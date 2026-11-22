@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { AppSettings } from '@shared/types.js'
 import { DEFAULT_CATALOG, catalogResultFor, resolveCatalog } from '@shared/plex/catalog/resolve.js'
 import { changedCount, resetSection } from '@shared/plex/catalog/edit.js'
+import StatusEditor from './StatusEditor.js'
 import type { CatalogPatch } from '@shared/plex/catalog/types.js'
 
 type OnChange = (patch: Partial<AppSettings>) => void
@@ -36,42 +37,15 @@ export default function CatalogSection({
   onChange: OnChange
 }): React.JSX.Element {
   const patch = settings.catalog
-  const { catalog, problems } = catalogResultFor(settings)
+  const { problems } = catalogResultFor(settings)
 
-  const statusText = pretty({ statuses: catalog.statuses, statusRules: catalog.statusRules })
-  const [statusDraft, setStatusDraft] = useState<string>()
   const [importDraft, setImportDraft] = useState<string>()
   const [copied, setCopied] = useState(false)
 
-  // What the drafts would do, worked out as they are typed.
-  const statusRead = statusDraft === undefined ? undefined : readJson(statusDraft)
-  const statusCheck =
-    statusRead?.value === undefined
-      ? undefined
-      : resolveCatalog(DEFAULT_CATALOG, {
-          statuses: statusRead.value.statuses as CatalogPatch['statuses'],
-          statusRules: statusRead.value.statusRules as CatalogPatch['statusRules']
-        })
-  const statusProblems = statusRead?.error ? [statusRead.error] : (statusCheck?.problems ?? [])
-
+  // What an import would do, worked out as it is typed.
   const importRead = importDraft === undefined ? undefined : readJson(importDraft)
   const importCheck = importRead?.value === undefined ? undefined : resolveCatalog(DEFAULT_CATALOG, importRead.value)
   const importProblems = importRead?.error ? [importRead.error] : (importCheck?.problems ?? [])
-
-  const applyStatuses = (): void => {
-    if (!statusRead?.value || statusProblems.length > 0) return
-    const next = {
-      ...resetSection(patch, 'statuses'),
-      statuses: statusRead.value.statuses as CatalogPatch['statuses'],
-      statusRules: statusRead.value.statusRules as CatalogPatch['statusRules']
-    }
-    // Back to the shipped list is a reset, not a copy of it.
-    const same =
-      JSON.stringify({ s: next.statuses, r: next.statusRules }) ===
-      JSON.stringify({ s: DEFAULT_CATALOG.statuses, r: DEFAULT_CATALOG.statusRules })
-    onChange({ catalog: same ? resetSection(patch, 'statuses') : next })
-    setStatusDraft(undefined)
-  }
 
   const copyPatch = async (): Promise<void> => {
     try {
@@ -95,55 +69,11 @@ export default function CatalogSection({
       <h3>Statuses &amp; catalog</h3>
       <p className="section-hint">
         Every check raises <strong>flags</strong>; the chips above the library are those flags, and the status tiles
-        are rules over them. The shipped rules are in <span className="mono">default.json</span>; only what you
-        change is stored.
+        are rules over them. Build the tiles and their rules here; only what you change from the shipped setup is
+        stored, and each part can be put back.
       </p>
 
-      <h4 className="modules-heading">Status tiles</h4>
-      <p className="section-hint">
-        <span className="mono">statuses</span> are the tiles, in order. <span className="mono">statusRules</span> are
-        tried top to bottom and the first that matches gives a file its status, so the last should be{' '}
-        <span className="mono">{'{ "always": true }'}</span>. A condition is one of <span className="mono">any</span>,{' '}
-        <span className="mono">all</span> or <span className="mono">none</span> of a list of selectors (by{' '}
-        <span className="mono">flag</span>, <span className="mono">category</span>,{' '}
-        <span className="mono">severity</span>, <span className="mono">remedy</span>,{' '}
-        <span className="mono">repair</span>, <span className="mono">unresolved</span>), a plan{' '}
-        <span className="mono">strategy</span>, or <span className="mono">and</span> / <span className="mono">or</span>{' '}
-        / <span className="mono">not</span> of other conditions.
-      </p>
-      <textarea
-        className="catalog-json mono"
-        spellCheck={false}
-        value={statusDraft ?? statusText}
-        onChange={(event) => setStatusDraft(event.target.value)}
-        rows={18}
-      />
-      {statusProblems.length > 0 ? (
-        <ul className="module-problems">
-          {statusProblems.map((problem) => (
-            <li key={problem}>{problem}</li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="modules-actions">
-        <button disabled={statusDraft === undefined || statusProblems.length > 0} onClick={applyStatuses}>
-          Save statuses
-        </button>
-        <button className="ghost" disabled={statusDraft === undefined} onClick={() => setStatusDraft(undefined)}>
-          Discard edits
-        </button>
-        <span className="spacer" />
-        <button
-          className="ghost"
-          disabled={changedCount(patch, 'statuses') === 0}
-          onClick={() => {
-            onChange({ catalog: resetSection(patch, 'statuses') })
-            setStatusDraft(undefined)
-          }}
-        >
-          Reset statuses
-        </button>
-      </div>
+      <StatusEditor settings={settings} onChange={onChange} />
 
       <h4 className="modules-heading">What you have changed</h4>
       {problems.length > 0 ? (
@@ -174,6 +104,12 @@ export default function CatalogSection({
         </button>
       </div>
 
+      <details className="catalog-advanced">
+        <summary>Advanced: your changes as JSON</summary>
+        <p className="section-hint">
+          Everything above is stored as a small JSON document of what differs from the shipped defaults. Copy it to
+          keep or share a setup, or paste one in.
+        </p>
       <div className="modules-actions">
         <button onClick={() => void copyPatch()}>{copied ? 'Copied' : 'Copy my changes as JSON'}</button>
         <button className="ghost" onClick={() => setImportDraft(importDraft === undefined ? pretty(patch) : undefined)}>
@@ -211,6 +147,7 @@ export default function CatalogSection({
           </div>
         </>
       ) : null}
+      </details>
     </section>
   )
 }
