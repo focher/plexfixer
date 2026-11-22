@@ -34,6 +34,56 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.2.7',
+    headline: 'The rules are yours to read, to switch off, and to add to — and you can now edit a file yourself.',
+    changes: [
+      {
+        title: 'Every check and repair explains itself, and can be switched off',
+        body:
+          'What was one long function is now forty small ones, listed under Settings → Checks & repairs. Each ' +
+          'says in plain English what it looks for, how it decides and what you give up by turning it off. ' +
+          'Turning a check off means it is never reported; turning a repair off means the problem is still ' +
+          'reported and listed as something the app will not fix — which is how you run a library you only ever ' +
+          'want remuxed.'
+      },
+      {
+        title: 'You can write your own rules',
+        body:
+          'A rule is a few lines: what to look for, what to call it, and which repair to ask for. Build it by ' +
+          'dragging blocks or by typing — they are two views of the same rule. Nothing in a rule is executed: ' +
+          'it can compare what is in a file and ask for a repair the app already has, and that is all it can do.'
+      },
+      {
+        title: 'Edit a file\u2019s metadata yourself',
+        body:
+          'Edit metadata, on any row, opens the file\u2019s own title, year, summary and genre, and every track ' +
+          'with its name, language and whether it plays without being chosen. What you change is shown as a ' +
+          'plan and costed before anything is written. A key for themoviedb.org, in Settings → Metadata, fills ' +
+          'the fields in from a search.'
+      },
+      {
+        title: 'Re-scanning a library is nearly instant',
+        body:
+          'A scan used to read every file it found, every time. It now checks size and modification time first ' +
+          'and only reads the ones that changed. Clearing the list still reads everything.'
+      },
+      {
+        title: 'Subtitle sidecars come out in one pass, from the right file',
+        body:
+          'Writing them ran ffmpeg once per track, each reading the whole film again. They now come out of a ' +
+          'single pass. It was also reading the repaired file rather than the original — which no longer ' +
+          'contains the tracks being extracted, that being why they are extracted — so on the usual settings ' +
+          'sidecars were failing with a warning. Fixed.'
+      },
+      {
+        title: 'This screen',
+        body:
+          'New versions used to arrive in silence. This now opens once when one does, and never again for the ' +
+          'same version. About → What\u2019s new brings it back.'
+      }
+    ]
+  },
+  {
     version: '0.2.6',
     headline: 'A repair that promised a stream copy was quietly re-encoding subtitles — and failing on them.',
     changes: [

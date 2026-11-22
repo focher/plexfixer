@@ -13,8 +13,14 @@
  */
 
 import type { AnalysisResult, AppSettings, MediaFile } from '../types.js'
+import type { MetadataEdit } from './metadata.js'
 import { analyzeWithModules } from './modules/engine.js'
 
-export function analyzeFile(file: MediaFile, settings: AppSettings): AnalysisResult {
-  return analyzeWithModules(file, settings)
+/**
+ * `edits` is what a person asked for by hand, when there is any. Passing it
+ * produces the plan for that edit — the same preview every other repair gets,
+ * before anything is written.
+ */
+export function analyzeFile(file: MediaFile, settings: AppSettings, edits?: MetadataEdit): AnalysisResult {
+  return analyzeWithModules(file, settings, edits)
 }

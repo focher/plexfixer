@@ -33,6 +33,7 @@ import type {
 import { catalogFor, flagDef, shippedRepairOf } from '../catalog/resolve.js'
 import type { Catalog } from '../catalog/types.js'
 import { preferredHevcTag } from '../rules.js'
+import type { MetadataEdit } from '../metadata.js'
 import { audioStreams, resolvePrimaryLanguage, subtitleStreams, videoStreams } from '../tracks.js'
 import { CHECK_MODULES, REPAIR_MODULES } from './registry.js'
 import { userCheckModules } from './script/module.js'
@@ -58,10 +59,11 @@ export interface ModuleRun {
   plan: RepairPlan
 }
 
-function mediaContext(file: MediaFile, settings: AppSettings): MediaContext {
+function mediaContext(file: MediaFile, settings: AppSettings, edits?: MetadataEdit): MediaContext {
   return {
     file,
     settings,
+    edits,
     video: videoStreams(file),
     audio: audioStreams(file),
     subtitles: subtitleStreams(file),
@@ -150,8 +152,12 @@ const setAside = (answers: readonly FindingCode[], raised: ReadonlySet<FindingCo
   return present.length > 0 && !present.some((code) => answeredAsShipped(code, catalog))
 }
 
-export function analyzeWithModules(file: MediaFile, settings: AppSettings): AnalysisResult {
-  const media = mediaContext(file, settings)
+export function analyzeWithModules(
+  file: MediaFile,
+  settings: AppSettings,
+  edits?: MetadataEdit
+): AnalysisResult {
+  const media = mediaContext(file, settings, edits)
   const catalog = catalogFor(settings)
   const { findings: rawFindings, raised, state } = runChecks(media, catalog)
 
@@ -225,6 +231,7 @@ export function analyzeWithModules(file: MediaFile, settings: AppSettings): Anal
     if (fragment?.addCompatibilityAudio) plan.addCompatibilityAudio = fragment.addCompatibilityAudio
     if (fragment?.extractSubtitles?.length) plan.extractSubtitles.push(...fragment.extractSubtitles)
     if (fragment?.videoLevel !== undefined) plan.videoLevel = fragment.videoLevel
+    if (fragment?.metadataTags) plan.metadataTags = { ...plan.metadataTags, ...fragment.metadataTags }
   }
 
   for (const module of REPAIR_MODULES) {

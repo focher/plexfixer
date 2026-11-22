@@ -22,6 +22,8 @@ export type InPlaceRefusal =
   | 'changes-the-codec-tag'
   | 'changes-the-level'
   | 'changes-a-forced-flag'
+  | 'changes-a-track-name'
+  | 'changes-the-file-tags'
   | 'nothing-to-do'
 
 /**
@@ -42,6 +44,8 @@ export const REFUSAL_REASON: Record<InPlaceRefusal, string> = {
   'moves-the-index': 'the MP4 index is at the end of the file and has to be moved to the front, which rewrites every byte',
   'changes-the-codec-tag': 'the video codec tag is changing, which is left to ffmpeg',
   'changes-a-forced-flag': 'a forced-subtitle flag is changing, which makes the header longer',
+  'changes-a-track-name': 'a track is being renamed, and a name is not a fixed-width field — the file has to be rewritten',
+  'changes-the-file-tags': 'the file\'s own tags are being written, and text of any length cannot be slotted into the header',
   'changes-the-level': 'the H.264 level is being relabelled, which rewrites the stream itself, not just the header',
   'nothing-to-do': 'there is nothing to change'
 }
@@ -87,10 +91,15 @@ export function inPlaceVerdict(result: AnalysisResult): InPlaceVerdict {
   // it is ffmpeg's job, with the usual re-probe before anything is replaced.
   if (plan.videoLevel != null) return { refusal: 'changes-the-level' }
 
+  // Text set by hand is any length, so it cannot be written over what is
+  // already there; only fixed-width fields can be edited where they lie.
+  if (plan.metadataTags && Object.keys(plan.metadataTags).length > 0) return { refusal: 'changes-the-file-tags' }
+
   const changes = plan.trackChanges.filter((change) => !change.drop)
   if (changes.length !== plan.trackChanges.length) return { refusal: 'drops-a-track' }
   // ffmpeg stores `forced` by adding a box, which changes the file's length.
   if (changes.some((change) => change.setForced != null)) return { refusal: 'changes-a-forced-flag' }
+  if (changes.some((change) => change.setTitle != null)) return { refusal: 'changes-a-track-name' }
 
   const effective = changes.filter((change) => change.setLanguage != null || change.setDefault != null)
   if (effective.length === 0) return { refusal: 'nothing-to-do' }

@@ -5,6 +5,7 @@ import type {
   AppSettings,
   EnvironmentInfo,
   Job,
+  MetadataEdit,
   ModeOverrides,
   RepairMode,
   ScanError
@@ -559,6 +560,20 @@ export default function App(): React.JSX.Element {
     []
   )
 
+  /**
+   * Write metadata somebody set by hand.
+   *
+   * Queued as a safe remux rather than in the file's own mode: this was asked
+   * for outright, and a file sitting in Report only is not a reason to drop an
+   * instruction on the floor. The dialog has already shown what it will do.
+   */
+  const applyMetadata = useCallback(async (path: string, edits: MetadataEdit) => {
+    const entry = libraryRef.current.get(path)
+    if (!entry) return
+    setTab('jobs')
+    await window.plexfixer.jobs.enqueue([{ file: entry.file, scanRoot: entry.scanRoot, edits }], 'safe-remux')
+  }, [])
+
   /* --- drag and drop ---------------------------------------------------- */
 
   /**
@@ -1085,6 +1100,7 @@ export default function App(): React.JSX.Element {
                     environment={environment}
                     onSetMode={(path, mode) => void setMode(path, mode)}
                     onRepair={(paths, mode) => void repair(paths, mode)}
+                    onApplyMetadata={(path, edits) => void applyMetadata(path, edits)}
                     onReveal={(path) => void window.plexfixer.shell.reveal(path)}
                     onContextMenu={(path) => void window.plexfixer.shell.fileMenu(path)}
                     onRefresh={(path) => void refreshFile(path)}

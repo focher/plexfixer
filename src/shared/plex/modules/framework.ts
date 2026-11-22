@@ -41,6 +41,7 @@ import type {
 } from '../../types.js'
 import type { PrimaryLanguage } from '../tracks.js'
 import type { ParamSchema, ParamValues } from './params.js'
+import type { MetadataEdit } from '../metadata.js'
 
 /* ------------------------------------------------------------------ *
  * What every module says about itself
@@ -203,6 +204,11 @@ export interface UserRequest {
 export interface MediaContext {
   readonly file: MediaFile
   readonly settings: AppSettings
+  /**
+   * What a person has asked for by hand, when this analysis is previewing an
+   * edit rather than describing a file as found.
+   */
+  readonly edits?: MetadataEdit
   /** Real video tracks — embedded cover art is filtered out. */
   readonly video: readonly VideoStream[]
   readonly audio: readonly AudioStream[]
@@ -259,6 +265,7 @@ export interface RepairContext extends MediaContext {
 
 /** The pieces of a repair plan a module can contribute. */
 export interface PlanFragment {
+  metadataTags?: Record<string, string>
   videoTranscode?: VideoTranscodeSpec
   addCompatibilityAudio?: CompatibilityAudioSpec
   extractSubtitles?: RepairPlan['extractSubtitles']

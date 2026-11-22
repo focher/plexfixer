@@ -5,6 +5,8 @@ import { languageName } from '@shared/languages.js'
 import { MODE_LABEL, findOverrideKey, resolveMode, type ResolvedMode } from '@shared/mode.js'
 import { blockedReasons } from '@shared/plex/blocked.js'
 import StreamTable from './StreamTable.js'
+import MetadataDialog from './MetadataDialog.js'
+import type { MetadataEdit } from '@shared/types.js'
 import { formatBitrate, formatBytes, formatDuration, parentDirectory, shortenPath } from '../format.js'
 
 /** One mode picker. `inherited` is what "Inherit" would give. */
@@ -67,7 +69,8 @@ export default function FileDetail({
   onSetMode,
   settings,
   environment,
-  appVersion
+  appVersion,
+  onApplyMetadata
 }: {
   result: AnalysisResult
   job?: Job
@@ -81,9 +84,12 @@ export default function FileDetail({
   settings?: AppSettings
   environment?: EnvironmentInfo
   appVersion?: string
+  /** Queue a repair that writes what was set on the metadata screen. */
+  onApplyMetadata?: (path: string, edit: MetadataEdit) => void
 }): React.JSX.Element {
   const { file, plan, findings } = result
   const [copied, setCopied] = useState(false)
+  const [editingMetadata, setEditingMetadata] = useState(false)
 
   const copyReport = useCallback(async () => {
     const text = buildFileReport({
@@ -131,8 +137,29 @@ export default function FileDetail({
           title="Copy everything PlexFixer knows about this file — its tracks, what it decided and the settings behind that"
         >
           {copied ? 'Copied ✓' : 'Copy report'}
-        </button>
+        </button>{' '}
+        {onApplyMetadata && settings ? (
+          <button
+            className="ghost"
+            onClick={() => setEditingMetadata(true)}
+            title="Change what this file says about itself — its title, and which tracks play without being chosen"
+          >
+            Edit metadata
+          </button>
+        ) : null}
       </div>
+
+      {editingMetadata && settings && onApplyMetadata ? (
+        <MetadataDialog
+          result={result}
+          settings={settings}
+          onClose={() => setEditingMetadata(false)}
+          onApply={(edit) => {
+            setEditingMetadata(false)
+            onApplyMetadata(file.path, edit)
+          }}
+        />
+      ) : null}
       <div className="muted" style={{ marginTop: 4 }}>
         {file.formatName} · {formatBytes(file.sizeBytes)} · {formatDuration(file.durationSeconds)} ·{' '}
         {formatBitrate(file.bitRate)}

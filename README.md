@@ -186,6 +186,58 @@ the app compares values. A rule directs the repairs the app already has — it
 cannot describe a new way of writing a file, so every ffmpeg command that runs
 was still built by code that ships with PlexFixer.
 
+### Changing what a file says about itself
+
+Everything else in this app decides for itself what a file needs. **Edit
+metadata**, on any row, is the one place it is told. A viewer knows things the
+file does not say and the rules cannot work out — which audio track they
+actually want, that the title is wrong, that a track labelled English is really
+the director talking.
+
+The screen holds the file's own tags (title, year, summary, genre, and the
+series fields for an episode) and every track, with its name, language, and
+whether it plays or appears without being chosen. What you change is shown as a
+plan and costed before anything is written, then queued like any other repair.
+Nothing is stored while you type: an edit is made, previewed and applied in one
+go, so there is no pending edit to go stale against a file that changed
+underneath it.
+
+What you set beats what the rules decided about the same track — that is the
+point of being able to set it — but the two are merged rather than one
+replacing the other, so naming a track does not quietly undo a language tag a
+check corrected.
+
+Flags and language tags on an MP4 are still written straight into the header.
+A **title, or any file tag, is text of any length**, so it cannot be slotted
+into the space the old one occupied: setting one rewrites the file. The plan
+says so before you agree to it.
+
+**Looking a title up.** Settings → Metadata takes a credential for
+[themoviedb.org](https://www.themoviedb.org), and the search box on the
+metadata screen fills the tags in from a result.
+
+TMDB hands out two and does not make it obvious that either will do: an **API
+Key**, which is 32 characters and travels in the address, and an **API Read
+Access Token**, which is much longer and travels in a header. Paste whichever
+you have — PlexFixer reads the shape and works out which it is. A token is
+never put in a URL, so nothing that logs one gets to keep it.
+
+Either way it is yours rather than one shipped with PlexFixer: TMDB gives them
+away for the asking and asks that they not be passed around, which rules out
+putting one inside a program anybody can open. Without one the screen still
+works — you type the fields yourself.
+
+The search term is guessed from the file name (`Casino.Royale.2006.1080p…`
+becomes *Casino Royale*, 2006) and is editable. **Only that term is sent.**
+Nothing else about the file leaves the machine, and nothing is looked up unless
+you press the button — there is no background lookup over a library.
+
+The request is made from Rust rather than from the page. The page is allowed to
+talk to this app and to nothing else, and widening that to reach an outside host
+would widen it for everything else the page could ever be made to do; a command
+with the host written into it cannot be pointed anywhere else. PlexFixer is not
+endorsed by or affiliated with TMDB.
+
 ### When a file is blocked
 
 **Blocked** means no automatic repair applies. Opening the row says why, which
@@ -629,6 +681,8 @@ src/
                            and the text are two views of one structure)
     plex/probe.ts   ffprobe output, normalised
     plex/command.ts The ffmpeg arguments a plan becomes
+    plex/metadata.ts What a person may change by hand
+    tmdb.ts         Addresses and answers for themoviedb.org
     release-notes.ts What changed, and which versions a run is shown
     plex/runner.ts  Running repairs: queue, progress, promotion, backups
     plex/ssh.ts     The ssh transport, and the host that speaks it

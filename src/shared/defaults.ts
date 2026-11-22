@@ -59,6 +59,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // one to find already made.
   dolbyVision5: 'keep',
 
+  // Empty until somebody pastes in a key of their own.
+  tmdbCredential: '',
+
   mediaExtensions: ['mkv', 'm4v', 'mp4'],
   recursive: true,
 

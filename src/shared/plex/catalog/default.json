@@ -43,6 +43,7 @@
     "repair.add-compatibility-audio": { "enabled": true, "params": { "maxChannels": 6 }, "recheck": true },
     "repair.extract-subtitles": { "enabled": true, "params": { "extractText": true }, "recheck": true },
     "repair.fix-track-metadata": { "enabled": true, "params": {}, "recheck": true },
+    "repair.manual-metadata": { "enabled": true, "params": {}, "recheck": true },
     "repair.drop-cover-art": { "enabled": true, "params": {}, "recheck": true }
   },
   "flags": {

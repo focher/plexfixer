@@ -12,6 +12,7 @@ import { shortenPath } from '../format.js'
 import { CHECK_MODULES, REPAIR_MODULES } from '@shared/plex/modules/registry.js'
 import { isModuleEnabled, withModuleEnabled, type ModuleDescription } from '@shared/plex/modules/framework.js'
 import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
+import { readCredential } from '@shared/tmdb.js'
 import { parseScript } from '@shared/plex/modules/script/parse.js'
 import ModuleEditor, { NEW_RULE_TEMPLATE } from './ModuleEditor.js'
 import { FlagEditor, ParamEditor, ParamField, RecheckToggle, ScriptParamEditor } from './ParamEditor.js'
@@ -129,6 +130,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         {section === 'compatibility' ? <CompatibilitySection {...props} /> : null}
         {section === 'modules' ? <ModulesSection {...props} /> : null}
         {section === 'catalog' ? <CatalogSection settings={props.settings} onChange={props.onChange} /> : null}
+        {section === 'metadata' ? <MetadataSection {...props} /> : null}
         {section === 'output' ? <OutputSection {...props} /> : null}
         {section === 'transcoding' ? <TranscodingSection {...props} /> : null}
         {section === 'remote' ? (
@@ -552,6 +554,49 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           onCancel={() => setEditing(undefined)}
         />
       ) : null}
+    </section>
+  )
+}
+
+function MetadataSection(props: SettingsPanelProps): React.JSX.Element {
+  const { settings } = props
+  const set = props.onChange
+  const credential = readCredential(settings.tmdbCredential)
+
+  return (
+    <section>
+      <h3>Metadata</h3>
+      <p className="section-hint">
+        Changing what a file says about itself is done per file, from <strong>Edit metadata</strong> on any row.
+        This is only the key that lets it look a title up.
+      </p>
+
+      <Field
+        label="themoviedb.org"
+        hint="Your own, not one shipped with PlexFixer. TMDB gives these away for the asking and asks that they not be passed around — which rules out putting one inside a program anybody can open."
+      >
+        <input
+          type="password"
+          value={settings.tmdbCredential}
+          placeholder="API Key, or API Read Access Token"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => set({ tmdbCredential: event.target.value })}
+        />
+      </Field>
+
+      <p className="section-hint">
+        {credential === undefined
+          ? 'Either of the two will do, and PlexFixer works out which you pasted. Without one, everything on the metadata screen still works — you just fill it in yourself.'
+          : credential.kind === 'token'
+            ? 'That is a read access token, and it is sent as a header rather than in the address. Searching sends the title you typed and nothing else about the file.'
+            : 'That is an API key, and it is sent in the address. Searching sends the title you typed and nothing else about the file.'}
+      </p>
+      <p className="section-hint">
+        Both are free, on <code>themoviedb.org</code> → your account → Settings → API, where they are listed as
+        <strong> API Key</strong> and <strong>API Read Access Token</strong>. Either works; you do not need both.
+        PlexFixer is not endorsed by or affiliated with TMDB.
+      </p>
     </section>
   )
 }

@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
-import type { AnalysisResult, AppSettings, EnvironmentInfo, Job, ModeOverrides, RepairMode } from '@shared/types.js'
+import type {
+  AnalysisResult,
+  AppSettings,
+  EnvironmentInfo,
+  Job,
+  MetadataEdit,
+  ModeOverrides,
+  RepairMode
+} from '@shared/types.js'
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { summarizeReason } from '@shared/plex/reason.js'
 import { statusDefOf } from '@shared/plex/catalog/match.js'
@@ -44,6 +52,8 @@ export interface ResultsTableProps {
   onToggleAll: () => void
   /** Leave `mode` out to repair in the file's own mode. */
   onRepair: (paths: string[], mode?: RepairMode) => void
+  /** Queue a repair that writes metadata somebody set by hand. */
+  onApplyMetadata?: (path: string, edit: MetadataEdit) => void
   /** Per-file and per-folder mode overrides, and the fallback they resolve against. */
   overrides: ModeOverrides
   defaultMode: RepairMode
@@ -342,6 +352,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 settings={props.settings}
                 environment={props.environment}
                 appVersion={props.appVersion}
+                onApplyMetadata={props.onApplyMetadata}
               />
             ) : null}
           </div>

@@ -315,6 +315,17 @@ function buildApi() {
         return settings
       }
     },
+    tmdb: {
+      /**
+       * Fetch one address from themoviedb.org.
+       *
+       * Goes through Rust, which checks the host: the page itself is allowed
+       * to talk to this app and nothing else, and widening that would widen it
+       * for everything the page could be made to do.
+       */
+      get: (url: string, bearer?: string): Promise<string> => invoke('tmdb_get', { url, bearer })
+    },
+
     overrides: {
       get: (): Promise<ModeOverrides> => invoke('overrides_get'),
       set: (path: string, mode: RepairMode | null): Promise<ModeOverrides> =>
@@ -571,7 +582,9 @@ function buildApi() {
             if (batch.cancelled) break
             jobs.push(
               active.enqueue({
-                result: analyzeFile(probed, ready.settings),
+                // `edits` is set when this came from the metadata screen: the
+                // plan then includes what was asked for by hand.
+                result: analyzeFile(probed, ready.settings, request.edits),
                 settings: ready.settings,
                 mode: repairModeFor(probed.path, overrides, ready.settings.defaultMode, mode),
                 caps: environment.capabilities,

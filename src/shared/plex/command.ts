@@ -394,6 +394,13 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
       args.push(`-metadata:s:${target}`, `language=${language}`)
     }
 
+    // A track's name, where one was set by hand. An empty value is a real
+    // instruction — it clears a name somebody wants gone — so this tests for
+    // the field being present, not for it being truthy.
+    if (change?.setTitle !== undefined) {
+      args.push(`-metadata:s:${target}`, `title=${change.setTitle}`)
+    }
+
     // Dispositions are copied from the source by default, so only emit an
     // override where the plan actually changes something.
     const setDefault = change?.setDefault
@@ -450,6 +457,13 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
   // Chapters and global metadata carry over by default; keep them explicit so
   // the behaviour does not shift with ffmpeg versions.
   args.push('-map_metadata', '0', '-map_chapters', '0')
+
+  // Anything set by hand, written after the copy above so it wins over what
+  // the file already said. The keys come from a closed list; nothing reaches
+  // here that was not offered on the screen.
+  for (const [key, value] of Object.entries(plan.metadataTags ?? {})) {
+    args.push('-metadata', `${key}=${value}`)
+  }
   // Remuxing a long file with many streams can overflow the default queue.
   args.push('-max_muxing_queue_size', '4096')
 
