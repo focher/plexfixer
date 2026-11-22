@@ -10,7 +10,9 @@ import type {
 } from '@shared/types.js'
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { summarizeReason } from '@shared/plex/reason.js'
-import { fileStatus, type FileStatus } from '@shared/plex/facets.js'
+import { statusDefOf } from '@shared/plex/catalog/match.js'
+import { catalogFor } from '@shared/plex/catalog/resolve.js'
+import { isBlocked } from '@shared/plex/blocked.js'
 import { describeProgress } from '@shared/stages.js'
 import FileDetail from './FileDetail.js'
 import type { SortKey, SortState } from '@shared/sort.js'
@@ -23,14 +25,6 @@ const MODE_TONE: Record<RepairMode, string> = {
   report: 'neutral',
   'safe-remux': 'info',
   'force-transcode': 'warn'
-}
-
-/** The status column: what happens next for the file. */
-const STATUS_BADGE: Record<FileStatus, { label: string; tone: string; hint: string }> = {
-  passed: { label: 'passed', tone: 'ok', hint: 'Nothing to do — direct plays as it is (see details for any notes)' },
-  fixable: { label: 'fixable', tone: 'info', hint: 'A lossless remux fixes this file' },
-  reencode: { label: 're-encode', tone: 'warn', hint: 'Only a video re-encode fixes this file' },
-  manual: { label: 'blocked', tone: 'fail', hint: 'No automatic repair fixes this — open the row for why, and what you can do' }
 }
 
 /** The plan column: the repair, short, with the long form on hover. */
@@ -134,6 +128,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
     })
   }
 
+  const catalog = catalogFor(props.settings)
   const allSelected = props.results.length > 0 && props.results.every((r) => props.selected.has(r.file.path))
 
   return (
@@ -172,12 +167,17 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         const audioDetail = audioTracks
           .map((track) => `${formatAudioCodec(track.codec)}${track === defaultAudio ? ' (default)' : ''}`)
           .join(', ')
-        const statusKey = fileStatus(result)
-        const status = STATUS_BADGE[statusKey]
+        // The status column is the catalog's: its badge text, tone and hint.
+        const statusDef = statusDefOf(result, catalog)
+        const status = {
+          label: statusDef?.badge ?? '',
+          tone: statusDef?.tone ?? 'neutral',
+          hint: statusDef?.hint ?? ''
+        }
         const plan = PLAN_BADGE[result.plan.strategy]
         // "Needs you" shows in the plan too: "nothing to do" would read as
         // finished. Any automatic part of the plan (a remux) still shows beside it.
-        const manual = statusKey === 'manual'
+        const manual = isBlocked(result)
         const showStrategy = !(manual && result.plan.strategy === 'none')
         const mode = resolveMode(path, props.overrides, props.defaultMode)
         const reportOnly = mode.mode === 'report'
@@ -256,9 +256,15 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                   </span>
                 ) : null}
                 {job && !jobActive ? (
-                  <span className={`badge ${JOB_TONE[job.state]}`} title={job.message}>
-                    {job.state}
-                  </span>
+                  job.state === 'done' && (job.remaining?.length ?? 0) > 0 ? (
+                    <span className="badge warn" title={job.message}>
+                      still flagged
+                    </span>
+                  ) : (
+                    <span className={`badge ${JOB_TONE[job.state]}`} title={job.message}>
+                      {job.state}
+                    </span>
+                  )
                 ) : null}
               </span>
               <span

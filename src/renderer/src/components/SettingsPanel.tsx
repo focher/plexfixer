@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { AppSettings, EnvironmentInfo, ModeOverrides, RemoteCheck, RepairMode } from '@shared/types.js'
 import { languageOptions } from '@shared/languages.js'
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
@@ -15,6 +15,13 @@ import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/mo
 import { readCredential } from '@shared/tmdb.js'
 import { parseScript } from '@shared/plex/modules/script/parse.js'
 import ModuleEditor, { NEW_RULE_TEMPLATE } from './ModuleEditor.js'
+import { FlagEditor, ParamEditor, ParamField, RecheckToggle } from './ParamEditor.js'
+import ScriptsSection from './ScriptsSection.js'
+import type { ScriptInfo } from '@shared/plex/scripts/manifest.js'
+import CatalogSection from './CatalogSection.js'
+import { DEFAULT_CATALOG, catalogFor, flagDef, resolveCatalog } from '@shared/plex/catalog/resolve.js'
+import { changedCount, isChanged, resetEntry, resetSection, setField } from '@shared/plex/catalog/edit.js'
+import type { Catalog } from '@shared/plex/catalog/types.js'
 
 /** Where the chosen section is remembered between visits. */
 const SECTION_KEY = 'plexfixer.settingsSection'
@@ -124,6 +131,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         {section === 'modes' ? <ModesSection {...props} /> : null}
         {section === 'compatibility' ? <CompatibilitySection {...props} /> : null}
         {section === 'modules' ? <ModulesSection {...props} /> : null}
+        {section === 'catalog' ? <CatalogSection settings={props.settings} onChange={props.onChange} /> : null}
         {section === 'metadata' ? <MetadataSection {...props} /> : null}
         {section === 'output' ? <OutputSection {...props} /> : null}
         {section === 'transcoding' ? <TranscodingSection {...props} /> : null}
@@ -156,10 +164,15 @@ function ModuleRow({
   onToggle,
   onEdit,
   onDelete,
-  problems
+  onReset,
+  problems,
+  says,
+  children
 }: {
   module: ModuleDescription
   enabled: boolean
+  /** How it is set up now, in a line: shown under its summary. */
+  says?: string
   /** "Reports" for a check, "Fixes" for a repair — and what. */
   reports: { label: string; codes: readonly string[] }
   onToggle: (enabled: boolean) => void
@@ -168,6 +181,10 @@ function ModuleRow({
   onDelete?: () => void
   /** What is wrong with a hand-written rule, when something is. */
   problems?: { line: number; message: string }[]
+  /** Puts a built-in module back the way it shipped; only offered when something was changed. */
+  onReset?: () => void
+  /** Its parameters and flags, shown when the row is open. */
+  children?: React.ReactNode
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -195,6 +212,7 @@ function ModuleRow({
           <span className="module-text">
             <span className="module-title">{module.title}</span>
             <span className="module-summary">{module.summary}</span>
+            {says ? <span className="module-says">{says}</span> : null}
           </span>
           {broken ? <span className="module-broken">Will not run</span> : null}
           <span className="module-state">{broken ? '' : enabled ? 'On' : 'Off'}</span>
@@ -202,6 +220,11 @@ function ModuleRow({
             {open ? '▴' : '▾'}
           </span>
         </button>
+        {onReset ? (
+          <button type="button" className="ghost module-action" onClick={onReset} title="Back to how it shipped">
+            Reset
+          </button>
+        ) : null}
         {onEdit ? (
           <button type="button" className="ghost module-action" onClick={onEdit}>
             Edit
@@ -230,7 +253,8 @@ function ModuleRow({
               <ul className="module-problems">
                 {problems?.map((problem, index) => (
                   <li key={`${problem.line}-${index}`}>
-                    Line {problem.line}: {problem.message}
+                    {problem.line > 0 ? `Line ${problem.line}: ` : ''}
+                    {problem.message}
                   </li>
                 ))}
               </ul>
@@ -242,6 +266,7 @@ function ModuleRow({
           <p>{module.howItWorks}</p>
           <h4>If you turn it off</h4>
           <p>{module.ifDisabled}</p>
+          {children}
           {reports.codes.length > 0 ? (
             <p className="module-codes">
               <span className="module-codes-label">{reports.label}</span>
@@ -254,20 +279,153 @@ function ModuleRow({
   )
 }
 
+/** What the section holds as a draft until Save: the switches, settings, flags and repairs. */
+type ModulesDraft = Pick<AppSettings, 'catalog' | 'disabledModules'>
+
+const plural = (count: number, one: string, many = `${one}s`): string => `${count} ${count === 1 ? one : many}`
+
+/** What answers a flag, by name. */
+function repairName(repair: string | null, scripts: readonly ScriptInfo[]): string {
+  if (repair === null) return 'report only'
+  const script = scripts.find((candidate) => candidate.repairId === repair)
+  if (script) return `script “${script.manifest?.name ?? script.id}”`
+  return [...REPAIR_MODULES].find((module) => module.id === repair)?.title ?? repair
+}
+
+/** A check's set-up in a line: "On · 2 flags, fixed by Remux to MP4 · changed". */
+function checkSays(
+  on: boolean,
+  flags: readonly string[],
+  catalog: Catalog,
+  scripts: readonly ScriptInfo[],
+  changed: boolean
+): string {
+  const kept = flags.filter((flag) => flagDef(catalog, flag).keep)
+  const answers = [...new Set(kept.map((flag) => repairName(flagDef(catalog, flag).repair, scripts)))]
+  return [
+    on ? 'On' : 'Off',
+    flags.length === 0
+      ? undefined
+      : `${plural(kept.length, 'flag')}${kept.length < flags.length ? ` (${flags.length - kept.length} discarded)` : ''}${
+          answers.length > 0 ? ` — ${answers.join(', ')}` : ''
+        }`,
+    changed ? 'changed from the default' : undefined
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(' · ')
+}
+
+/** A repair's set-up in a line: "On · re-checks the file afterwards · answers 3 flags". */
+function repairSays(id: string, on: boolean, catalog: Catalog, changed: boolean): string {
+  const bound = Object.values(catalog.flags).filter((flag) => flag.repair === id && flag.keep).length
+  const recheck = catalog.repairs[id]?.recheck ?? true
+  return [
+    on ? 'On' : 'Off',
+    recheck ? 're-checks the file afterwards' : 'does not re-check',
+    id.startsWith('script.') || bound > 0 ? `answers ${plural(bound, 'flag')}` : undefined,
+    changed ? 'changed from the default' : undefined
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(' · ')
+}
+
 function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
-  const { settings } = props
-  const set = props.onChange
+  // Everything here is edited as a draft, like the status tiles, and saved
+  // together: `settings` below is what the section shows — saved settings with
+  // the draft over them — and `set` puts a change into the draft. Your own
+  // rules are the exception: the rule editor saves a rule when you press its
+  // own Save, as it always has.
+  const saved: ModulesDraft = { catalog: props.settings.catalog, disabledModules: props.settings.disabledModules }
+  const [draft, setDraft] = useState<ModulesDraft>()
+  const settings: AppSettings = { ...props.settings, ...(draft ?? saved) }
+  const set = (patch: Partial<AppSettings>): void => {
+    const { catalog, disabledModules, ...rest } = patch
+    if (catalog !== undefined || disabledModules !== undefined) {
+      setDraft((previous) => ({
+        ...(previous ?? saved),
+        ...(catalog !== undefined ? { catalog } : {}),
+        ...(disabledModules !== undefined ? { disabledModules } : {})
+      }))
+    }
+    if (Object.keys(rest).length > 0) props.onChange(rest)
+  }
+  /** A change that is saved at once, and carried into the draft so the draft does not undo it. */
+  const commit = (change: (patch: AppSettings['catalog']) => AppSettings['catalog']): void => {
+    props.onChange({ catalog: change(props.settings.catalog) })
+    setDraft((previous) => (previous ? { ...previous, catalog: change(previous.catalog) } : previous))
+  }
+  const changed = draft !== undefined && JSON.stringify(draft) !== JSON.stringify(saved)
+  // Only what this draft breaks stops it saving; anything already ignored is said under Statuses & catalog.
+  const savedProblems = new Set(resolveCatalog(DEFAULT_CATALOG, saved.catalog).problems)
+  const problems = draft
+    ? resolveCatalog(DEFAULT_CATALOG, draft.catalog).problems.filter((problem) => !savedProblems.has(problem))
+    : []
+  const saveDraft = (): void => {
+    if (!draft || problems.length > 0) return
+    props.onChange(draft)
+    setDraft(undefined)
+  }
 
   // `undefined` means no editor is open; an entry with no id is a new rule.
   const [editing, setEditing] = useState<{ id?: string; script: string } | undefined>()
 
+  const catalog = catalogFor(settings)
+
+  // Scripts are files on disk, not settings: read when the section opens,
+  // and again on Reload or after approving one.
+  const [scripts, setScripts] = useState<{ checks: ScriptInfo[]; repairs: ScriptInfo[] }>({ checks: [], repairs: [] })
+  const [scriptsError, setScriptsError] = useState<string>()
+  const loadScripts = useCallback(async (): Promise<void> => {
+    try {
+      const [checks, repairs] = await Promise.all([
+        window.plexfixer.scripts.list('checks'),
+        window.plexfixer.scripts.list('repairs')
+      ])
+      setScripts({ checks, repairs })
+      setScriptsError(undefined)
+    } catch (error) {
+      setScriptsError(error instanceof Error ? error.message : String(error))
+    }
+  }, [])
+  useEffect(() => {
+    void loadScripts()
+  }, [loadScripts])
+
+  // Your own rules are switched off in `disabledModules`; the built-in ones
+  // in the catalog, beside their parameters and flags.
   const toggle = (id: string, enabled: boolean): void => {
     set({ disabledModules: withModuleEnabled(settings.disabledModules, id, enabled) })
   }
+  const toggleBuiltIn = (section: 'checks' | 'repairs', id: string, enabled: boolean): void => {
+    set({ catalog: setField(settings.catalog, section, id, 'enabled', enabled) })
+  }
+  const builtInOn = (section: 'checks' | 'repairs', id: string): boolean =>
+    isModuleEnabled(id, settings) && catalog[section][id]?.enabled !== false
+  const resetOf = (section: 'checks' | 'repairs', id: string, flags: readonly string[]) =>
+    isChanged(settings.catalog, section, id) || flags.some((flag) => isChanged(settings.catalog, 'flags', flag))
+      ? () =>
+          set({
+            catalog: flags.reduce((patch, flag) => resetEntry(patch, 'flags', flag), resetEntry(settings.catalog, section, id))
+          })
+      : undefined
 
   const userModules = readUserModules(settings)
-  const offCount = settings.disabledModules.length
+  const builtInOff = [
+    ...CHECK_MODULES.filter((module) => !builtInOn('checks', module.id)),
+    ...REPAIR_MODULES.filter((module) => !builtInOn('repairs', module.id))
+  ].length
+  const offCount = settings.disabledModules.length + builtInOff
   const total = CHECK_MODULES.length + REPAIR_MODULES.length + userModules.length
+  const turnEverythingOn = (): void => {
+    const all = [
+      ...CHECK_MODULES.map((module) => ['checks', module.id] as const),
+      ...REPAIR_MODULES.map((module) => ['repairs', module.id] as const)
+    ]
+    set({
+      disabledModules: [],
+      catalog: all.reduce((patch, [section, id]) => setField(patch, section, id, 'enabled', true), settings.catalog)
+    })
+  }
 
   const save = (script: string): void => {
     const list = [...settings.userModules]
@@ -285,12 +443,33 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
   }
 
   const remove = (id: string): void => {
-    set({
+    // Deleting a rule is saved at once, like writing one; nothing should be
+    // left behind pointing at it, in the saved settings or the draft.
+    const without = (list: readonly string[]): string[] => list.filter((entry) => entry !== id)
+    props.onChange({
       userModules: settings.userModules.filter((record) => record.id !== id),
-      // Nothing should be left behind pointing at a rule that is gone.
-      disabledModules: settings.disabledModules.filter((entry) => entry !== id)
+      disabledModules: without(props.settings.disabledModules)
     })
+    setDraft((previous) => (previous ? { ...previous, disabledModules: without(previous.disabledModules) } : previous))
   }
+
+  const groupReset = (section: 'checks' | 'repairs', label: string): React.JSX.Element => (
+    <button
+      className="ghost"
+      disabled={changedCount(settings.catalog, section) === 0 && (section === 'repairs' || changedCount(settings.catalog, 'flags') === 0)}
+      onClick={() =>
+        set({
+          catalog:
+            section === 'checks'
+              ? resetSection(resetSection(settings.catalog, 'checks'), 'flags')
+              : resetSection(settings.catalog, 'repairs')
+        })
+      }
+      title={section === 'checks' ? 'Every check and every flag back to how it shipped' : 'Every repair back to how it shipped'}
+    >
+      Reset all {label}
+    </button>
+  )
 
   return (
     <section>
@@ -307,7 +486,7 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           {offCount === 0 ? 'Everything is on.' : `${offCount} switched off — ${total - offCount} still running.`}
         </span>
         <span className="spacer" />
-        <button className="ghost" disabled={offCount === 0} onClick={() => set({ disabledModules: [] })}>
+        <button className="ghost" disabled={offCount === 0} onClick={turnEverythingOn}>
           Turn everything back on
         </button>
       </div>
@@ -338,7 +517,9 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
               onToggle={(enabled) => toggle(read.id, enabled)}
               onEdit={() => setEditing({ id: read.id, script: read.script })}
               onDelete={() => remove(read.id)}
-            />
+            >
+              <FlagEditor flags={read.module?.raises ?? []} settings={settings} scripts={scripts.repairs} onChange={set} />
+            </ModuleRow>
           ))}
         </div>
       ) : (
@@ -348,36 +529,112 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
         <button onClick={() => setEditing({ script: NEW_RULE_TEMPLATE })}>New rule</button>
       </div>
 
-      <h4 className="modules-heading">Checks — what the app looks for</h4>
+      <div className="modules-heading-row">
+        <h4 className="modules-heading">Checks — what the app looks for</h4>
+        {groupReset('checks', 'checks')}
+      </div>
       <div className="modules">
         {CHECK_MODULES.map((module) => (
           <ModuleRow
             key={module.id}
             module={module}
-            enabled={isModuleEnabled(module.id, settings)}
+            enabled={builtInOn('checks', module.id)}
             reports={{ label: 'Reports', codes: module.raises }}
-            onToggle={(enabled) => toggle(module.id, enabled)}
-          />
+            onToggle={(enabled) => toggleBuiltIn('checks', module.id, enabled)}
+            onReset={resetOf('checks', module.id, module.raises)}
+            says={checkSays(
+              builtInOn('checks', module.id),
+              module.raises,
+              catalog,
+              scripts.repairs,
+              resetOf('checks', module.id, module.raises) !== undefined
+            )}
+          >
+            <ParamEditor module={module} settings={settings} onChange={set} />
+            <FlagEditor flags={module.raises} settings={settings} scripts={scripts.repairs} onChange={set} />
+          </ModuleRow>
         ))}
       </div>
 
-      <h4 className="modules-heading">Repairs — what the app does about it</h4>
+      <div className="modules-heading-row">
+        <h4 className="modules-heading">Repairs — what the app does about it</h4>
+        {groupReset('repairs', 'repairs')}
+      </div>
       <div className="modules">
         {REPAIR_MODULES.map((module) => (
           <ModuleRow
             key={module.id}
             module={module}
-            enabled={isModuleEnabled(module.id, settings)}
+            enabled={builtInOn('repairs', module.id)}
             reports={{ label: 'Fixes', codes: module.answers }}
-            onToggle={(enabled) => toggle(module.id, enabled)}
-          />
+            onToggle={(enabled) => toggleBuiltIn('repairs', module.id, enabled)}
+            onReset={resetOf('repairs', module.id, [])}
+            says={repairSays(
+              module.id,
+              builtInOn('repairs', module.id),
+              catalog,
+              resetOf('repairs', module.id, []) !== undefined
+            )}
+          >
+            <ParamEditor module={module} settings={settings} onChange={set} />
+            <RecheckToggle id={module.id} settings={settings} onChange={set} />
+          </ModuleRow>
         ))}
       </div>
 
+      <ScriptsSection
+        kind="checks"
+        scripts={scripts.checks}
+        repairScripts={scripts.repairs}
+        error={scriptsError}
+        onReload={loadScripts}
+        onError={setScriptsError}
+        settings={settings}
+        onChange={set}
+        onCommit={commit}
+        Row={ModuleRow}
+      />
+      <ScriptsSection
+        kind="repairs"
+        scripts={scripts.repairs}
+        repairScripts={scripts.repairs}
+        error={scriptsError}
+        onReload={loadScripts}
+        onError={setScriptsError}
+        settings={settings}
+        onChange={set}
+        onCommit={commit}
+        Row={ModuleRow}
+      />
+
       <p className="muted modules-footnote">
-        The checks and repairs above ship with PlexFixer. They can be switched off, but not edited or deleted — they
-        are part of the app rather than part of your settings, so there would be nowhere to keep a change to one.
+        The checks and repairs above ship with PlexFixer. Their logic is part of the app, but everything about how
+        they are used is yours to change: open one to tune its settings, rename or discard the flags it raises, or
+        make a flag report-only. Reset puts it back the way it shipped. {changedCount(settings.catalog, 'checks') +
+          changedCount(settings.catalog, 'repairs') +
+          changedCount(settings.catalog, 'flags')}{' '}
+        changed from the defaults.
       </p>
+
+      <div className={`modules-savebar${changed ? ' pending' : ''}`}>
+        {problems.length > 0 ? (
+          <ul className="module-problems">
+            {problems.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="modules-actions">
+          <span className="muted">{changed ? 'You have changes that are not saved yet.' : 'Everything here is saved.'}</span>
+          <span className="spacer" />
+          <button className="ghost" disabled={!changed} onClick={() => setDraft(undefined)}>
+            Discard changes
+          </button>
+          <button disabled={!changed || problems.length > 0} onClick={saveDraft}>
+            Save checks &amp; repairs
+          </button>
+        </div>
+      </div>
 
       {editing ? (
         <ModuleEditor
@@ -601,23 +858,8 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
         </select>
       </Field>
 
-      <Field label="MKV files" inline hint="MKV forces a Direct Stream remux on browsers and some TVs.">
-        <input
-          type="checkbox"
-          checked={settings.remuxMkvToMp4}
-          onChange={(event) => set({ remuxMkvToMp4: event.target.checked })}
-        />
-        <span className="muted">Rewrap to MP4 when the streams allow it</span>
-      </Field>
-
-      <Field label="HEVC / H.265" inline hint="Turn this off if any client is a browser or a streaming box older than about 2017.">
-        <input
-          type="checkbox"
-          checked={settings.allowHevc}
-          onChange={(event) => set({ allowHevc: event.target.checked })}
-        />
-        <span className="muted">Treat HEVC as compatible</span>
-      </Field>
+      <ParamField settings={settings} moduleId="check.container-target" param="remuxMkvToMp4" onChange={set} Field={Field} />
+      <ParamField settings={settings} moduleId="check.video-codec" param="allowHevc" onChange={set} Field={Field} />
 
       <Field
         label="Dolby Vision profile 5"
@@ -638,52 +880,20 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
         ) : null}
       </Field>
 
-      <Field label="Maximum H.264 level" hint="Older Apple TVs, Rokus and smart TVs commonly cap at 4.1.">
-        <select value={settings.maxH264Level} onChange={(event) => set({ maxH264Level: Number(event.target.value) })}>
-          <option value={40}>Level 4.0</option>
-          <option value={41}>Level 4.1</option>
-          <option value={42}>Level 4.2</option>
-          <option value={50}>Level 5.0</option>
-          <option value={51}>Level 5.1</option>
-          <option value={62}>Level 6.2 (no practical limit)</option>
-        </select>
-      </Field>
-
-      <Field label="Maximum height" hint="Flag anything taller as likely to be downscaled server-side.">
-        <select value={settings.maxHeight} onChange={(event) => set({ maxHeight: Number(event.target.value) })}>
-          <option value={720}>720p</option>
-          <option value={1080}>1080p</option>
-          <option value={2160}>2160p (4K)</option>
-          <option value={4320}>4320p (8K)</option>
-        </select>
-      </Field>
-
-      <Field label="Audio" inline hint="Originals are kept; the new track is added alongside them.">
-        <input
-          type="checkbox"
-          checked={settings.ensureAacStereo}
-          onChange={(event) => set({ ensureAacStereo: event.target.checked })}
-        />
-        <span className="muted">Add an AAC track when nothing compatible exists</span>
-      </Field>
-
-      <Field label="Subtitles" inline hint="Sidecar SRT never triggers a burn-in transcode.">
-        <input
-          type="checkbox"
-          checked={settings.extractTextSubtitles}
-          onChange={(event) => set({ extractTextSubtitles: event.target.checked })}
-        />
-        <span className="muted">Extract text subtitles to .srt sidecars</span>
-      </Field>
-
-      <Field label="Image subtitles" inline hint="PGS/VobSub cannot be stored in MP4 at all.">
-        <input
-          type="checkbox"
-          checked={settings.dropImageSubtitlesOnMp4}
-          onChange={(event) => set({ dropImageSubtitlesOnMp4: event.target.checked })}
-        />
-        <span className="muted">Drop PGS/VobSub tracks when writing MP4</span>
-      </Field>
+      <ParamField settings={settings} moduleId="check.video-h264-level" param="maxLevel" onChange={set} Field={Field} />
+      <ParamField settings={settings} moduleId="check.video-resolution" param="maxHeight" onChange={set} Field={Field} />
+      <ParamField
+        settings={settings}
+        moduleId="check.audio-compatible-track"
+        param="addCompanion"
+        onChange={set}
+        Field={Field}
+      />
+      <ParamField settings={settings} moduleId="repair.extract-subtitles" param="extractText" onChange={set} Field={Field} />
+      <ParamField settings={settings} moduleId="check.subtitle-image" param="dropOnMp4" onChange={set} Field={Field} />
+      <p className="muted section-hint">
+        These are settings of individual checks and repairs; every other one is under Checks &amp; repairs.
+      </p>
     </section>
   )
 }

@@ -2,11 +2,10 @@
  * Channel counts above what clients play without downmixing.
  */
 
-import type { CheckModule } from '../framework.js'
-import { MAX_SAFE_CHANNELS } from '../../rules.js'
+import { defineCheck } from '../framework.js'
 import type { Finding } from '../../../types.js'
 
-export const audioChannels: CheckModule = {
+export const audioChannels = defineCheck({
   id: 'check.audio-channels',
   title: 'Audio channel count',
   summary: 'Tracks with more channels than clients play without downmixing',
@@ -22,11 +21,21 @@ export const audioChannels: CheckModule = {
     'Nothing is said about channel counts, so a 7.1 track being downmixed on every play goes unmentioned.',
   raises: ['audio-channels-high'],
 
-  run({ audio }) {
+  params: {
+    maxChannels: {
+      type: 'number',
+      label: 'Most channels a client plays',
+      help: 'Above this, many clients transcode the audio rather than play it.',
+      min: 1,
+      max: 16
+    }
+  },
+
+  run({ audio, params }) {
     const findings: Finding[] = []
 
     for (const stream of audio) {
-      if (stream.channels <= MAX_SAFE_CHANNELS) continue
+      if (stream.channels <= params.maxChannels) continue
       findings.push({
         code: 'audio-channels-high',
         severity: 'info',
@@ -41,4 +50,4 @@ export const audioChannels: CheckModule = {
 
     return findings.length > 0 ? { findings } : {}
   }
-}
+})

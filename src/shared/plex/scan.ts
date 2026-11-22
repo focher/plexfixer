@@ -14,6 +14,7 @@
 import type {
   AnalysisResult,
   AppSettings,
+  MediaFile,
   ScanCompleteEvent,
   ScanError,
   ScanProgressEvent
@@ -22,6 +23,7 @@ import type { ProbeHost } from '../host.js'
 import { isTemporaryName } from '../temporary.js'
 import { analyzeFile } from './analyze.js'
 import { ProbeError, probeFile } from './probe.js'
+import { reportsCurrent, type ActiveCheck } from './scripts/checks.js'
 
 export interface ScanRequest {
   scanId: string
@@ -49,6 +51,13 @@ export interface ScanRequest {
    * library files.
    */
   cleanTemporaries?: (paths: string[]) => Promise<{ path: string; bytes: number }[]>
+  /**
+   * The user's check scripts, and how to run them on a freshly probed file.
+   *
+   * An unchanged file is still read again when one of these has no current
+   * answer about it — a script added, edited, or given new settings since.
+   */
+  checks?: { active: readonly ActiveCheck[]; run: (file: MediaFile) => Promise<MediaFile> }
 }
 
 /**
@@ -62,6 +71,8 @@ export interface ScanRequest {
 export interface KnownFile {
   sizeBytes: number
   modifiedMs?: number
+  /** Which version of each check script last looked at it. */
+  checkReports?: Readonly<Record<string, { fingerprint: string }>>
 }
 
 /** Whether what is on disk matches what was last probed. */
@@ -155,14 +166,15 @@ export async function runScan(request: ScanRequest): Promise<ScanCompleteEvent> 
         const previously = request.known?.get(filePath)
         if (previously) {
           const now = await host.stat(filePath).catch(() => undefined)
-          if (isUnchanged(previously, now)) {
+          if (isUnchanged(previously, now) && reportsCurrent(previously.checkReports, request.checks?.active ?? [])) {
             processed++
             onProgress({ scanId, processed, total: files.length, currentPath: filePath })
             continue
           }
         }
 
-        const probed = await probeFile(filePath, { ffprobePath: request.ffprobePath, host })
+        const read = await probeFile(filePath, { ffprobePath: request.ffprobePath, host })
+        const probed = request.checks ? await request.checks.run(read) : read
         result = {
           ...analyzeFile(probed, settings),
           scannedAt: Date.now(),

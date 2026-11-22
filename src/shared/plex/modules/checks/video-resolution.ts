@@ -2,9 +2,9 @@
  * Resolution above the ceiling remote clients can be fed directly.
  */
 
-import type { CheckModule } from '../framework.js'
+import { defineCheck } from '../framework.js'
 
-export const videoResolution: CheckModule = {
+export const videoResolution = defineCheck({
   id: 'check.video-resolution',
   title: 'Resolution ceiling',
   summary: 'Video taller than the height set under Compatibility',
@@ -19,18 +19,32 @@ export const videoResolution: CheckModule = {
     'Nothing is said about resolution, however far above the ceiling a file is.',
   raises: ['video-resolution-high'],
 
-  run({ video, settings }) {
+  params: {
+    maxHeight: {
+      type: 'number',
+      label: 'Maximum height',
+      help: 'Flag anything taller as likely to be downscaled server-side.',
+      options: [
+        { value: 720, label: '720p' },
+        { value: 1080, label: '1080p' },
+        { value: 2160, label: '2160p (4K)' },
+        { value: 4320, label: '4320p (8K)' }
+      ]
+    }
+  },
+
+  run({ video, params }) {
     const stream = video[0]
-    if (!stream || stream.height <= settings.maxHeight) return {}
+    if (!stream || stream.height <= params.maxHeight) return {}
 
     return {
-      signals: { scaleHeight: settings.maxHeight },
+      signals: { scaleHeight: params.maxHeight },
       findings: [
         {
           code: 'video-resolution-high',
           severity: 'warning',
           remedy: 'transcode',
-          title: `${stream.width}×${stream.height} exceeds the ${settings.maxHeight}p ceiling`,
+          title: `${stream.width}×${stream.height} exceeds the ${params.maxHeight}p ceiling`,
           detail:
             'Above the configured ceiling, remote clients on limited bandwidth will downscale server-side. That is ' +
             'a full transcode on every play.',
@@ -39,4 +53,4 @@ export const videoResolution: CheckModule = {
       ]
     }
   }
-}
+})

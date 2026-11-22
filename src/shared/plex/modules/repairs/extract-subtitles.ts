@@ -2,12 +2,12 @@
  * Writing subtitles out beside the film as plain text files.
  */
 
-import type { RepairModule } from '../framework.js'
+import { defineRepair } from '../framework.js'
 import { STYLED_SUBTITLE_CODECS, isTextSubtitle } from '../../rules.js'
 import { normalizeLanguage } from '../../../languages.js'
 import type { SubtitleStream } from '../../../types.js'
 
-export const extractSubtitles: RepairModule = {
+export const extractSubtitles = defineRepair({
   id: 'repair.extract-subtitles',
   title: 'Extract subtitles to sidecar files',
   summary: 'Writes .srt files beside the video, which clients render for free',
@@ -26,9 +26,18 @@ export const extractSubtitles: RepairModule = {
   ifDisabled:
     'No sidecar files are written. Styled subtitles keep forcing a burn-in, and text tracks dropped for the ' +
     'container are simply gone.',
-  answers: ['subtitle-styled-ass', 'custom'],
+  answers: ['subtitle-styled-ass'],
+  answersRules: true,
 
-  run({ subtitles, settings, state }) {
+  params: {
+    extractText: {
+      type: 'boolean',
+      label: 'Extract text subtitles to .srt sidecars',
+      help: 'Sidecar SRT never triggers a burn-in transcode.'
+    }
+  },
+
+  run({ subtitles, state, params }) {
     // Worth extracting without being asked: anything text-based that either
     // will be dropped, or is styled (and so would be burned in rather than
     // rendered). And then whatever a rule explicitly asked for.
@@ -43,7 +52,7 @@ export const extractSubtitles: RepairModule = {
         extract.push(stream)
         continue
       }
-      if (!settings.extractTextSubtitles) continue
+      if (!params.extractText) continue
       const isStyled = STYLED_SUBTITLE_CODECS.has(stream.codec.toLowerCase())
       if (isStyled || dropped.has(stream.index)) extract.push(stream)
     }
@@ -66,4 +75,4 @@ export const extractSubtitles: RepairModule = {
       ]
     }
   }
-}
+})

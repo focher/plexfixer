@@ -153,8 +153,22 @@ export const SUBJECTS: readonly Subject[] = [
   )
 ]
 
+/**
+ * `tag.<name>`: one of the file's own metadata tags, matched without regard to
+ * case. Open-ended rather than listed, because a tag is whatever wrote the file
+ * chose to call it — which is how a repair script marks a file as done, so a
+ * rule can stop asking for it once it has been.
+ */
+const tagSubject = (name: string): Subject | undefined => {
+  const key = name.slice('tag.'.length).toLowerCase()
+  if (!name.toLowerCase().startsWith('tag.') || !/^[a-z0-9_.-]+$/.test(key)) return undefined
+  return fileSubject(`tag.${key}`, 'string', `The file's "${key}" metadata tag`, (c) =>
+    Object.entries(c.file.tags).find(([tag]) => tag.toLowerCase() === key)?.[1]
+  )
+}
+
 export function subjectNamed(name: string): Subject | undefined {
-  return SUBJECTS.find((subject) => subject.name === name.toLowerCase())
+  return SUBJECTS.find((subject) => subject.name === name.toLowerCase()) ?? tagSubject(name)
 }
 
 /* ------------------------------------------------------------------ *

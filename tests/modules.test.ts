@@ -92,9 +92,6 @@ describe('the registry', () => {
 
   it('does not answer a finding nothing raises', () => {
     const raised = new Set(CHECK_MODULES.flatMap((module) => module.raises))
-    // Raised by rules the user wrote, which are read out of settings rather
-    // than listed here.
-    raised.add('custom')
     for (const module of REPAIR_MODULES) {
       for (const code of module.answers) {
         expect(raised.has(code), `${module.id} answers ${code}, which no check raises`).toBe(true)

@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { localHost } from './node-host.js'
-import { DEFAULT_SETTINGS } from '@shared/defaults.js'
+import { DEFAULT_SETTINGS, settingsWith } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { probeFile } from '@shared/plex/probe.js'
 import { hasFaststart } from './node-faststart.js'
@@ -254,7 +254,7 @@ describe.runIf(enabled)('integration: embedded cover art', () => {
     // The poster really is a video stream as far as the probe is concerned.
     expect(file.streams.filter((s) => s.kind === 'video')).toHaveLength(2)
 
-    const settings = { ...DEFAULT_SETTINGS, allowHevc: true }
+    const settings = settingsWith({ ...DEFAULT_SETTINGS, allowHevc: true })
     const result = analyzeFile(file, settings)
     // ...but not as far as the analysis is concerned.
     expect(result.findings.some((f) => f.code === 'video-multiple')).toBe(false)

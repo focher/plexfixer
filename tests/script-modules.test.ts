@@ -1,3 +1,4 @@
+import { settingsWith } from '@shared/defaults.js'
 /**
  * Rules the user writes themselves.
  *
@@ -217,7 +218,7 @@ describe('running a rule the user wrote', () => {
 
     const hit = analyzeFile(divx, settings).findings.find((f) => f.title === 'DivX video')
     expect(hit?.severity).toBe('blocker')
-    expect(hit?.code).toBe('custom')
+    expect(hit?.code).toBe('user.rule-0')
     expect(hit?.detail).toBe('No mainstream client decodes DivX.')
     expect(hit?.streamIndexes).toEqual([0])
 
@@ -242,7 +243,7 @@ describe('running a rule the user wrote', () => {
     const settings = withRules('name Broken\nwhen nonsense is 3\nreport info "x"')
     // The scan still produces its usual answer about the file itself.
     expect(() => analyzeFile(file, settings)).not.toThrow()
-    expect(analyzeFile(file, settings).findings.some((f) => f.code === 'custom')).toBe(false)
+    expect(analyzeFile(file, settings).findings.some((f) => f.code.startsWith('user.'))).toBe(false)
   })
 
   it('never matches a question the file does not answer', () => {
@@ -305,7 +306,7 @@ describe('running a rule the user wrote', () => {
       subtitle({ index: 2, codec: 'subrip', language: 'eng' })
     ])
     const rule = 'name Keep subs\nwhen subtitle.codec is subrip\nfix extract-subtitles'
-    const settings = { ...withRules(rule), extractTextSubtitles: false }
+    const settings = settingsWith({ ...withRules(rule), extractTextSubtitles: false })
     const plan = analyzeFile(file, settings).plan
     expect(plan.extractSubtitles.map((entry) => entry.streamIndex)).toEqual([2])
   })

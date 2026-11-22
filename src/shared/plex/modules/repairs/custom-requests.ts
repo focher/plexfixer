@@ -31,7 +31,8 @@ export const customRequests: RepairModule = {
     'Rules you wrote still report what they find, but the fixes they ask for are not carried out — dropping ' +
     'tracks and rewriting files both stop. Switching this off is the way to run your own rules as warnings ' +
     'only.',
-  answers: ['custom'],
+  answers: [],
+  answersRules: true,
 
   run({ subtitles, audio, state }) {
     if (state.userRequests.length === 0) return {}

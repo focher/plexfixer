@@ -1,44 +1,39 @@
 /**
- * Facets drive the filter chips, so what matters is that a file lands in the
- * group a user would look for it in — and, just as much, that it does not land
- * in one it has no business in.
+ * The chips are the flags a file carries, and the tiles are the catalog's
+ * status rules. What matters is that a file lands under the chip a user would
+ * look for it under — and, just as much, not under one it has no business in.
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS } from '@shared/defaults.js'
+import { settingsWith } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import {
-  countFacets,
+  countFlags,
   countStatuses,
-  facetsFor,
   fileStatus,
-  filterResults,
+  filterByFlags,
+  flagsOf,
   matchesStatus,
   needsYou,
   STATUS_ORDER
 } from '@shared/plex/facets.js'
 import { audio, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
-const analyze = (file: Parameters<typeof analyzeFile>[0], patch = {}) =>
-  analyzeFile(file, { ...DEFAULT_SETTINGS, ...patch })
+const analyze = (file: Parameters<typeof analyzeFile>[0], patch: Parameters<typeof settingsWith>[0] = {}) =>
+  analyzeFile(file, settingsWith(patch))
 
-describe('facetsFor', () => {
-  it('marks a clean file as direct play and nothing else', () => {
+describe('flagsOf', () => {
+  it('gives a clean file no flags', () => {
     const result = analyze(mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]))
-    expect([...facetsFor(result)]).toEqual(['direct-play'])
+    expect(flagsOf(result)).toEqual([])
   })
 
-  it('separates a container change from the work inside it', () => {
+  it('flags a file that is not in the target container', () => {
     const result = analyze(mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]))
-    const facets = facetsFor(result)
-    expect(facets.has('container')).toBe(true)
-    expect(facets.has('remux-only')).toBe(true)
-    expect(facets.has('direct-play')).toBe(false)
-    expect(facets.has('transcode-video')).toBe(false)
+    expect(flagsOf(result)).toContain('container-not-mp4')
   })
 
-  it('reports a default-audio change on its own', () => {
-    // Two English tracks, neither flagged default: the resolver picks one.
+  it('flags two default-less English tracks as missing a default', () => {
     const result = analyze(
       mp4([
         video({ index: 0, language: 'eng' }),
@@ -46,10 +41,10 @@ describe('facetsFor', () => {
         audio({ index: 2, codec: 'aac', language: 'eng' })
       ])
     )
-    expect(facetsFor(result).has('audio-default')).toBe(true)
+    expect(flagsOf(result)).toContain('default-audio-missing')
   })
 
-  it('does not call a retag a retag when the tag already matches', () => {
+  it('does not flag an HEVC tag that is already right', () => {
     const result = analyze(
       mp4([
         video({ index: 0, codec: 'hevc', codecTag: 'hvc1', profile: 'main 10', language: 'eng' }),
@@ -57,10 +52,10 @@ describe('facetsFor', () => {
       ]),
       { allowHevc: true }
     )
-    expect(facetsFor(result).has('codec-tag')).toBe(false)
+    expect(flagsOf(result)).not.toContain('video-hevc-wrong-tag')
   })
 
-  it('catches the retag that matters', () => {
+  it('flags the HEVC tag that matters', () => {
     const result = analyze(
       mp4([
         video({ index: 0, codec: 'hevc', codecTag: 'hev1', profile: 'main 10', language: 'eng' }),
@@ -68,34 +63,10 @@ describe('facetsFor', () => {
       ]),
       { allowHevc: true }
     )
-    const facets = facetsFor(result)
-    expect(facets.has('codec-tag')).toBe(true)
-    expect(facets.has('remux-only')).toBe(true)
+    expect(flagsOf(result)).toContain('video-hevc-wrong-tag')
   })
 
-  it('marks a file no automatic plan can fix as needing you', () => {
-    const result = analyze(
-      mp4([
-        video({ index: 0, codec: 'hevc', codecTag: 'drmi', language: 'eng' }),
-        mainAudio({ index: 1, language: 'eng' })
-      ])
-    )
-    expect(facetsFor(result).has('blocked')).toBe(true)
-  })
-
-  it('marks a re-encode, and does not also call it remux-only', () => {
-    const result = analyze(
-      mp4([
-        video({ index: 0, codec: 'h264', profile: 'high 10', bitDepth: 10, language: 'eng' }),
-        mainAudio({ index: 1, language: 'eng' })
-      ])
-    )
-    const facets = facetsFor(result)
-    expect(facets.has('transcode-video')).toBe(true)
-    expect(facets.has('remux-only')).toBe(false)
-  })
-
-  it('finds image subtitles that have to be dropped on the way to MP4', () => {
+  it('flags image subtitles on the way to MP4', () => {
     const result = analyze(
       mkv([
         video({ index: 0, language: 'eng' }),
@@ -103,32 +74,43 @@ describe('facetsFor', () => {
         subtitle({ index: 2, codec: 'hdmv_pgs_subtitle', language: 'eng' })
       ])
     )
-    expect(facetsFor(result).has('drop-tracks')).toBe(true)
+    expect(flagsOf(result)).toContain('subtitle-image-based')
+  })
+
+  it('lists each flag once however many tracks raised it', () => {
+    const result = analyze(
+      mp4([video({ index: 0 }), audio({ index: 1, codec: 'aac' }), audio({ index: 2, codec: 'aac' })])
+    )
+    const flags = flagsOf(result)
+    expect(new Set(flags).size).toBe(flags.length)
   })
 })
 
-describe('filterResults', () => {
+describe('filterByFlags', () => {
   const clean = analyze(mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]))
   const remux = analyze(mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]))
-  const all = [clean, remux]
+  const faststart = analyze(
+    mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })], { faststart: false })
+  )
+  const all = [clean, remux, faststart]
 
   it('returns everything when nothing is selected', () => {
-    expect(filterResults(all, new Set())).toHaveLength(2)
+    expect(filterByFlags(all, new Set())).toHaveLength(3)
   })
 
-  it('narrows to one group', () => {
-    expect(filterResults(all, new Set(['direct-play'] as const))).toEqual([clean])
+  it('narrows to the files carrying one flag', () => {
+    expect(filterByFlags(all, new Set(['container-not-mp4']))).toEqual([remux])
   })
 
-  it('unions the selected groups rather than intersecting them', () => {
-    expect(filterResults(all, new Set(['direct-play', 'container'] as const))).toHaveLength(2)
+  it('unions the selected flags rather than intersecting them', () => {
+    expect(filterByFlags(all, new Set(['container-not-mp4', 'mp4-not-faststart']))).toEqual([remux, faststart])
   })
 
-  it('counts each file once per facet it carries', () => {
-    const counts = countFacets(all)
-    expect(counts['direct-play']).toBe(1)
-    expect(counts['remux-only']).toBe(1)
-    expect(counts['transcode-video']).toBe(0)
+  it('counts each file once per flag it carries', () => {
+    const counts = countFlags(all)
+    expect(counts.get('container-not-mp4')).toBe(1)
+    expect(counts.get('mp4-not-faststart')).toBe(1)
+    expect(counts.has('video-codec-unsupported')).toBe(false)
   })
 })
 

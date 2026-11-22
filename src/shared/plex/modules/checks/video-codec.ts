@@ -2,10 +2,10 @@
  * Whether the video codec itself direct plays.
  */
 
-import type { CheckModule } from '../framework.js'
+import { defineCheck } from '../framework.js'
 import { videoCodecTier } from '../../rules.js'
 
-export const videoCodec: CheckModule = {
+export const videoCodec = defineCheck({
   id: 'check.video-codec',
   title: 'Video codec support',
   summary: 'Codecs clients cannot decode, or can only decode on recent hardware',
@@ -23,7 +23,15 @@ export const videoCodec: CheckModule = {
     'transcodes every play.',
   raises: ['video-codec-unsupported', 'video-codec-limited'],
 
-  run({ video, settings }) {
+  params: {
+    allowHevc: {
+      type: 'boolean',
+      label: 'Treat HEVC as compatible',
+      help: 'Turn this off if any client is a browser or a streaming box older than about 2017.'
+    }
+  },
+
+  run({ video, params }) {
     const stream = video[0]
     if (!stream) return {}
 
@@ -48,7 +56,7 @@ export const videoCodec: CheckModule = {
       }
     }
 
-    if (tier === 'limited' && !(codec === 'hevc' && settings.allowHevc)) {
+    if (tier === 'limited' && !(codec === 'hevc' && params.allowHevc)) {
       const isHevc = codec === 'hevc' || codec === 'h265'
       return {
         signals: { needsTranscode: true },
@@ -71,4 +79,4 @@ export const videoCodec: CheckModule = {
 
     return {}
   }
-}
+})

@@ -1,3 +1,6 @@
+import { setField, setParam } from './plex/catalog/edit.js'
+import { DEFAULT_CATALOG } from './plex/catalog/resolve.js'
+import type { CatalogPatch } from './plex/catalog/types.js'
 import type { AppSettings } from './types.js'
 
 /**
@@ -20,19 +23,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   avoidCommentaryAsDefault: true,
 
   targetContainer: 'mp4',
-  remuxMkvToMp4: true,
-  extractTextSubtitles: true,
-  dropImageSubtitlesOnMp4: true,
-  ensureAacStereo: true,
-  // On by default: HEVC direct plays on every current Apple device, Chromecast
-  // with Google TV, the Nvidia Shield and most smart TVs sold in the last few
-  // years, and a modern library is mostly HEVC — treating it as incompatible
-  // proposes re-encoding the bulk of a library to fix a problem its clients do
-  // not have. Turn it off for a fleet that includes browsers or an older
-  // streaming box.
-  allowHevc: true,
-  maxH264Level: 41,
-  maxHeight: 2160,
+  // MKV rewrapping, HEVC, the H.264 level and height ceilings, the AAC
+  // companion and the subtitle switches are module parameters now: their
+  // shipped values are in src/shared/plex/catalog/default.json.
 
   // Repairs replace the original; `keepBackups` is what makes that safe —
   // the original is moved into `.plexfixer-backups/` beside it, not deleted.
@@ -77,19 +70,95 @@ export const DEFAULT_SETTINGS: AppSettings = {
   disabledModules: [],
 
   // No rules of your own until you write one.
-  userModules: []
+  userModules: [],
+
+  // Everything as shipped in default.json.
+  catalog: {}
 }
 
-/** Merge persisted settings over the defaults, dropping unknown keys. */
-export function withDefaults(partial: Partial<AppSettings> | undefined | null): AppSettings {
-  if (!partial) return { ...DEFAULT_SETTINGS }
-  const merged = { ...DEFAULT_SETTINGS }
-  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof AppSettings)[]) {
-    const value = partial[key]
-    if (value !== undefined && value !== null) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(merged as any)[key] = value
-    }
-  }
-  return merged
+/**
+ * Settings that used to be top-level and are now module parameters.
+ *
+ * A settings file written by an earlier build still has them, and they are
+ * still accepted here, so nobody's tuning is lost by upgrading.
+ */
+export interface LegacySettings {
+  remuxMkvToMp4?: boolean
+  extractTextSubtitles?: boolean
+  dropImageSubtitlesOnMp4?: boolean
+  ensureAacStereo?: boolean
+  allowHevc?: boolean
+  maxH264Level?: number
+  maxHeight?: number
 }
+
+/** Where each old setting went. */
+const LEGACY_PARAMS: readonly {
+  key: keyof LegacySettings
+  section: 'checks' | 'repairs'
+  id: string
+  param: string
+}[] = [
+  { key: 'remuxMkvToMp4', section: 'checks', id: 'check.container-target', param: 'remuxMkvToMp4' },
+  { key: 'extractTextSubtitles', section: 'repairs', id: 'repair.extract-subtitles', param: 'extractText' },
+  { key: 'dropImageSubtitlesOnMp4', section: 'checks', id: 'check.subtitle-image', param: 'dropOnMp4' },
+  { key: 'ensureAacStereo', section: 'checks', id: 'check.audio-compatible-track', param: 'addCompanion' },
+  { key: 'allowHevc', section: 'checks', id: 'check.video-codec', param: 'allowHevc' },
+  { key: 'maxH264Level', section: 'checks', id: 'check.video-h264-level', param: 'maxLevel' },
+  { key: 'maxHeight', section: 'checks', id: 'check.video-resolution', param: 'maxHeight' }
+]
+
+/**
+ * Fold the old top-level settings into the catalog patch.
+ *
+ * - Each old threshold becomes its module's parameter.
+ * - A built-in module named in `disabledModules` becomes `enabled: false` in
+ *   the catalog; rules the user wrote stay in `disabledModules`, since the
+ *   catalog only knows about what ships.
+ *
+ * A value the catalog already sets wins — it is the newer of the two — so
+ * running this again changes nothing. A value equal to the shipped default is
+ * not stored at all.
+ */
+export function migrateSettings(raw: Partial<AppSettings> & LegacySettings): Partial<AppSettings> {
+  const start = raw.catalog ?? {}
+  const withParams = LEGACY_PARAMS.reduce<CatalogPatch>((patch, { key, section, id, param }) => {
+    const value = raw[key]
+    const already = patch[section]?.[id]?.params?.[param] !== undefined
+    return value === undefined || value === null || already ? patch : setParam(patch, section, id, param, value)
+  }, start)
+
+  const builtIn = (id: string): 'checks' | 'repairs' | undefined =>
+    id in DEFAULT_CATALOG.checks ? 'checks' : id in DEFAULT_CATALOG.repairs ? 'repairs' : undefined
+  const disabled = raw.disabledModules ?? []
+  const catalog = disabled.reduce<CatalogPatch>((patch, id) => {
+    const section = builtIn(id)
+    if (!section || patch[section]?.[id]?.enabled !== undefined) return patch
+    return setField(patch, section, id, 'enabled', false)
+  }, withParams)
+
+  const rest = Object.fromEntries(
+    Object.entries(raw).filter(([key]) => !LEGACY_PARAMS.some((legacy) => legacy.key === key))
+  ) as Partial<AppSettings>
+  return {
+    ...rest,
+    ...(raw.disabledModules ? { disabledModules: disabled.filter((id) => builtIn(id) === undefined) } : {}),
+    catalog
+  }
+}
+
+/** Merge persisted settings over the defaults, folding in old ones and dropping unknown keys. */
+export function withDefaults(raw: (Partial<AppSettings> & LegacySettings) | undefined | null): AppSettings {
+  if (!raw) return { ...DEFAULT_SETTINGS }
+  const partial = migrateSettings(raw)
+  return Object.fromEntries(
+    (Object.keys(DEFAULT_SETTINGS) as (keyof AppSettings)[]).map((key) => {
+      const value = partial[key]
+      return [key, value === undefined || value === null ? DEFAULT_SETTINGS[key] : value]
+    })
+  ) as unknown as AppSettings
+}
+
+/** Settings with some changed, old names accepted — the shape a settings file can have. */
+export const settingsWith = (patch: Partial<AppSettings> & LegacySettings): AppSettings =>
+  withDefaults({ ...DEFAULT_SETTINGS, ...patch })

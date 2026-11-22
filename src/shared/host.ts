@@ -99,6 +99,14 @@ export interface RepairHost extends ProbeHost {
   /** Start a binary, streaming its output. */
   spawnProcess: (command: string, args: string[]) => HostProcess
   /**
+   * Start an approved repair script, handing it `input` on stdin.
+   *
+   * Only this computer runs scripts, so a remote host has no such method —
+   * and the native side refuses anyway while the remote host is switched on,
+   * or when the script is not approved exactly as it is now.
+   */
+  startScript?: (kind: 'checks' | 'repairs', id: string, input: string) => HostProcess
+  /**
    * Stop a process started with `spawnProcess`, identified by a string that
    * appears in its command line. Killing the local `ssh` does not reliably
    * take the remote process with it, so a remote host asks the far end.

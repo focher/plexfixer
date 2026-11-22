@@ -18,6 +18,7 @@ export type SettingsSectionId =
   | 'modes'
   | 'compatibility'
   | 'modules'
+  | 'catalog'
   | 'metadata'
   | 'output'
   | 'transcoding'
@@ -37,6 +38,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'modes', label: 'Repair modes', hint: 'What a repair may do, per folder and file' },
   { id: 'compatibility', label: 'Compatibility', hint: 'What counts as good enough to direct play' },
   { id: 'modules', label: 'Checks & repairs', hint: 'Every rule, what it does, and whether it runs' },
+  { id: 'catalog', label: 'Statuses & catalog', hint: 'The status tiles, and the whole catalog as JSON' },
   { id: 'metadata', label: 'Metadata', hint: 'Looking titles up on themoviedb.org' },
   { id: 'output', label: 'Output', hint: 'Where repaired files go, and backups' },
   { id: 'transcoding', label: 'Transcoding', hint: 'Encoder and quality, when a re-encode is needed' },

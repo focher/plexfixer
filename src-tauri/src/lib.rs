@@ -15,6 +15,7 @@ mod environment;
 mod host;
 mod locate;
 mod menu;
+mod plugins;
 mod process;
 mod settings;
 mod tmdb;
@@ -272,6 +273,15 @@ pub fn run() {
             process::process_start,
             process::process_terminate,
             process::process_kill_matching,
+            plugins::plugins_list,
+            plugins::plugins_read,
+            plugins::plugins_save,
+            plugins::plugins_import_file,
+            plugins::plugins_delete,
+            plugins::plugins_add_example,
+            plugins::plugins_trust,
+            plugins::plugins_revoke,
+            plugins::plugin_start,
             menu::file_context_menu,
             save_text
         ])

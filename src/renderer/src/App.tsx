@@ -16,8 +16,9 @@ import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
 import MenuButton from './components/MenuButton.js'
 import { repairConfirmation, summarizeRepair } from '@shared/bulk.js'
-import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
-import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
+import type { FileStatus } from '@shared/plex/facets.js'
+import { countFlags, countStatuses, filterByFlags, isPassed, matchesStatus, needsReencode } from '@shared/plex/facets.js'
+import { catalogFor } from '@shared/plex/catalog/resolve.js'
 import AboutDialog from './components/AboutDialog.js'
 import WhatsNewDialog from './components/WhatsNewDialog.js'
 import RemoteBrowser from './components/RemoteBrowser.js'
@@ -67,14 +68,6 @@ function analyzeEntry(entry: LibraryEntry, settings: AppSettings): AnalysisResul
   return result
 }
 
-/** The summary tiles, each also a filter. */
-const STATUS_TILES: { key: FileStatus; label: string; tone: string; hint: string }[] = [
-  { key: 'passed', label: 'Passed', tone: 'ok', hint: 'Show only files with nothing to do' },
-  { key: 'fixable', label: 'Fixable', tone: 'info', hint: 'Show only files a lossless remux fixes' },
-  { key: 'reencode', label: 'Re-encode', tone: 'warn', hint: 'Show only files that need their video re-encoded' },
-  { key: 'manual', label: 'Blocked', tone: 'fail', hint: 'Show only files no automatic repair can fix' }
-]
-
 function readSort(): SortState {
   try {
     const raw = localStorage.getItem('plexfixer.sort')
@@ -114,7 +107,8 @@ export default function App(): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [scanErrors, setScanErrors] = useState<ScanError[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
+  // The flags whose chips are switched on.
+  const [facets, setFacets] = useState<Set<string>>(new Set())
   const [codecs, setCodecs] = useState<CodecFilter>(emptyCodecFilter)
   const [status, setStatus] = useState<FileStatus>()
   const [hidePassed, setHidePassed] = useState(() => readPref('hidePassed'))
@@ -129,6 +123,8 @@ export default function App(): React.JSX.Element {
   const [cleaned, setCleaned] = useState<{ path: string; bytes: number }[]>([])
 
   const scanIdRef = useRef<string | undefined>(undefined)
+  // Read by the job listener, which is registered once.
+  const refreshFileRef = useRef<((path: string) => Promise<void>) | undefined>(undefined)
   // Read by the scan-complete listener, registered once.
   const libraryRef = useRef(library)
   libraryRef.current = library
@@ -234,6 +230,8 @@ export default function App(): React.JSX.Element {
       setScanning(false)
       setScanProgress(undefined)
     })
+    // Job ids whose re-check has already been taken into the library.
+    const rechecked = new Set<string>()
     const offJob = window.plexfixer.jobs.onUpdate((job) => {
       setJobs((previous) => {
         const index = previous.findIndex((entry) => entry.id === job.id)
@@ -242,6 +240,14 @@ export default function App(): React.JSX.Element {
         next[index] = job
         return next
       })
+      // The repair's own re-check found the file as it now is, so its row is
+      // brought up to date rather than left showing what was just fixed.
+      // Through the refresh path, which knows where a repaired file can end
+      // up: renamed in place, beside the original, or in an output folder.
+      if (job.state === 'done' && job.rechecked && !rechecked.has(job.id)) {
+        rechecked.add(job.id)
+        void refreshFileRef.current?.(job.sourcePath)
+      }
     })
     return () => {
       flush()
@@ -401,7 +407,7 @@ export default function App(): React.JSX.Element {
   }, [])
 
   const refreshFile = useCallback(
-    async (path: string) => {
+    async (path: string): Promise<void> => {
       setRefreshing((previous) => new Set(previous).add(path))
       try {
         let targetPath = path
@@ -489,6 +495,7 @@ export default function App(): React.JSX.Element {
     // handler every row keeps hold of for the life of the app.
     [finishedOutputFor]
   )
+  refreshFileRef.current = refreshFile
 
   /**
    * Re-analyse just the chosen files, a few at a time. Goes through the same
@@ -621,13 +628,16 @@ export default function App(): React.JSX.Element {
       .map((entry) => analyzeEntry(entry, settings))
   }, [library, settings])
 
-  const counts = useMemo(() => countStatuses(results), [results])
+  // The tiles, the chips and the status column all read this. It is
+  // remembered per patch, so it only changes when the user edits the catalog.
+  const catalog = catalogFor(settings)
+  const counts = useMemo(() => countStatuses(results, catalog), [results, catalog])
 
   // The folders the library was built from, for the folder-level suggestion.
   const libraryRoots = useMemo(() => refreshRoots(library.values()), [library])
 
   const needsTranscode = useMemo(
-    () => results.filter((entry) => fileStatus(entry) === 'reencode').map((entry) => entry.file.path),
+    () => results.filter(needsReencode).map((entry) => entry.file.path),
     [results]
   )
 
@@ -646,24 +656,29 @@ export default function App(): React.JSX.Element {
     () => (query.trim() ? results.filter((entry) => matchesSearch(entry.file.path, query)) : results),
     [results, query]
   )
-  // Then the status tile, then "Hide passed". Picking the Passed tile is an
+  // Then the status tile, then "Hide passed". Picking a passing tile is an
   // explicit ask to see passed files, so it overrides the toggle.
-  const hidingPassed = hidePassed && status !== 'passed'
-  const narrowed = useMemo(() => {
-    let rows = searched
-    if (status) rows = rows.filter((entry) => matchesStatus(entry, status))
-    if (hidingPassed) rows = rows.filter((entry) => fileStatus(entry) !== 'passed')
-    return rows
-  }, [searched, status, hidingPassed])
+  const passingSelected = catalog.statuses.some((tile) => tile.id === status && tile.passing)
+  const hidingPassed = hidePassed && !passingSelected
+  const passedCount = catalog.statuses
+    .filter((tile) => tile.passing)
+    .reduce((sum, tile) => sum + (counts[tile.id] ?? 0), 0)
+  const narrowed = useMemo(
+    () =>
+      searched
+        .filter((entry) => !status || matchesStatus(entry, status, catalog))
+        .filter((entry) => !hidingPassed || !isPassed(entry, catalog)),
+    [searched, status, hidingPassed, catalog]
+  )
   // Then the codec pickers, then the work chips, whose counts reflect the codecs.
   const codecCounts = useMemo(() => countCodecs(narrowed, codecs), [narrowed, codecs])
   const codecFiltered = useMemo(() => filterByCodec(narrowed, codecs), [narrowed, codecs])
-  const facetCounts = useMemo(() => countFacets(codecFiltered), [codecFiltered])
+  const facetCounts = useMemo(() => countFlags(codecFiltered), [codecFiltered])
   // Sorted last, so the filters above decide *which* rows and this decides
   // only their order.
   const visibleResults = useMemo(
-    () => sortResults(filterResults(codecFiltered, facets), sort),
-    [codecFiltered, facets, sort]
+    () => sortResults(filterByFlags(codecFiltered, facets), sort, catalog),
+    [codecFiltered, facets, sort, catalog]
   )
 
   // A selected file that is re-scanned or repaired into something the filters
@@ -884,17 +899,17 @@ export default function App(): React.JSX.Element {
               {results.length > 0 ? (
                 <>
                   <div className="summary">
-                    {STATUS_TILES.map((tile) => {
-                      const on = status === tile.key
+                    {catalog.statuses.map((tile) => {
+                      const on = status === tile.id
                       return (
                         <button
-                          key={tile.key}
+                          key={tile.id}
                           className={`stat ${tile.tone}`}
                           aria-pressed={on}
                           title={on ? 'Show all files again' : tile.hint}
-                          onClick={() => setStatus(on ? undefined : tile.key)}
+                          onClick={() => setStatus(on ? undefined : tile.id)}
                         >
-                          <div className="value">{counts[tile.key]}</div>
+                          <div className="value">{counts[tile.id] ?? 0}</div>
                           <div className="label">
                             {tile.label}
                             {on ? <span className="clear-mark"> ×</span> : null}
@@ -947,7 +962,7 @@ export default function App(): React.JSX.Element {
                     <label
                       className={`toggle${hidingPassed ? ' on' : ''}`}
                       title={
-                        status === 'passed'
+                        passingSelected
                           ? 'Turns off the Passed filter and hides passed files'
                           : 'Leave out files that passed every check'
                       }
@@ -962,16 +977,17 @@ export default function App(): React.JSX.Element {
                           // Hiding passed files while the Passed tile is showing
                           // only them is a contradiction. The switch is the later
                           // instruction, so the tile gives way.
-                          if (on && status === 'passed') setStatus(undefined)
+                          if (on && passingSelected) setStatus(undefined)
                         }}
                       />
                       <span className="switch" aria-hidden="true" />
                       Hide passed
-                      <span className="count">{counts.passed}</span>
+                      <span className="count">{passedCount}</span>
                     </label>
                   </div>
 
                   <FilterBar
+                    catalog={catalog}
                     counts={facetCounts}
                     active={facets}
                     codecCounts={codecCounts}

@@ -1176,6 +1176,254 @@ button.expander:hover:not(:disabled) {
   max-width: 70ch;
 }
 
+/* ---------- module parameters and flags ---------- */
+
+.param-editor,
+.flag-editor {
+  margin-top: 6px;
+}
+
+.param-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.param-label {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+}
+
+.param-label .hint,
+.flag-row .hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.param-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.param-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.recheck {
+  margin-top: 10px;
+}
+
+.flag-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin: 6px 0;
+}
+
+.flag-row.off {
+  opacity: 0.6;
+}
+
+.flag-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flag-row-head .spacer {
+  flex: 1 1 auto;
+}
+
+.flag-row-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 12px;
+  margin-top: 6px;
+}
+
+.flag-row-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.flag-row-body label.param-inline {
+  flex-direction: row;
+  align-self: end;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.catalog-json {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  resize: vertical;
+}
+
+/* ---------- the status editor ---------- */
+
+.status-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.status-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  cursor: default;
+}
+
+.status-tile-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px 8px;
+}
+
+.status-tile-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.status-tile-fields label.wide {
+  grid-column: 1 / -1;
+}
+
+.status-tile-fields label.param-inline {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.status-tile-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.status-rules {
+  margin: 0 0 8px;
+  padding-left: 22px;
+}
+
+.status-rule {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+
+.status-rule-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.status-rule-head .spacer,
+.selector-row .spacer {
+  flex: 1 1 auto;
+}
+
+.status-rule-says {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.condition {
+  margin-top: 8px;
+}
+
+.condition-body {
+  margin: 6px 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.condition-body.nested {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 10px;
+}
+
+.condition-nested-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.selector {
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-self: stretch;
+}
+
+.selector-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+
+.selector-label {
+  min-width: 80px;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chip-x {
+  margin-left: 4px;
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.catalog-advanced {
+  margin-top: 16px;
+}
+
+.catalog-advanced summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
 /* ---------- the rule editor ---------- */
 
 /* Wider than the other dialogs: the script and the list of what a rule can
@@ -1852,6 +2100,13 @@ button.expander:hover:not(:disabled) {
 
 .filterbar .spacer {
   flex: 1 1 auto;
+}
+
+/* A chip and, before the first of a category, the divider that starts it. */
+.filterbar .chip-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .filterbar .chip {
@@ -2633,4 +2888,154 @@ button.browser-row:hover:not(:disabled) {
 
 .stage-stall {
   color: var(--warn);
+}
+
+/* ------------------------------------------------------------------ *
+ * Checks & repairs as a draft, and scripts as a form
+ * ------------------------------------------------------------------ */
+
+.module-says {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.modules-heading-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Stays in view while the list scrolls, so unsaved changes are never out of sight. */
+.modules-savebar {
+  position: sticky;
+  bottom: 0;
+  margin-top: 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+.modules-savebar.pending {
+  border-color: var(--accent-line);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.modules-savebar .modules-actions {
+  margin: 0;
+}
+
+.script-form {
+  margin: 0 0 22px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+.script-form fieldset {
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+
+.script-form legend {
+  margin-bottom: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.script-form-grid,
+.script-form-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 8px;
+  align-items: end;
+}
+
+.script-form-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.script-form-grid label,
+.script-form-row label,
+.script-form-source {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.script-form .wide {
+  grid-column: 1 / -1;
+}
+
+.script-form-id {
+  font-size: 12px;
+}
+
+.script-form-source {
+  margin-top: 8px;
+}
+
+.script-form-source textarea {
+  width: 100%;
+  min-height: 180px;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.script-form-default {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.script-form-files {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.script-form-files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.script-form-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.script-form-chips .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.script-form-chips .chip button {
+  padding: 0 4px;
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }

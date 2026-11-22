@@ -12,6 +12,7 @@
  * rather than a whole analysis.
  */
 
+import { paramsFor } from './module-params.js'
 import type { AppSettings, Finding, MediaFile, TrackPlanChange } from '../../types.js'
 import { audioStreams, subtitleStreams, videoStreams, type PrimaryLanguage } from '../tracks.js'
 import { initialState, isModuleEnabled, mergeSignals, type CheckModule } from './framework.js'
@@ -59,7 +60,7 @@ export function resolveTracks(file: MediaFile, settings: AppSettings, primary: P
 
   for (const module of TRACK_CHECK_MODULES) {
     if (!isModuleEnabled(module.id, settings)) continue
-    const result = module.run({ ...media, state })
+    const result = module.run({ ...media, state, params: paramsFor(module, 'checks', settings) })
     if (result.findings?.length) findings.push(...result.findings)
     state = mergeSignals(state, result.signals)
   }

@@ -8,7 +8,7 @@
  * through exactly the same handling as a built-in one's.
  */
 
-import type { AppSettings, Finding, RemedyClass } from '../../../types.js'
+import type { AppSettings, Finding, FindingCode, RemedyClass } from '../../../types.js'
 import type { CheckModule, ScanSignals, UserRequest } from '../framework.js'
 import { describeScript } from './describe.js'
 import { evaluateScript } from './evaluate.js'
@@ -49,7 +49,7 @@ export function moduleFromScript(id: string, script: ParsedScript): CheckModule 
     whatItDoes: prose.whatItDoes,
     howItWorks: prose.howItWorks,
     ifDisabled: prose.ifDisabled,
-    raises: script.report ? ['custom'] : [],
+    raises: script.report ? [id as FindingCode] : [],
 
     run(context) {
       const match = evaluateScript(script, context)
@@ -58,7 +58,7 @@ export function moduleFromScript(id: string, script: ParsedScript): CheckModule 
       const findings: Finding[] = []
       if (script.report) {
         findings.push({
-          code: 'custom',
+          code: id as FindingCode,
           severity: script.report.severity,
           remedy,
           title: script.report.title,

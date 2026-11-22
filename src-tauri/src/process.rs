@@ -149,9 +149,29 @@ pub async fn process_start(
     }
 
     let mut builder = Command::new(&command);
+    builder.args(&args);
+    let line = std::iter::once(command.clone())
+        .chain(args.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    spawn_streaming(&app, id, builder, line, None, &processes)
+}
+
+/// Start a prepared command, streaming its output as events until it ends.
+///
+/// Shared by the binaries this app resolved and by approved repair scripts:
+/// whoever calls this has already decided the command may run. `input`, when
+/// given, is written to the process's stdin, which is then closed.
+pub fn spawn_streaming(
+    app: &AppHandle,
+    id: String,
+    mut builder: Command,
+    line: String,
+    input: Option<String>,
+    processes: &Processes,
+) -> Result<(), String> {
     builder
-        .args(&args)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         // Without this the child outlives a crash of the app and keeps writing
@@ -166,9 +186,20 @@ pub async fn process_start(
         builder.creation_flags(0x0800_0000);
     }
 
+    let program = line.split(' ').next().unwrap_or_default().to_string();
     let mut child = builder
         .spawn()
-        .map_err(|e| format!("{command} would not start: {e}"))?;
+        .map_err(|e| format!("{program} would not start: {e}"))?;
+
+    if let (Some(text), Some(mut stdin)) = (input, child.stdin.take()) {
+        // Written on its own task so a script that reads slowly cannot hold up
+        // the command; dropping the handle afterwards is the end of input.
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(text.as_bytes()).await;
+            let _ = stdin.shutdown().await;
+        });
+    }
 
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;
@@ -189,11 +220,6 @@ pub async fn process_start(
     };
     let reading_stdout = tokio::spawn(pump(stdout, forward("stdout")));
     let reading_stderr = tokio::spawn(pump(stderr, forward("stderr")));
-
-    let line = std::iter::once(command.clone())
-        .chain(args.iter().cloned())
-        .collect::<Vec<_>>()
-        .join(" ");
 
     // Recorded before anything waits on it, and left there until it has
     // ended: this entry is the only way a later request can find the process.

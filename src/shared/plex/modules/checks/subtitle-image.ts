@@ -2,10 +2,10 @@
  * Image subtitles, which Plex burns into the picture.
  */
 
-import type { CheckModule } from '../framework.js'
+import { defineCheck } from '../framework.js'
 import { isImageSubtitle } from '../../rules.js'
 
-export const subtitleImage: CheckModule = {
+export const subtitleImage = defineCheck({
   id: 'check.subtitle-image',
   title: 'Image subtitles',
   summary: 'PGS and VobSub tracks, which force a transcode whenever selected',
@@ -23,12 +23,20 @@ export const subtitleImage: CheckModule = {
     'away.',
   raises: ['subtitle-image-based'],
 
-  run({ subtitles, settings, state }) {
+  params: {
+    dropOnMp4: {
+      type: 'boolean',
+      label: 'Drop PGS/VobSub tracks when writing MP4',
+      help: 'PGS/VobSub cannot be stored in MP4 at all.'
+    }
+  },
+
+  run({ subtitles, state, params }) {
     const imageBased = subtitles.filter((s) => isImageSubtitle(s.codec))
     if (imageBased.length === 0) return {}
 
     const targetContainer = state.targetContainer
-    const dropping = targetContainer === 'mp4' && settings.dropImageSubtitlesOnMp4
+    const dropping = targetContainer === 'mp4' && params.dropOnMp4
 
     return {
       signals: dropping ? { dropStreams: imageBased.map((s) => s.index) } : undefined,
@@ -47,4 +55,4 @@ export const subtitleImage: CheckModule = {
       ]
     }
   }
-}
+})

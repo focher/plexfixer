@@ -383,7 +383,14 @@ export default function JobsPanel({
           return (
             <div key={job.id}>
               <div className="job">
-                <span className={`badge ${TONE[job.state]}`}>{job.state}</span>
+                {/* A repair that finished but left a flag it was meant to fix reads as a warning, not a success. */}
+                {job.state === 'done' && (job.remaining?.length ?? 0) > 0 ? (
+                  <span className="badge warn" title={`Still flagged: ${job.remaining?.join(', ')}`}>
+                    still flagged
+                  </span>
+                ) : (
+                  <span className={`badge ${TONE[job.state]}`}>{job.state}</span>
+                )}
                 <span>
                   <div className="name" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {shortenPath(job.sourcePath, 2)}

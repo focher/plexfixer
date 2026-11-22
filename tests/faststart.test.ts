@@ -5,13 +5,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS } from '@shared/defaults.js'
+import { settingsWith } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { indexMoveMismatch, isIndexMoveOnly } from '@shared/plex/faststart.js'
 import { mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
-const analyze = (file: Parameters<typeof analyzeFile>[0], patch = {}) =>
-  analyzeFile(file, { ...DEFAULT_SETTINGS, ...patch })
+const analyze = (file: Parameters<typeof analyzeFile>[0], patch: Parameters<typeof settingsWith>[0] = {}) =>
+  analyzeFile(file, settingsWith(patch))
 
 /** A file whose only fault is the index at the end. */
 const indexAtEnd = (overrides = {}) =>
@@ -43,8 +43,7 @@ describe('isIndexMoveOnly', () => {
 
   it('is false when a language also changes', () => {
     const result = analyze(
-      mp4([video({ index: 0, language: 'eng' }), mainAudio({ index: 1, language: 'und' })], { faststart: false }),
-      { defaultLanguage: 'eng' }
+      mp4([video({ index: 0, language: 'eng' }), mainAudio({ index: 1, language: 'und' })], { faststart: false })
     )
     expect(result.plan.trackChanges.length).toBeGreaterThan(0)
     expect(isIndexMoveOnly(result)).toBe(false)

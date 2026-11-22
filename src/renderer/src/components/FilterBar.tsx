@@ -1,16 +1,20 @@
-import type { ResultFacet } from '@shared/plex/facets.js'
-import { FACET_INFO, FACET_ORDER } from '@shared/plex/facets.js'
+import { flagDef } from '@shared/plex/catalog/resolve.js'
+import { FLAG_CATEGORY_LABEL, FLAG_CATEGORY_ORDER, type Catalog } from '@shared/plex/catalog/types.js'
 import { codecFilterActive, type CodecCounts, type CodecFilter, type CodecKind } from '@shared/plex/codecs.js'
 import CodecPicker from './CodecPicker.js'
 
 export interface FilterBarProps {
-  counts: Record<ResultFacet, number>
-  active: Set<ResultFacet>
+  /** Names, groups and hides the chips. */
+  catalog: Catalog
+  /** How many files carry each flag; only flags present are listed. */
+  counts: ReadonlyMap<string, number>
+  /** The flags whose chips are on. */
+  active: ReadonlySet<string>
   codecCounts: CodecCounts
   codecs: CodecFilter
   total: number
   shown: number
-  onToggle: (facet: ResultFacet) => void
+  onToggle: (flag: string) => void
   onToggleCodec: (kind: CodecKind, codec: string) => void
   onClearCodecs: (kind: CodecKind) => void
   /** Clears the chips and both codec pickers. */
@@ -18,15 +22,30 @@ export interface FilterBarProps {
 }
 
 /**
- * Chips for narrowing the table to one kind of work, and pickers for codecs.
+ * A chip for each flag the files carry, and pickers for codecs.
  *
- * Facets with no matching file are left out rather than shown greyed: on a
- * library of one shape, most of them never apply, and a row of dead chips is
- * noise. Selecting several widens the table rather than narrowing it — these
- * answer "show me these kinds", not "files that are all of these at once".
+ * Flags no file carries are left out rather than shown greyed: on a library of
+ * one shape, most of them never apply, and a row of dead chips is noise. A chip
+ * that is on stays even when the other filters leave it nothing, so it can be
+ * switched off. Selecting several widens the table rather than narrowing it —
+ * these answer "show me these kinds", not "files that are all of these at once".
+ *
+ * Chips are grouped by the catalog's categories and, within one, follow the
+ * catalog's order — which is the order the checks run in.
  */
 export default function FilterBar(props: FilterBarProps): React.JSX.Element | null {
-  const available = FACET_ORDER.filter((facet) => props.counts[facet] > 0)
+  const catalogOrder = Object.keys(props.catalog.flags)
+  const rank = (flag: string): number => {
+    const at = catalogOrder.indexOf(flag)
+    return at === -1 ? catalogOrder.length : at
+  }
+  const available = [...new Set([...props.counts.keys(), ...props.active])]
+    .filter((flag) => flagDef(props.catalog, flag).chip || props.active.has(flag))
+    .sort(
+      (a, b) =>
+        FLAG_CATEGORY_ORDER.indexOf(flagDef(props.catalog, a).category) -
+          FLAG_CATEGORY_ORDER.indexOf(flagDef(props.catalog, b).category) || rank(a) - rank(b)
+    )
   const anyActive = props.active.size > 0 || codecFilterActive(props.codecs)
   const pickers = (['video', 'audio'] as const).map((kind) => (
     <CodecPicker
@@ -46,19 +65,25 @@ export default function FilterBar(props: FilterBarProps): React.JSX.Element | nu
   return (
     <div className="filterbar">
       {available.length > 0 ? <span className="muted nowrap">Show</span> : null}
-      {available.map((facet) => {
-        const on = props.active.has(facet)
+      {available.map((flag, index) => {
+        const on = props.active.has(flag)
+        const def = flagDef(props.catalog, flag)
+        const previous = index > 0 ? flagDef(props.catalog, available[index - 1] as string).category : undefined
         return (
-          <button
-            key={facet}
-            className={`chip${on ? ' on' : ''}`}
-            onClick={() => props.onToggle(facet)}
-            aria-pressed={on}
-            title={FACET_INFO[facet].hint}
-          >
-            {FACET_INFO[facet].label}
-            <span className="count">{props.counts[facet]}</span>
-          </button>
+          <span key={flag} className="chip-slot">
+            {previous !== undefined && previous !== def.category ? (
+              <span className="filter-divider" aria-hidden="true" />
+            ) : null}
+            <button
+              className={`chip${on ? ' on' : ''}`}
+              onClick={() => props.onToggle(flag)}
+              aria-pressed={on}
+              title={`${FLAG_CATEGORY_LABEL[def.category]}: ${def.hint}`}
+            >
+              {def.label}
+              <span className="count">{props.counts.get(flag) ?? 0}</span>
+            </button>
+          </span>
         )
       })}
       {hasPickers ? (

@@ -17,13 +17,16 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
+import { scriptInfo, type ScriptInfo, type ScriptKind, type ScriptListing } from '@shared/plex/scripts/manifest.js'
+import { activeChecks, withCheckReports } from '@shared/plex/scripts/checks.js'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { withDefaults } from '@shared/defaults.js'
 import { parseLaunchArgs } from '@shared/launch.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { ProbeError, probeFile } from '@shared/plex/probe.js'
 import { DOLBY_VISION_HDR10_FILTER } from '@shared/plex/rules.js'
-import { runScan, type KnownFile } from '@shared/plex/scan.js'
+import { runScan, type KnownFile, type ScanRequest } from '@shared/plex/scan.js'
+import type { RepairHost } from '@shared/host.js'
 import { loadLibrary } from '../library.js'
 import { RepairRunner } from '@shared/plex/runner.js'
 import { createBackupRegistry, findBackups } from '@shared/plex/backups-store.js'
@@ -293,6 +296,72 @@ function applyToRunningQueue(settings: AppSettings): void {
   runner?.setConcurrency(settings.concurrency)
 }
 
+/** One of a script's files, as the native side read it. */
+export interface ScriptSourceFile {
+  name: string
+  size: number
+  /** Absent when the file is not text, or too large to edit. */
+  content?: string
+}
+
+export interface ScriptSource {
+  manifest?: string
+  files: ScriptSourceFile[]
+}
+
+export interface ScriptSave {
+  kind: ScriptKind
+  id: string
+  previousId?: string
+  manifest: string
+  /** Files to write, by name. */
+  write: Record<string, string>
+  /** Files to delete, by name. */
+  remove: string[]
+}
+
+/** The scripts of one kind installed now, read and checked. */
+async function listScripts(kind: ScriptKind = 'repairs'): Promise<ScriptInfo[]> {
+  const listings = await invoke<ScriptListing[]>('plugins_list', { kind })
+  return listings.map((listing) => scriptInfo(listing, kind))
+}
+
+/** Both kinds, for a repair: its scripts, and the checks its re-check runs. */
+async function allScripts(): Promise<ScriptInfo[]> {
+  const [checks, repairs] = await Promise.all([listScripts('checks'), listScripts('repairs')])
+  return [...checks, ...repairs]
+}
+
+/**
+ * The check scripts a scan runs, and how to run them on one file.
+ *
+ * None on a remote host — scripts only run on this computer — and none when
+ * no script is approved and switched on, so a library without them scans
+ * exactly as it always did.
+ */
+async function checkScripts(
+  ready: { settings: AppSettings; host: RepairHost; ffprobePath: string },
+  signal: AbortSignal
+): Promise<ScanRequest['checks']> {
+  if (ready.host.kind === 'remote') return undefined
+  const active = activeChecks(await listScripts('checks').catch(() => []), ready.settings)
+  if (active.length === 0) return undefined
+  const environment = await environmentFor(ready.settings, false)
+  const ffmpegPath = environment.ffmpegPath ?? ''
+  return {
+    active,
+    run: (file) =>
+      withCheckReports(file, {
+        active,
+        host: ready.host,
+        ffmpegPath,
+        ffprobePath: ready.ffprobePath,
+        settings: ready.settings,
+        signal
+      })
+  }
+}
+
 function buildApi() {
   return {
     settings: {
@@ -465,7 +534,11 @@ function buildApi() {
         const known = new Map<string, KnownFile>()
         try {
           for (const entry of await loadLibrary()) {
-            known.set(entry.path, { sizeBytes: entry.file.sizeBytes, modifiedMs: entry.file.modifiedMs })
+            known.set(entry.path, {
+              sizeBytes: entry.file.sizeBytes,
+              modifiedMs: entry.file.modifiedMs,
+              checkReports: entry.file.checkReports
+            })
           }
         } catch (error) {
           // A library that cannot be read is not a reason to refuse to scan;
@@ -487,6 +560,7 @@ function buildApi() {
           // remote mode found nothing at all.
           findMedia: (roots, extensions, recursive) => ready.host.findMedia(roots, extensions, recursive),
           known,
+          checks: await checkScripts(ready, controller.signal),
           signal: controller.signal,
           onProgress: (event) => scanProgress.emit(event)
         })
@@ -512,7 +586,9 @@ function buildApi() {
         // reporting it as unreadable.
         if (!(await ready.host.stat(path))) return { missing: true }
         try {
-          const probed = await probeFile(path, { ffprobePath: ready.ffprobePath, host: ready.host })
+          const read = await probeFile(path, { ffprobePath: ready.ffprobePath, host: ready.host })
+          const checks = await checkScripts(ready, new AbortController().signal)
+          const probed = checks ? await checks.run(read) : read
           return { result: { ...analyzeFile(probed, ready.settings), scannedAt: Date.now() } }
         } catch (error) {
           return {
@@ -557,6 +633,9 @@ function buildApi() {
           const ready = await toolchain()
           if ('problem' in ready) throw new Error(ready.problem)
           const environment = await environmentFor(ready.settings, false)
+          // Read once per batch, so a script approved or edited meanwhile is
+          // seen as it is now; the native side checks again before running it.
+          const scripts = await allScripts()
 
           const jobs: Job[] = []
           for (const request of requests) {
@@ -578,7 +657,8 @@ function buildApi() {
                 settings: ready.settings,
                 mode: repairModeFor(probed.path, overrides, ready.settings.defaultMode, mode),
                 caps: environment.capabilities,
-                scanRoot: request.scanRoot
+                scanRoot: request.scanRoot,
+                scripts
               })
             )
           }
@@ -594,6 +674,25 @@ function buildApi() {
       clearFinished: async (): Promise<void> => runner?.clearFinished(),
       clearQueued: async (): Promise<number> => runner?.clearQueued() ?? 0,
       onUpdate: (listener: (job: Job) => void): Unsubscribe => jobUpdate.on(listener)
+    },
+    scripts: {
+      /** Every folder under the repairs directory, read and checked. */
+      list: (kind: ScriptKind): Promise<ScriptInfo[]> => listScripts(kind),
+      /** Shows the native approval dialog; resolves true when approved. */
+      approve: (kind: ScriptKind, id: string): Promise<boolean> => invoke<boolean>('plugins_trust', { kind, id }),
+      revoke: (kind: ScriptKind, id: string): Promise<void> => invoke('plugins_revoke', { kind, id }),
+      /** A script's manifest and the text of its other files, for the form. */
+      read: (kind: ScriptKind, id: string): Promise<ScriptSource> => invoke<ScriptSource>('plugins_read', { kind, id }),
+      /** Writes a script from the form; `previousId` is absent for a new one. */
+      save: (save: ScriptSave): Promise<void> => invoke('plugins_save', { ...save }),
+      /** A text file the user picks in a native dialog; undefined when they cancel. */
+      importFile: async (): Promise<ScriptSourceFile | undefined> =>
+        (await invoke<ScriptSourceFile | null>('plugins_import_file')) ?? undefined,
+      /** Asks in a native dialog, then deletes; resolves true when it is gone. */
+      remove: (kind: ScriptKind, id: string): Promise<boolean> => invoke<boolean>('plugins_delete', { kind, id }),
+      /** Adds an example that ships with the app; resolves to its id. */
+      addExample: (kind: ScriptKind, example: string): Promise<string> =>
+        invoke<string>('plugins_add_example', { kind, example })
     },
     shell: {
       reveal: (path: string): Promise<void> => revealItemInDir(path),
