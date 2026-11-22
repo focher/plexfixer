@@ -10,6 +10,8 @@
  * Probe results (normalised ffprobe output)
  * ------------------------------------------------------------------ */
 
+import type { CatalogPatch } from './plex/catalog/types.js'
+
 export type TrackKind = 'video' | 'audio' | 'subtitle' | 'attachment' | 'data'
 
 export interface StreamDisposition {
@@ -194,13 +196,12 @@ export type FindingCode =
   | 'forced-subtitle-not-flagged'
   | 'preferred-audio-language-absent'
   /**
-   * Anything a rule the user wrote reported.
+   * What a rule the user wrote reported: the rule's own id, `user.<name>`.
    *
-   * One code for all of them rather than a code each: a code is how the rest
-   * of the app recognises a finding it has built-in knowledge about, and there
-   * is none to have about a rule written this morning.
+   * A code each, so each rule is a flag of its own — its own chip, and its
+   * own choice of repair, including a repair script.
    */
-  | 'custom'
+  | `user.${string}`
 
 export interface Finding {
   code: FindingCode
@@ -306,12 +307,27 @@ export interface RepairPlan {
    * label is too high but its demands fit. Only set when the video is copied.
    */
   videoLevel?: number
+  /**
+   * Repair scripts to run on the file once ffmpeg has written it, in order.
+   * Absent on a plan that runs none.
+   */
+  scriptSteps?: ScriptStep[]
   /** Findings this plan does not address. */
   unresolved: Finding[]
   /** True when a safe (lossless) plan cannot fix every blocker. */
   requiresTranscode: boolean
   /** Rough note about cost, e.g. "stream copy" / "GPU video re-encode". */
   costNote: string
+}
+
+/** One repair script a plan runs, and the flags it was bound to that led to it. */
+export interface ScriptStep {
+  /** The script's folder name; its repair id is `script.<id>`. */
+  script: string
+  /** The parameters the user set for it; the manifest supplies the rest. */
+  params: Record<string, number | boolean | string | readonly string[]>
+  /** The flags on this file that are bound to the script. */
+  flags: FindingCode[]
 }
 
 export type FileVerdict =
@@ -386,20 +402,9 @@ export interface AppSettings {
 
   /** Target container for remuxes. */
   targetContainer: 'mp4' | 'mkv'
-  /** Convert MKV to MP4 where the streams allow it. */
-  remuxMkvToMp4: boolean
-  /** Pull text subtitles out to sidecar .srt files. */
-  extractTextSubtitles: boolean
-  /** Drop image-based (PGS/VobSub) subtitles when remuxing to MP4. */
-  dropImageSubtitlesOnMp4: boolean
-  /** Always add a stereo AAC track when none exists. */
-  ensureAacStereo: boolean
-  /** Treat HEVC as compatible (modern client fleet only). */
-  allowHevc: boolean
-  /** Highest H.264 level to accept without flagging, e.g. 41 for Level 4.1. */
-  maxH264Level: number
-  /** Flag resolutions above this height. */
-  maxHeight: number
+  // The thresholds that only one module reads — HEVC, the H.264 level, the
+  // height ceiling, the AAC companion, subtitle extraction and dropping, MKV
+  // rewrapping — are that module's parameters, in the catalog.
 
   /** Where repaired files are written. */
   outputPlacement: OutputPlacement
@@ -488,6 +493,13 @@ export interface AppSettings {
    * list and is shown as broken rather than being dropped.
    */
   userModules: { id: string; script: string }[]
+
+  /**
+   * What the user changed about the catalog: which flags are kept, what they
+   * are called, what answers them, and the status tiles. Only the differences
+   * from the shipped `default.json` are stored, so resetting is emptying this.
+   */
+  catalog: CatalogPatch
 }
 
 /**
@@ -549,6 +561,10 @@ export type JobPhase =
   | 'promote'
   /** Writing subtitle sidecars. */
   | 'subtitles'
+  /** One repair script, start to exit. */
+  | 'script'
+  /** Probing the finished file and running the checks on it again. */
+  | 'recheck'
   /** Queued to finished. */
   | 'total'
 
@@ -623,6 +639,10 @@ export type JobStage =
   | 'promoting'
   /** Writing subtitle sidecars. */
   | 'subtitles'
+  /** Running repair scripts on what ffmpeg wrote. */
+  | 'scripts'
+  /** Probing the finished file and running the checks on it again. */
+  | 'recheck'
   | 'finished'
 
 /** The machine a job is running on, recorded when it starts. */
@@ -661,6 +681,14 @@ export interface Job {
    * instead of showing a bar that has silently stopped moving.
    */
   updatedAt?: number
+  /**
+   * The finished file as the re-check probed it, when the repairs asked for
+   * one. The library takes it as the file's new scan, so its row is current
+   * without a rescan.
+   */
+  rechecked?: MediaFile
+  /** Flags the job set out to fix that the re-check still found. */
+  remaining?: FindingCode[]
 }
 
 /* ------------------------------------------------------------------ *

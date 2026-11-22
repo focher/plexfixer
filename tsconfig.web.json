@@ -20,6 +20,7 @@
     "noUnusedParameters": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "paths": {

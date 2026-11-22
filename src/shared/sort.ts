@@ -8,7 +8,9 @@
  */
 
 import type { AnalysisResult, PlanStrategy } from './types.js'
-import { STATUS_ORDER, fileStatus } from './plex/facets.js'
+import { fileStatus } from './plex/facets.js'
+import { DEFAULT_CATALOG } from './plex/catalog/resolve.js'
+import type { Catalog } from './plex/catalog/types.js'
 import { summarizeReason } from './plex/reason.js'
 
 export type SortKey = 'status' | 'name' | 'reason' | 'plan' | 'size' | 'scanned'
@@ -44,10 +46,11 @@ const PLAN_ORDER: Record<PlanStrategy, number> = {
   'transcode-video': 3
 }
 
-function keyFor(result: AnalysisResult, key: SortKey): string | number {
+function keyFor(result: AnalysisResult, key: SortKey, catalog: Catalog): string | number {
   switch (key) {
     case 'status':
-      return STATUS_ORDER.indexOf(fileStatus(result))
+      // The order the tiles are in, which is the order the user put them in.
+      return catalog.statuses.findIndex((status) => status.id === fileStatus(result, catalog))
     case 'reason':
       return summarizeReason(result).headline.toLowerCase()
     case 'plan':
@@ -64,10 +67,14 @@ function keyFor(result: AnalysisResult, key: SortKey): string | number {
   }
 }
 
-export function sortResults(results: AnalysisResult[], sort: SortState): AnalysisResult[] {
+export function sortResults(
+  results: AnalysisResult[],
+  sort: SortState,
+  catalog: Catalog = DEFAULT_CATALOG
+): AnalysisResult[] {
   const sign = sort.direction === 'desc' ? -1 : 1
   return results
-    .map((result) => ({ result, key: keyFor(result, sort.key), path: result.file.path }))
+    .map((result) => ({ result, key: keyFor(result, sort.key, catalog), path: result.file.path }))
     .sort((a, b) => {
       const comparison =
         typeof a.key === 'number' && typeof b.key === 'number'

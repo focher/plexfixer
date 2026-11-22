@@ -27,12 +27,18 @@ import type {
   PlanAction,
   PlanStrategy,
   RepairPlan,
+  ScriptStep,
   TrackPlanChange
 } from '../../types.js'
+import { catalogFor, flagDef, shippedRepairOf } from '../catalog/resolve.js'
+import type { Catalog } from '../catalog/types.js'
 import { preferredHevcTag } from '../rules.js'
 import { audioStreams, resolvePrimaryLanguage, subtitleStreams, videoStreams } from '../tracks.js'
 import { CHECK_MODULES, REPAIR_MODULES } from './registry.js'
 import { userCheckModules } from './script/module.js'
+import { paramsFor } from './module-params.js'
+import { isRuleCode } from '../catalog/resolve.js'
+import { isScriptRepairId, scriptIdOf } from '../scripts/manifest.js'
 import {
   initialState,
   isModuleEnabled,
@@ -40,6 +46,7 @@ import {
   strongerStrategy,
   type CheckContext,
   type MediaContext,
+  type RepairModule,
   type RepairContext,
   type ScanState
 } from './framework.js'
@@ -62,6 +69,34 @@ function mediaContext(file: MediaFile, settings: AppSettings): MediaContext {
   }
 }
 
+/** Whether a module runs: on in the catalog, and not switched off the older way. */
+const runs = (id: string, settings: AppSettings, entry: { enabled: boolean } | undefined): boolean =>
+  isModuleEnabled(id, settings) && entry?.enabled !== false
+
+/**
+ * The catalog's say over one finding: dropped when its flag is not kept, and
+ * given the catalog's severity when one is set.
+ */
+const throughCatalog = (findings: readonly Finding[], catalog: Catalog): Finding[] =>
+  findings
+    .filter((finding) => flagDef(catalog, finding.code).keep)
+    .map((finding) => {
+      const severity = flagDef(catalog, finding.code).severity
+      return severity && severity !== finding.severity ? { ...finding, severity } : finding
+    })
+
+/**
+ * Whether the built-in repairs should act on a flag.
+ *
+ * A check's signals are what the built-in repairs act on, and they assume the
+ * flag is answered the way it shipped. A flag the user discarded, or took away
+ * from its built-in repair, must not be quietly fixed anyway.
+ */
+const answeredAsShipped = (code: FindingCode, catalog: Catalog): boolean => {
+  const def = flagDef(catalog, code)
+  return def.keep && def.repair === shippedRepairOf(code)
+}
+
 /**
  * Every check, in order, each handed what the ones before it concluded.
  *
@@ -71,24 +106,54 @@ function mediaContext(file: MediaFile, settings: AppSettings): MediaContext {
  * half-made one — and a rule that will not parse is left out rather than
  * stopping the scan.
  */
-function runChecks(media: MediaContext): { findings: Finding[]; state: ScanState } {
+function runChecks(
+  media: MediaContext,
+  catalog: Catalog
+): { findings: Finding[]; raised: Set<FindingCode>; state: ScanState } {
   let state = initialState(media.settings)
   const findings: Finding[] = []
+  // Every code a check raised, kept or not, so the repairs can tell a flag
+  // the user set aside from one that never came up.
+  const raisedCodes = new Set<FindingCode>()
 
   for (const module of [...CHECK_MODULES, ...userCheckModules(media.settings)]) {
-    if (!isModuleEnabled(module.id, media.settings)) continue
-    const context: CheckContext = { ...media, state }
+    if (!runs(module.id, media.settings, catalog.checks[module.id])) continue
+    const context: CheckContext = { ...media, state, params: paramsFor(module, 'checks', media.settings) }
     const result = module.run(context)
-    if (result.findings?.length) findings.push(...result.findings)
-    state = mergeSignals(state, result.signals)
+    const raised = result.findings ?? []
+    for (const finding of raised) raisedCodes.add(finding.code)
+    findings.push(...throughCatalog(raised, catalog))
+    // A check that raised nothing is still deciding things (the container, the
+    // default track) that later checks build on, so its signals always count.
+    // One that raised flags counts only while some of them are answered as shipped.
+    const signalsCount = raised.length === 0 || raised.some((finding) => answeredAsShipped(finding.code, catalog))
+    if (signalsCount) state = mergeSignals(state, result.signals)
   }
 
-  return { findings, state }
+  return { findings, raised: raisedCodes, state }
+}
+
+/** The codes a repair answers on this file, counting the user's rules for one that takes them. */
+const answersOf = (module: RepairModule, raised: ReadonlySet<FindingCode>): readonly FindingCode[] =>
+  module.answersRules ? [...module.answers, ...[...raised].filter(isRuleCode)] : module.answers
+
+/**
+ * Whether the user has taken all of a repair's work away from it.
+ *
+ * True when the file raised flags this repair answers and not one of them is
+ * still answered by it as shipped. A repair whose flags never came up runs as
+ * it always did: several work from what the file is rather than from a flag,
+ * and their flags are how the user steers them, not what starts them.
+ */
+const setAside = (answers: readonly FindingCode[], raised: ReadonlySet<FindingCode>, catalog: Catalog): boolean => {
+  const present = answers.filter((code) => raised.has(code))
+  return present.length > 0 && !present.some((code) => answeredAsShipped(code, catalog))
 }
 
 export function analyzeWithModules(file: MediaFile, settings: AppSettings): AnalysisResult {
   const media = mediaContext(file, settings)
-  const { findings: rawFindings, state } = runChecks(media)
+  const catalog = catalogFor(settings)
+  const { findings: rawFindings, raised, state } = runChecks(media, catalog)
 
   /* --- repairs ------------------------------------------------------- */
 
@@ -111,21 +176,33 @@ export function analyzeWithModules(file: MediaFile, settings: AppSettings): Anal
     costNote: ''
   }
 
-  /** Codes whose repair the user has switched off: reported, but not fixed. */
-  const unrepaired = new Set<FindingCode>()
+  /**
+   * Codes whose repair the user has switched off, or taken away from the
+   * flag: reported, but not fixed.
+   */
+  const scriptSteps = scriptStepsFor(rawFindings, catalog)
+  const scripted = new Set(scriptSteps.flatMap((step) => step.flags))
+  const unrepaired = new Set<FindingCode>(
+    rawFindings
+      .map((finding) => finding.code)
+      .filter((code) => !answeredAsShipped(code, catalog) && !scripted.has(code))
+  )
 
   // Where the composed "Remux: …" line belongs: where the first module that
   // wanted a piece of it would have put its own line.
   let remuxActionAt = 0
 
   const runRepair = (module: (typeof REPAIR_MODULES)[number]): void => {
-    if (!isModuleEnabled(module.id, settings)) {
-      for (const code of module.answers) unrepaired.add(code)
+    const answers = answersOf(module, raised)
+    if (!runs(module.id, settings, catalog.repairs[module.id])) {
+      for (const code of answers) unrepaired.add(code)
       return
     }
+    if (setAside(answers, raised, catalog)) return
     const context: RepairContext = {
       ...media,
       state,
+      params: paramsFor(module, 'repairs', settings),
       findings,
       strategy: strongerStrategy(strategy, trackChanges.length > 0 ? 'remux' : 'none')
     }
@@ -156,6 +233,16 @@ export function analyzeWithModules(file: MediaFile, settings: AppSettings): Anal
   }
 
   /* --- the plan as a whole -------------------------------------------- */
+
+  // A script works on the file ffmpeg writes, so a plan with one is at least a
+  // stream copy: the copy is what the script is handed.
+  for (const step of scriptSteps) {
+    actions.push({
+      label: `Run repair script ${step.script}`,
+      detail: `Answers ${step.flags.join(', ')}. Runs on the remuxed file, which is then checked like any other output.`
+    })
+  }
+  if (scriptSteps.length > 0) strategy = strongerStrategy(strategy, 'remux')
 
   // Four separate fixes that are one pass over the file, said as one line.
   if (remuxParts.length > 0) {
@@ -193,7 +280,10 @@ export function analyzeWithModules(file: MediaFile, settings: AppSettings): Anal
   plan.videoCodecTag = videoCodecTag
   plan.requiresTranscode = settled === 'transcode-video'
   plan.costNote = costNoteFor(settled)
-  plan.unresolved = unresolvedFindings(findings, settled, unrepaired)
+  // A flag bound to a script is the script's to fix, whatever remedy the check
+  // that raised it thought it had.
+  plan.unresolved = unresolvedFindings(findings, settled, unrepaired).filter((finding) => !scripted.has(finding.code))
+  if (scriptSteps.length > 0) plan.scriptSteps = scriptSteps
 
   return {
     file,
@@ -203,6 +293,23 @@ export function analyzeWithModules(file: MediaFile, settings: AppSettings): Anal
     primaryLanguage: media.primary.language,
     primaryLanguageSource: media.primary.source
   }
+}
+
+/**
+ * The scripts this file's flags call for: one step per enabled script, in the
+ * order its first flag was raised, carrying every flag bound to it.
+ */
+function scriptStepsFor(findings: readonly Finding[], catalog: Catalog): ScriptStep[] {
+  const bound = findings
+    .map((finding) => ({ code: finding.code, repair: flagDef(catalog, finding.code).repair }))
+    .filter((entry): entry is { code: FindingCode; repair: string } => isScriptRepairId(entry.repair))
+    .filter((entry) => catalog.repairs[entry.repair]?.enabled !== false)
+  const repairs = [...new Set(bound.map((entry) => entry.repair))]
+  return repairs.map((repair) => ({
+    script: scriptIdOf(repair),
+    params: { ...(catalog.repairs[repair]?.params ?? {}) },
+    flags: [...new Set(bound.filter((entry) => entry.repair === repair).map((entry) => entry.code))]
+  }))
 }
 
 function costNoteFor(strategy: PlanStrategy): string {

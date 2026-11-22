@@ -1,0 +1,268 @@
+{
+  "version": 1,
+  "checks": {
+    "check.drm-protected": { "enabled": true, "params": {} },
+    "check.video-track-count": { "enabled": true, "params": {} },
+    "check.video-codec": { "enabled": true, "params": { "allowHevc": true } },
+    "check.video-profile": { "enabled": true, "params": {} },
+    "check.video-h264-level": { "enabled": true, "params": { "maxLevel": 41 } },
+    "check.video-chroma": { "enabled": true, "params": {} },
+    "check.video-interlaced": { "enabled": true, "params": {} },
+    "check.video-dolby-vision": { "enabled": true, "params": {} },
+    "check.video-resolution": { "enabled": true, "params": { "maxHeight": 2160 } },
+    "check.video-anamorphic": { "enabled": true, "params": {} },
+    "check.video-ref-frames": { "enabled": true, "params": {} },
+    "check.video-hevc-tag": { "enabled": true, "params": {} },
+    "check.audio-codec": { "enabled": true, "params": {} },
+    "check.audio-channels": { "enabled": true, "params": { "maxChannels": 6 } },
+    "check.audio-compatible-track": { "enabled": true, "params": { "addCompanion": true, "maxChannels": 6 } },
+    "check.container-target": { "enabled": true, "params": { "remuxMkvToMp4": true } },
+    "check.container-unsupported": { "enabled": true, "params": {} },
+    "check.container-mkv": { "enabled": true, "params": {} },
+    "check.mp4-faststart": { "enabled": true, "params": {} },
+    "check.subtitle-image": { "enabled": true, "params": { "dropOnMp4": true } },
+    "check.subtitle-styled": { "enabled": true, "params": {} },
+    "check.subtitle-mp4-storage": { "enabled": true, "params": {} },
+    "check.track-language-missing": { "enabled": true, "params": {} },
+    "check.track-language-nonstandard": { "enabled": true, "params": {} },
+    "check.track-audio-missing": { "enabled": true, "params": {} },
+    "check.track-default-audio": { "enabled": true, "params": {} },
+    "check.track-default-subtitle": { "enabled": true, "params": {} },
+    "check.track-forced-subtitle": { "enabled": true, "params": {} }
+  },
+  "repairs": {
+    "repair.transcode-video": { "enabled": true, "params": {}, "recheck": true },
+    "repair.rewrap-container": { "enabled": true, "params": {}, "recheck": true },
+    "repair.move-index-to-front": { "enabled": true, "params": {}, "recheck": true },
+    "repair.retag-hevc": { "enabled": true, "params": {}, "recheck": true },
+    "repair.relabel-h264-level": { "enabled": true, "params": {}, "recheck": true },
+    "repair.mp4-subtitle-default": { "enabled": true, "params": {}, "recheck": true },
+    "repair.drop-unstorable-subtitles": { "enabled": true, "params": {}, "recheck": true },
+    "repair.drop-extra-video": { "enabled": true, "params": {}, "recheck": true },
+    "repair.custom-requests": { "enabled": true, "params": {}, "recheck": true },
+    "repair.add-compatibility-audio": { "enabled": true, "params": { "maxChannels": 6 }, "recheck": true },
+    "repair.extract-subtitles": { "enabled": true, "params": { "extractText": true }, "recheck": true },
+    "repair.fix-track-metadata": { "enabled": true, "params": {}, "recheck": true },
+    "repair.drop-cover-art": { "enabled": true, "params": {}, "recheck": true }
+  },
+  "flags": {
+    "drm-protected": {
+      "label": "DRM protected",
+      "hint": "The file is encrypted, so nothing can copy or re-encode its streams.",
+      "category": "file", "keep": true, "chip": true, "severity": null, "repair": null
+    },
+    "video-missing": {
+      "label": "No video",
+      "hint": "No video stream was found in the file.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": null
+    },
+    "video-multiple": {
+      "label": "Extra video tracks",
+      "hint": "More than one real video track; clients only ever play the first.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.drop-extra-video"
+    },
+    "video-codec-unsupported": {
+      "label": "Video codec unsupported",
+      "hint": "The video codec does not direct play on mainstream clients, so the server transcodes it.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-codec-limited": {
+      "label": "Video codec limited",
+      "hint": "The video plays on some clients but not all of them.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-high10-profile": {
+      "label": "10-bit H.264",
+      "hint": "H.264 High 10 has almost no hardware decoders, so most clients transcode it.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-level-too-high": {
+      "label": "H.264 level too high",
+      "hint": "The stream's H.264 level is above what the configured clients accept.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.relabel-h264-level"
+    },
+    "video-chroma-unsupported": {
+      "label": "Chroma not 4:2:0",
+      "hint": "4:2:2 or 4:4:4 video, which consumer decoders do not handle.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-interlaced": {
+      "label": "Interlaced",
+      "hint": "Interlaced video, which Plex deinterlaces on every play.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-dolby-vision-profile": {
+      "label": "Dolby Vision profile",
+      "hint": "A Dolby Vision profile with no HDR10 fallback, so non-DV clients show the wrong colours.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-resolution-high": {
+      "label": "Above height ceiling",
+      "hint": "Taller than the configured height ceiling for remote streaming.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-anamorphic": {
+      "label": "Anamorphic",
+      "hint": "Non-square pixels; some clients show the picture stretched.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-refframes-high": {
+      "label": "Many reference frames",
+      "hint": "More reference frames than some hardware decoders allow.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.transcode-video"
+    },
+    "video-hevc-wrong-tag": {
+      "label": "HEVC tag",
+      "hint": "HEVC tagged hev1 in an MP4; Apple clients need hvc1.",
+      "category": "video", "keep": true, "chip": true, "severity": null, "repair": "repair.retag-hevc"
+    },
+    "audio-codec-unsupported": {
+      "label": "Audio codec unsupported",
+      "hint": "An audio codec mainstream clients cannot decode.",
+      "category": "audio", "keep": true, "chip": true, "severity": null, "repair": "repair.add-compatibility-audio"
+    },
+    "audio-codec-limited": {
+      "label": "Audio codec limited",
+      "hint": "An audio codec only some clients decode.",
+      "category": "audio", "keep": true, "chip": true, "severity": null, "repair": "repair.add-compatibility-audio"
+    },
+    "audio-channels-high": {
+      "label": "Many audio channels",
+      "hint": "More channels than many clients play without a transcode.",
+      "category": "audio", "keep": true, "chip": true, "severity": null, "repair": "repair.add-compatibility-audio"
+    },
+    "audio-no-compatible-track": {
+      "label": "No compatible audio",
+      "hint": "Not one audio track plays everywhere.",
+      "category": "audio", "keep": true, "chip": true, "severity": null, "repair": "repair.add-compatibility-audio"
+    },
+    "audio-missing": {
+      "label": "No audio",
+      "hint": "The file has no audio track at all.",
+      "category": "audio", "keep": true, "chip": true, "severity": null, "repair": null
+    },
+    "container-not-mp4": {
+      "label": "Not MP4",
+      "hint": "The file is not in the target container and can be rewrapped losslessly.",
+      "category": "container", "keep": true, "chip": true, "severity": null, "repair": "repair.rewrap-container"
+    },
+    "container-unsupported": {
+      "label": "Container unsupported",
+      "hint": "A container Plex clients do not direct play.",
+      "category": "container", "keep": true, "chip": true, "severity": null, "repair": "repair.rewrap-container"
+    },
+    "container-blocked-by-stream": {
+      "label": "Kept as MKV",
+      "hint": "A stream MP4 cannot hold keeps the file in MKV.",
+      "category": "container", "keep": true, "chip": true, "severity": null, "repair": null
+    },
+    "mp4-not-faststart": {
+      "label": "Index at end",
+      "hint": "The MP4 index sits at the end of the file, so remote clients stall before playback starts.",
+      "category": "container", "keep": true, "chip": true, "severity": null, "repair": "repair.move-index-to-front"
+    },
+    "subtitle-image-based": {
+      "label": "Image subtitles",
+      "hint": "PGS or VobSub subtitles, which force a transcode to burn in on most clients.",
+      "category": "subtitle", "keep": true, "chip": true, "severity": null, "repair": "repair.drop-unstorable-subtitles"
+    },
+    "subtitle-image-default": {
+      "label": "Image subtitles by default",
+      "hint": "An image subtitle track is the default, so it is burned in on every play.",
+      "category": "subtitle", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "subtitle-styled-ass": {
+      "label": "Styled subtitles",
+      "hint": "ASS/SSA styling, which many clients render by transcoding.",
+      "category": "subtitle", "keep": true, "chip": true, "severity": null, "repair": "repair.extract-subtitles"
+    },
+    "subtitle-unsupported-in-mp4": {
+      "label": "Subtitles MP4 cannot hold",
+      "hint": "A subtitle format that cannot travel into MP4.",
+      "category": "subtitle", "keep": true, "chip": true, "severity": null, "repair": "repair.drop-unstorable-subtitles"
+    },
+    "language-missing": {
+      "label": "Missing language",
+      "hint": "A track with no language tag.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "language-nonstandard": {
+      "label": "Non-standard language",
+      "hint": "A language tag that is not ISO 639-2.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "default-audio-missing": {
+      "label": "No default audio",
+      "hint": "No audio track is marked to play by default.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "default-audio-multiple": {
+      "label": "Several default audio",
+      "hint": "More than one audio track is marked as the default.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "default-audio-language-mismatch": {
+      "label": "Default audio language",
+      "hint": "The default audio track is not in the preferred language.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "preferred-audio-language-absent": {
+      "label": "No preferred-language audio",
+      "hint": "No audio track is in the preferred language.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": null
+    },
+    "default-subtitle-multiple": {
+      "label": "Several default subtitles",
+      "hint": "More than one subtitle track is marked as the default.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "default-subtitle-unwanted": {
+      "label": "Unwanted default subtitle",
+      "hint": "A subtitle plays by default when it should not.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "default-subtitle-language-mismatch": {
+      "label": "Default subtitle language",
+      "hint": "The default subtitle track is not in the preferred language.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    },
+    "forced-subtitle-not-flagged": {
+      "label": "Forced subtitle unflagged",
+      "hint": "A forced-subtitle track is not flagged as forced.",
+      "category": "tracks", "keep": true, "chip": true, "severity": null, "repair": "repair.fix-track-metadata"
+    }
+  },
+  "statuses": [
+    {
+      "id": "passed", "label": "Passed", "badge": "passed", "tone": "ok", "passing": true,
+      "hint": "Nothing to do — direct plays as it is (see details for any notes)"
+    },
+    {
+      "id": "fixable", "label": "Fixable", "badge": "fixable", "tone": "info", "passing": false,
+      "hint": "A lossless remux fixes this file"
+    },
+    {
+      "id": "reencode", "label": "Re-encode", "badge": "re-encode", "tone": "warn", "passing": false,
+      "hint": "Only a video re-encode fixes this file"
+    },
+    {
+      "id": "manual", "label": "Blocked", "badge": "blocked", "tone": "fail", "passing": false,
+      "hint": "No automatic repair fixes this — open the row for why, and what you can do"
+    }
+  ],
+  "statusRules": [
+    { "status": "passed", "when": { "none": [{ "severity": ["warning", "blocker"] }] } },
+    {
+      "status": "manual",
+      "when": {
+        "any": [
+          { "unresolved": true, "severity": ["blocker"] },
+          { "unresolved": true, "severity": ["warning"], "remedy": ["manual"] }
+        ]
+      }
+    },
+    { "status": "reencode", "when": { "strategy": ["transcode-video"] } },
+    { "status": "fixable", "when": { "not": { "strategy": ["none"] } } },
+    { "status": "passed", "when": { "always": true } }
+  ]
+}
