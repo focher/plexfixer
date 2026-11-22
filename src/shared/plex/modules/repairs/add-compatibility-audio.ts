@@ -2,12 +2,12 @@
  * Adding one audio track every client can play, and keeping the originals.
  */
 
-import type { RepairModule } from '../framework.js'
-import { MAX_SAFE_CHANNELS, audioCodecTier } from '../../rules.js'
+import { defineRepair } from '../framework.js'
+import { audioCodecTier } from '../../rules.js'
 import { languageName, normalizeLanguage } from '../../../languages.js'
 import type { TrackPlanChange } from '../../../types.js'
 
-export const addCompatibilityAudio: RepairModule = {
+export const addCompatibilityAudio = defineRepair({
   id: 'repair.add-compatibility-audio',
   title: 'Add a compatible audio track',
   summary: 'Adds an AAC track beside the originals, which are kept untouched',
@@ -27,7 +27,17 @@ export const addCompatibilityAudio: RepairModule = {
     'soundtrack on every play.',
   answers: ['audio-no-compatible-track', 'audio-codec-unsupported', 'audio-codec-limited', 'audio-channels-high'],
 
-  run({ audio, settings, state }) {
+  params: {
+    maxChannels: {
+      type: 'number',
+      label: 'Most channels for the added track',
+      help: 'The companion AAC track never has more channels than this.',
+      min: 2,
+      max: 8
+    }
+  },
+
+  run({ audio, settings, state, params }) {
     // An incompatible track is a reason to encode audio even when no companion
     // track is being added.
     if (!state.needsCompatibilityAudio) {
@@ -41,7 +51,7 @@ export const addCompatibilityAudio: RepairModule = {
       audio.find((s) => s.index === state.defaultAudioIndex) ??
       audio.find((s) => audioCodecTier(s.codec, s.profile) !== 'universal') ??
       audio[0]
-    const channels = Math.max(2, Math.min(chosen.channels || 2, MAX_SAFE_CHANNELS))
+    const channels = Math.max(2, Math.min(chosen.channels || 2, params.maxChannels))
     const language = normalizeLanguage(
       state.trackChanges.find((c) => c.streamIndex === chosen.index && c.setLanguage)?.setLanguage ?? chosen.language
     )
@@ -83,4 +93,4 @@ export const addCompatibilityAudio: RepairModule = {
       ]
     }
   }
-}
+})

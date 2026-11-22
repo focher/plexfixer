@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS } from '@shared/defaults.js'
+import { DEFAULT_SETTINGS, settingsWith } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import type { EncoderCapabilities } from '@shared/types.js'
 import {
@@ -55,7 +55,7 @@ describe('buildRepairCommand — remux', () => {
       'mov_text'
     )
 
-    const mkvSettings = { ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
+    const mkvSettings = settingsWith({ ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false })
     const mkvPlan = analyzeFile(mkv(streams), mkvSettings)
     expect(valueAfter(buildRepairCommand({ result: mkvPlan, settings: mkvSettings, outputPath: '/out/x.mkv' }).args, '-c:s')).toBe(
       'copy'
@@ -111,7 +111,7 @@ describe('buildRepairCommand — remux', () => {
   it('leaves tx3g alone when the target is MKV', () => {
     // An MP4 source keeps its container whatever the setting says, so the one
     // way to reach an MKV target is to start from one.
-    const settings = { ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
+    const settings = settingsWith({ ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false })
     const result = analyzeFile(
       mkv([video({ language: 'eng' }), mainAudio({ index: 1 }), subtitle({ index: 2, codec: 'mov_text' })]),
       settings
@@ -123,7 +123,7 @@ describe('buildRepairCommand — remux', () => {
   })
 
   it('retags hev1 as hvc1 without re-encoding', () => {
-    const settings = { ...DEFAULT_SETTINGS, allowHevc: true }
+    const settings = settingsWith({ ...DEFAULT_SETTINGS, allowHevc: true })
     const result = analyzeFile(
       mp4([video({ language: 'eng', codec: 'hevc', profile: 'Main 10', codecTag: 'hev1' }), mainAudio({ index: 1 })]),
       settings
@@ -189,7 +189,7 @@ describe('buildRepairCommand — track flags', () => {
   it('writes ISO 639-2/B when the output stays Matroska', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng', rawLanguage: 'eng' }), mainAudio({ index: 1, language: 'ger', rawLanguage: 'deu' })]),
-      { ...DEFAULT_SETTINGS, remuxMkvToMp4: false }
+      settingsWith({ ...DEFAULT_SETTINGS, remuxMkvToMp4: false })
     )
     expect(result.plan.targetContainer).toBe('mkv')
     const { args } = buildRepairCommand({ result, settings: DEFAULT_SETTINGS, outputPath: '/out/x.mkv' })
@@ -321,9 +321,9 @@ describe('buildRepairCommand — video re-encode', () => {
   it('deinterlaces and downscales in one filter chain', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng', isInterlaced: true, fieldOrder: 'tt', height: 2160, width: 3840 }), mainAudio({ index: 1 })]),
-      { ...DEFAULT_SETTINGS, maxHeight: 1080 }
+      settingsWith({ ...DEFAULT_SETTINGS, maxHeight: 1080 })
     )
-    const { args } = buildRepairCommand({ result, settings: { ...DEFAULT_SETTINGS, maxHeight: 1080 }, outputPath: OUT })
+    const { args } = buildRepairCommand({ result, settings: settingsWith({ ...DEFAULT_SETTINGS, maxHeight: 1080 }), outputPath: OUT })
     const filters = valueAfter(args, '-filter:v:0') ?? ''
     expect(filters).toContain('yadif')
     expect(filters).toContain('scale=-2:1080')
@@ -481,7 +481,7 @@ describe('buildRepairCommand — embedded cover art', () => {
    * `-tag:v hvc1` landed on the JPEG as well as the HEVC track — so the MP4
    * muxer refused to write a header and every other stream failed with it.
    */
-  const settings = { ...DEFAULT_SETTINGS, allowHevc: true }
+  const settings = settingsWith({ ...DEFAULT_SETTINGS, allowHevc: true })
 
   const withArt = (): ReturnType<typeof analyzeFile> =>
     analyzeFile(
@@ -561,7 +561,7 @@ describe('buildRepairCommand — embedded cover art', () => {
   })
 
   it('still says so for an MKV target, where the artwork really is dropped', () => {
-    const mkvSettings = { ...settings, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
+    const mkvSettings = settingsWith({ ...settings, targetContainer: 'mkv' as const, remuxMkvToMp4: false })
     // Two English tracks, neither flagged default, so a repair actually runs.
     const result = analyzeFile(
       mkv([
@@ -589,7 +589,7 @@ describe('buildRepairCommand — muxer selection', () => {
    * Every HEVC .m4v in a library failed to repair. The muxer is named
    * explicitly now, so the extension cannot decide it.
    */
-  const settings = { ...DEFAULT_SETTINGS, allowHevc: true }
+  const settings = settingsWith({ ...DEFAULT_SETTINGS, allowHevc: true })
 
   const hevcM4v = (): ReturnType<typeof analyzeFile> =>
     analyzeFile(
@@ -615,11 +615,11 @@ describe('buildRepairCommand — muxer selection', () => {
   it('names the matroska muxer for an MKV target', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]),
-      { ...DEFAULT_SETTINGS, targetContainer: 'mkv', remuxMkvToMp4: false }
+      settingsWith({ ...DEFAULT_SETTINGS, targetContainer: 'mkv', remuxMkvToMp4: false })
     )
     const { args } = buildRepairCommand({
       result,
-      settings: { ...DEFAULT_SETTINGS, targetContainer: 'mkv', remuxMkvToMp4: false },
+      settings: settingsWith({ ...DEFAULT_SETTINGS, targetContainer: 'mkv', remuxMkvToMp4: false }),
       outputPath: '/out/Episode.mkv'
     })
     expect(valueAfter(args, '-f')).toBe('matroska')

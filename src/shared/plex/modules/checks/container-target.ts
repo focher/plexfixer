@@ -2,10 +2,10 @@
  * Where the repaired file is headed, and what can stop it going there.
  */
 
-import type { CheckModule } from '../framework.js'
+import { defineCheck } from '../framework.js'
 import { canStreamCopyIntoMp4 } from '../../rules.js'
 
-export const containerTarget: CheckModule = {
+export const containerTarget = defineCheck({
   id: 'check.container-target',
   title: 'Target container',
   summary: 'Decides whether the repair can produce MP4, or has to stay MKV',
@@ -25,10 +25,18 @@ export const containerTarget: CheckModule = {
     'store will have the repair attempted into MP4 anyway.',
   raises: ['container-blocked-by-stream'],
 
-  run({ file, video, audio, settings, state }) {
+  params: {
+    remuxMkvToMp4: {
+      type: 'boolean',
+      label: 'Rewrap MKV to MP4 when the streams allow it',
+      help: 'MKV forces a Direct Stream remux on browsers and some TVs.'
+    }
+  },
+
+  run({ file, video, audio, settings, state, params }) {
     let targetContainer = settings.targetContainer
 
-    if (file.container === 'matroska' && !(settings.remuxMkvToMp4 && settings.targetContainer === 'mp4')) {
+    if (file.container === 'matroska' && !(params.remuxMkvToMp4 && settings.targetContainer === 'mp4')) {
       targetContainer = 'mkv'
     }
 
@@ -66,4 +74,4 @@ export const containerTarget: CheckModule = {
 
     return { signals: { targetContainer } }
   }
-}
+})

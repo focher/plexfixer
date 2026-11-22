@@ -18,7 +18,9 @@ export const STAGE_ORDER: JobStage[] = [
   'finalising',
   'verifying',
   'promoting',
+  'scripts',
   'subtitles',
+  'recheck',
   'finished'
 ]
 
@@ -31,6 +33,8 @@ export const STAGE_LABEL: Record<JobStage, string> = {
   verifying: 'Verifying',
   promoting: 'Moving',
   subtitles: 'Subtitles',
+  scripts: 'Scripts',
+  recheck: 'Re-check',
   finished: 'Done'
 }
 
@@ -44,6 +48,8 @@ export const STAGE_DETAIL: Record<JobStage, string> = {
   verifying: 'Re-probing the output to confirm it has the streams it should',
   promoting: 'Backing up the original and moving the repaired file into place',
   subtitles: 'Writing subtitle sidecars',
+  scripts: 'Running repair scripts on the copied file',
+  recheck: 'Running the checks again on the repaired file',
   finished: 'Finished'
 }
 

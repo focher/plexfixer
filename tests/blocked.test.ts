@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { analyzeFile } from '@shared/plex/analyze.js'
-import { DEFAULT_SETTINGS } from '@shared/defaults.js'
+import { DEFAULT_SETTINGS, settingsWith } from '@shared/defaults.js'
 import { blockedReasons, blockedSummary, isBlocked } from '@shared/plex/blocked.js'
 import { fileStatus } from '@shared/plex/facets.js'
 import { summarizeReason } from '@shared/plex/reason.js'
@@ -17,7 +17,7 @@ const dolbyVision = analyzeFile(
 // alongside the ceiling warning it does not.
 const tooTall = analyzeFile(
   mp4([video({ width: 3840, height: 2160 }), mainAudio({ codec: 'aac' })], { faststart: false }),
-  { ...DEFAULT_SETTINGS, maxHeight: 1080 }
+  settingsWith({ ...DEFAULT_SETTINGS, maxHeight: 1080 })
 )
 
 describe('isBlocked', () => {

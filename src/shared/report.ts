@@ -7,6 +7,8 @@
  * Paths are included verbatim because a report without them is unactionable.
  */
 
+import { moduleById } from './plex/modules/registry.js'
+import { paramsFor } from './plex/modules/module-params.js'
 import type {
   AboutInfo,
   AnalysisResult,
@@ -118,6 +120,13 @@ function describeAnalysis(result: AnalysisResult): string[] {
   return out
 }
 
+/** One module parameter, as the run saw it. */
+function param(settings: AppSettings, id: string, key: string): string {
+  const module = moduleById(id)
+  if (!module) return '?'
+  return String(paramsFor(module, id.startsWith('repair.') ? 'repairs' : 'checks', settings)[key])
+}
+
 /**
  * The settings that shaped the verdict.
  *
@@ -128,11 +137,11 @@ function describeAnalysis(result: AnalysisResult): string[] {
 function describeSettings(settings: AppSettings): string[] {
   return [
     `target container  ${settings.targetContainer}`,
-    `remux MKV to MP4  ${settings.remuxMkvToMp4}`,
-    `HEVC compatible   ${settings.allowHevc}`,
-    `max H.264 level   ${settings.maxH264Level}`,
-    `max height        ${settings.maxHeight}`,
-    `ensure AAC       ${settings.ensureAacStereo}`,
+    `remux MKV to MP4  ${param(settings, 'check.container-target', 'remuxMkvToMp4')}`,
+    `HEVC compatible   ${param(settings, 'check.video-codec', 'allowHevc')}`,
+    `max H.264 level   ${param(settings, 'check.video-h264-level', 'maxLevel')}`,
+    `max height        ${param(settings, 'check.video-resolution', 'maxHeight')}`,
+    `ensure AAC       ${param(settings, 'check.audio-compatible-track', 'addCompanion')}`,
     `audio language    ${settings.preferredAudioLanguage} (untagged treated as ${settings.assumeUndefinedIs})`,
     `subtitle language ${settings.preferredSubtitleLanguage}`,
     `extensions        ${settings.mediaExtensions.join(', ')}`
@@ -281,8 +290,8 @@ function describePerformanceSettings(settings: AppSettings): string[] {
       settings.outputPlacement === 'output-dir' ? ` -> ${settings.outputDirectory || '(not set)'}` : ''
     }`,
     `keep backups      ${settings.keepBackups}`,
-    `target container  ${settings.targetContainer} (remux MKV to MP4: ${settings.remuxMkvToMp4})`,
-    `extract subs      ${settings.extractTextSubtitles}`,
+    `target container  ${settings.targetContainer} (remux MKV to MP4: ${param(settings, 'check.container-target', 'remuxMkvToMp4')})`,
+    `extract subs      ${param(settings, 'repair.extract-subtitles', 'extractText')}`,
     `hardware encoder  ${settings.hardwareEncoder}`,
     `transcode codec   ${settings.transcodeVideoCodec} @ quality ${settings.videoQuality}`
   ]

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { AppSettings, EnvironmentInfo, ModeOverrides, RemoteCheck, RepairMode } from '@shared/types.js'
 import { languageOptions } from '@shared/languages.js'
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
@@ -14,6 +14,11 @@ import { isModuleEnabled, withModuleEnabled, type ModuleDescription } from '@sha
 import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
 import { parseScript } from '@shared/plex/modules/script/parse.js'
 import ModuleEditor, { NEW_RULE_TEMPLATE } from './ModuleEditor.js'
+import { FlagEditor, ParamEditor, ParamField, RecheckToggle, ScriptParamEditor } from './ParamEditor.js'
+import type { ScriptInfo } from '@shared/plex/scripts/manifest.js'
+import CatalogSection from './CatalogSection.js'
+import { catalogFor } from '@shared/plex/catalog/resolve.js'
+import { changedCount, isChanged, resetEntry, setField } from '@shared/plex/catalog/edit.js'
 
 /** Where the chosen section is remembered between visits. */
 const SECTION_KEY = 'plexfixer.settingsSection'
@@ -123,6 +128,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         {section === 'modes' ? <ModesSection {...props} /> : null}
         {section === 'compatibility' ? <CompatibilitySection {...props} /> : null}
         {section === 'modules' ? <ModulesSection {...props} /> : null}
+        {section === 'catalog' ? <CatalogSection settings={props.settings} onChange={props.onChange} /> : null}
         {section === 'output' ? <OutputSection {...props} /> : null}
         {section === 'transcoding' ? <TranscodingSection {...props} /> : null}
         {section === 'remote' ? (
@@ -154,7 +160,9 @@ function ModuleRow({
   onToggle,
   onEdit,
   onDelete,
-  problems
+  onReset,
+  problems,
+  children
 }: {
   module: ModuleDescription
   enabled: boolean
@@ -166,6 +174,10 @@ function ModuleRow({
   onDelete?: () => void
   /** What is wrong with a hand-written rule, when something is. */
   problems?: { line: number; message: string }[]
+  /** Puts a built-in module back the way it shipped; only offered when something was changed. */
+  onReset?: () => void
+  /** Its parameters and flags, shown when the row is open. */
+  children?: React.ReactNode
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -200,6 +212,11 @@ function ModuleRow({
             {open ? '▴' : '▾'}
           </span>
         </button>
+        {onReset ? (
+          <button type="button" className="ghost module-action" onClick={onReset} title="Back to how it shipped">
+            Reset
+          </button>
+        ) : null}
         {onEdit ? (
           <button type="button" className="ghost module-action" onClick={onEdit}>
             Edit
@@ -228,7 +245,8 @@ function ModuleRow({
               <ul className="module-problems">
                 {problems?.map((problem, index) => (
                   <li key={`${problem.line}-${index}`}>
-                    Line {problem.line}: {problem.message}
+                    {problem.line > 0 ? `Line ${problem.line}: ` : ''}
+                    {problem.message}
                   </li>
                 ))}
               </ul>
@@ -240,6 +258,7 @@ function ModuleRow({
           <p>{module.howItWorks}</p>
           <h4>If you turn it off</h4>
           <p>{module.ifDisabled}</p>
+          {children}
           {reports.codes.length > 0 ? (
             <p className="module-codes">
               <span className="module-codes-label">{reports.label}</span>
@@ -259,13 +278,76 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
   // `undefined` means no editor is open; an entry with no id is a new rule.
   const [editing, setEditing] = useState<{ id?: string; script: string } | undefined>()
 
+  const catalog = catalogFor(settings)
+
+  // Repair scripts are files on disk, not settings: read when the section
+  // opens, and again on Reload or after approving one.
+  const [scripts, setScripts] = useState<ScriptInfo[]>([])
+  const [scriptsError, setScriptsError] = useState<string>()
+  const loadScripts = useCallback(async (): Promise<void> => {
+    try {
+      setScripts(await window.plexfixer.scripts.list())
+      setScriptsError(undefined)
+    } catch (error) {
+      setScriptsError(error instanceof Error ? error.message : String(error))
+    }
+  }, [])
+  useEffect(() => {
+    void loadScripts()
+  }, [loadScripts])
+  const approve = async (id: string): Promise<void> => {
+    try {
+      await window.plexfixer.scripts.approve(id)
+    } catch (error) {
+      setScriptsError(error instanceof Error ? error.message : String(error))
+    }
+    await loadScripts()
+  }
+  const revoke = async (id: string): Promise<void> => {
+    await window.plexfixer.scripts.revoke(id).catch(() => undefined)
+    await loadScripts()
+  }
+  // Which flags are bound to each script, to show beside it.
+  const boundTo = (repairId: string): string[] =>
+    Object.entries(catalog.flags)
+      .filter(([, flag]) => flag.repair === repairId)
+      .map(([code]) => code)
+
+  // Your own rules are switched off in `disabledModules`; the built-in ones
+  // in the catalog, beside their parameters and flags.
   const toggle = (id: string, enabled: boolean): void => {
     set({ disabledModules: withModuleEnabled(settings.disabledModules, id, enabled) })
   }
+  const toggleBuiltIn = (section: 'checks' | 'repairs', id: string, enabled: boolean): void => {
+    set({ catalog: setField(settings.catalog, section, id, 'enabled', enabled) })
+  }
+  const builtInOn = (section: 'checks' | 'repairs', id: string): boolean =>
+    isModuleEnabled(id, settings) && catalog[section][id]?.enabled !== false
+  const resetOf = (section: 'checks' | 'repairs', id: string, flags: readonly string[]) =>
+    isChanged(settings.catalog, section, id) || flags.some((flag) => isChanged(settings.catalog, 'flags', flag))
+      ? () =>
+          set({
+            catalog: flags.reduce((patch, flag) => resetEntry(patch, 'flags', flag), resetEntry(settings.catalog, section, id))
+          })
+      : undefined
 
   const userModules = readUserModules(settings)
-  const offCount = settings.disabledModules.length
+  const builtInOff = [
+    ...CHECK_MODULES.filter((module) => !builtInOn('checks', module.id)),
+    ...REPAIR_MODULES.filter((module) => !builtInOn('repairs', module.id))
+  ].length
+  const offCount = settings.disabledModules.length + builtInOff
   const total = CHECK_MODULES.length + REPAIR_MODULES.length + userModules.length
+  const turnEverythingOn = (): void => {
+    const all = [
+      ...CHECK_MODULES.map((module) => ['checks', module.id] as const),
+      ...REPAIR_MODULES.map((module) => ['repairs', module.id] as const)
+    ]
+    set({
+      disabledModules: [],
+      catalog: all.reduce((patch, [section, id]) => setField(patch, section, id, 'enabled', true), settings.catalog)
+    })
+  }
 
   const save = (script: string): void => {
     const list = [...settings.userModules]
@@ -305,7 +387,7 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           {offCount === 0 ? 'Everything is on.' : `${offCount} switched off — ${total - offCount} still running.`}
         </span>
         <span className="spacer" />
-        <button className="ghost" disabled={offCount === 0} onClick={() => set({ disabledModules: [] })}>
+        <button className="ghost" disabled={offCount === 0} onClick={turnEverythingOn}>
           Turn everything back on
         </button>
       </div>
@@ -336,7 +418,9 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
               onToggle={(enabled) => toggle(read.id, enabled)}
               onEdit={() => setEditing({ id: read.id, script: read.script })}
               onDelete={() => remove(read.id)}
-            />
+            >
+              <FlagEditor flags={read.module?.raises ?? []} settings={settings} scripts={scripts} onChange={set} />
+            </ModuleRow>
           ))}
         </div>
       ) : (
@@ -352,10 +436,14 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           <ModuleRow
             key={module.id}
             module={module}
-            enabled={isModuleEnabled(module.id, settings)}
+            enabled={builtInOn('checks', module.id)}
             reports={{ label: 'Reports', codes: module.raises }}
-            onToggle={(enabled) => toggle(module.id, enabled)}
-          />
+            onToggle={(enabled) => toggleBuiltIn('checks', module.id, enabled)}
+            onReset={resetOf('checks', module.id, module.raises)}
+          >
+            <ParamEditor module={module} settings={settings} onChange={set} />
+            <FlagEditor flags={module.raises} settings={settings} scripts={scripts} onChange={set} />
+          </ModuleRow>
         ))}
       </div>
 
@@ -365,16 +453,95 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           <ModuleRow
             key={module.id}
             module={module}
-            enabled={isModuleEnabled(module.id, settings)}
+            enabled={builtInOn('repairs', module.id)}
             reports={{ label: 'Fixes', codes: module.answers }}
-            onToggle={(enabled) => toggle(module.id, enabled)}
-          />
+            onToggle={(enabled) => toggleBuiltIn('repairs', module.id, enabled)}
+            onReset={resetOf('repairs', module.id, [])}
+          >
+            <ParamEditor module={module} settings={settings} onChange={set} />
+            <RecheckToggle id={module.id} settings={settings} onChange={set} />
+          </ModuleRow>
         ))}
       </div>
 
+      <h4 className="modules-heading">Repair scripts — your own repairs</h4>
+      <p className="section-hint">
+        A script is a folder in the repairs folder holding a <span className="mono">plugin.json</span> and the script
+        itself, in any language. It is handed a copy of the file and writes the repaired one. It runs only after you
+        approve it, only on this computer, and only for the flags you bind to it — open a check above and pick the
+        script as a flag's repair. Changing any of its files withdraws the approval.
+      </p>
+      <div className="modules-actions">
+        <button className="ghost" onClick={() => void window.plexfixer.scripts.openFolder()}>
+          Open repairs folder
+        </button>
+        <button className="ghost" onClick={() => void loadScripts()}>
+          Reload
+        </button>
+        {scriptsError ? <span className="muted">{scriptsError}</span> : null}
+      </div>
+      {scripts.length > 0 ? (
+        <div className="modules">
+          {scripts.map((script) => {
+            const manifest = script.manifest
+            const bound = boundTo(script.repairId)
+            const trustLabel = {
+              approved: 'Approved',
+              unapproved: 'Not approved',
+              changed: 'Changed since approved',
+              broken: 'Will not run'
+            }[script.trust]
+            return (
+              <ModuleRow
+                key={script.id}
+                module={{
+                  id: script.repairId,
+                  title: `${manifest?.name ?? script.id} — ${trustLabel}`,
+                  summary: manifest?.summary || (script.problems[0] ?? ''),
+                  whatItDoes: manifest?.whatItDoes ?? 'Nothing, until the problems below are fixed.',
+                  howItWorks: manifest?.howItWorks || `Runs ${manifest?.command.join(' ') ?? '(no command)'} in ${script.dir}.`,
+                  ifDisabled: manifest?.ifDisabled ?? 'It is already not running.'
+                }}
+                enabled={catalog.repairs[script.repairId]?.enabled !== false && script.trust !== 'broken'}
+                problems={script.problems.map((message) => ({ line: 0, message }))}
+                reports={{ label: 'Bound to', codes: bound.length > 0 ? bound : ['no flags yet'] }}
+                onToggle={(enabled) => set({ catalog: setField(settings.catalog, 'repairs', script.repairId, 'enabled', enabled) })}
+                onReset={
+                  isChanged(settings.catalog, 'repairs', script.repairId)
+                    ? () => set({ catalog: resetEntry(settings.catalog, 'repairs', script.repairId) })
+                    : undefined
+                }
+              >
+                <div className="modules-actions">
+                  {script.trust === 'unapproved' || script.trust === 'changed' ? (
+                    <button onClick={() => void approve(script.id)}>Review and approve…</button>
+                  ) : null}
+                  {script.trust === 'approved' ? (
+                    <button className="ghost" onClick={() => void revoke(script.id)}>
+                      Withdraw approval
+                    </button>
+                  ) : null}
+                  {manifest && manifest.suggestedFlags.some((flag) => !bound.includes(flag)) ? (
+                    <span className="muted">Written for: {manifest.suggestedFlags.join(', ')}</span>
+                  ) : null}
+                </div>
+                <ScriptParamEditor script={script} settings={settings} onChange={set} />
+                <RecheckToggle id={script.repairId} settings={settings} onChange={set} />
+              </ModuleRow>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="muted modules-empty">No repair scripts yet. Put one in the repairs folder and press Reload.</p>
+      )}
+
       <p className="muted modules-footnote">
-        The checks and repairs above ship with PlexFixer. They can be switched off, but not edited or deleted — they
-        are part of the app rather than part of your settings, so there would be nowhere to keep a change to one.
+        The checks and repairs above ship with PlexFixer. Their logic is part of the app, but everything about how
+        they are used is yours to change: open one to tune its settings, rename or discard the flags it raises, or
+        make a flag report-only. Reset puts it back the way it shipped. {changedCount(settings.catalog, 'checks') +
+          changedCount(settings.catalog, 'repairs') +
+          changedCount(settings.catalog, 'flags')}{' '}
+        changed from the defaults.
       </p>
 
       {editing ? (
@@ -556,23 +723,8 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
         </select>
       </Field>
 
-      <Field label="MKV files" inline hint="MKV forces a Direct Stream remux on browsers and some TVs.">
-        <input
-          type="checkbox"
-          checked={settings.remuxMkvToMp4}
-          onChange={(event) => set({ remuxMkvToMp4: event.target.checked })}
-        />
-        <span className="muted">Rewrap to MP4 when the streams allow it</span>
-      </Field>
-
-      <Field label="HEVC / H.265" inline hint="Turn this off if any client is a browser or a streaming box older than about 2017.">
-        <input
-          type="checkbox"
-          checked={settings.allowHevc}
-          onChange={(event) => set({ allowHevc: event.target.checked })}
-        />
-        <span className="muted">Treat HEVC as compatible</span>
-      </Field>
+      <ParamField settings={settings} moduleId="check.container-target" param="remuxMkvToMp4" onChange={set} Field={Field} />
+      <ParamField settings={settings} moduleId="check.video-codec" param="allowHevc" onChange={set} Field={Field} />
 
       <Field
         label="Dolby Vision profile 5"
@@ -593,52 +745,20 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
         ) : null}
       </Field>
 
-      <Field label="Maximum H.264 level" hint="Older Apple TVs, Rokus and smart TVs commonly cap at 4.1.">
-        <select value={settings.maxH264Level} onChange={(event) => set({ maxH264Level: Number(event.target.value) })}>
-          <option value={40}>Level 4.0</option>
-          <option value={41}>Level 4.1</option>
-          <option value={42}>Level 4.2</option>
-          <option value={50}>Level 5.0</option>
-          <option value={51}>Level 5.1</option>
-          <option value={62}>Level 6.2 (no practical limit)</option>
-        </select>
-      </Field>
-
-      <Field label="Maximum height" hint="Flag anything taller as likely to be downscaled server-side.">
-        <select value={settings.maxHeight} onChange={(event) => set({ maxHeight: Number(event.target.value) })}>
-          <option value={720}>720p</option>
-          <option value={1080}>1080p</option>
-          <option value={2160}>2160p (4K)</option>
-          <option value={4320}>4320p (8K)</option>
-        </select>
-      </Field>
-
-      <Field label="Audio" inline hint="Originals are kept; the new track is added alongside them.">
-        <input
-          type="checkbox"
-          checked={settings.ensureAacStereo}
-          onChange={(event) => set({ ensureAacStereo: event.target.checked })}
-        />
-        <span className="muted">Add an AAC track when nothing compatible exists</span>
-      </Field>
-
-      <Field label="Subtitles" inline hint="Sidecar SRT never triggers a burn-in transcode.">
-        <input
-          type="checkbox"
-          checked={settings.extractTextSubtitles}
-          onChange={(event) => set({ extractTextSubtitles: event.target.checked })}
-        />
-        <span className="muted">Extract text subtitles to .srt sidecars</span>
-      </Field>
-
-      <Field label="Image subtitles" inline hint="PGS/VobSub cannot be stored in MP4 at all.">
-        <input
-          type="checkbox"
-          checked={settings.dropImageSubtitlesOnMp4}
-          onChange={(event) => set({ dropImageSubtitlesOnMp4: event.target.checked })}
-        />
-        <span className="muted">Drop PGS/VobSub tracks when writing MP4</span>
-      </Field>
+      <ParamField settings={settings} moduleId="check.video-h264-level" param="maxLevel" onChange={set} Field={Field} />
+      <ParamField settings={settings} moduleId="check.video-resolution" param="maxHeight" onChange={set} Field={Field} />
+      <ParamField
+        settings={settings}
+        moduleId="check.audio-compatible-track"
+        param="addCompanion"
+        onChange={set}
+        Field={Field}
+      />
+      <ParamField settings={settings} moduleId="repair.extract-subtitles" param="extractText" onChange={set} Field={Field} />
+      <ParamField settings={settings} moduleId="check.subtitle-image" param="dropOnMp4" onChange={set} Field={Field} />
+      <p className="muted section-hint">
+        These are settings of individual checks and repairs; every other one is under Checks &amp; repairs.
+      </p>
     </section>
   )
 }

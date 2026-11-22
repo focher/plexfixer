@@ -2,10 +2,10 @@
  * The decisive audio question: is there one track every client can play?
  */
 
-import type { CheckModule } from '../framework.js'
-import { MAX_SAFE_CHANNELS, audioCodecTier } from '../../rules.js'
+import { defineCheck } from '../framework.js'
+import { audioCodecTier } from '../../rules.js'
 
-export const audioCompatibleTrack: CheckModule = {
+export const audioCompatibleTrack = defineCheck({
   id: 'check.audio-compatible-track',
   title: 'A track every client can play',
   summary: 'Whether any one audio track is playable everywhere',
@@ -22,17 +22,32 @@ export const audioCompatibleTrack: CheckModule = {
     'proposed for it.',
   raises: ['audio-no-compatible-track'],
 
-  run({ audio, settings }) {
+  params: {
+    addCompanion: {
+      type: 'boolean',
+      label: 'Add an AAC track when nothing compatible exists',
+      help: 'Originals are kept; the new track is added alongside them.'
+    },
+    maxChannels: {
+      type: 'number',
+      label: 'Most channels a client plays',
+      help: 'Above this, many clients transcode the audio rather than play it.',
+      min: 1,
+      max: 16
+    }
+  },
+
+  run({ audio, params }) {
     if (audio.length === 0) return {}
 
     const hasUniversal = audio.some((s) => {
       const tier = audioCodecTier(s.codec, s.profile)
-      return tier === 'universal' && s.channels <= MAX_SAFE_CHANNELS
+      return tier === 'universal' && s.channels <= params.maxChannels
     })
     if (hasUniversal) return {}
 
     return {
-      signals: { needsCompatibilityAudio: settings.ensureAacStereo },
+      signals: { needsCompatibilityAudio: params.addCompanion },
       findings: [
         {
           code: 'audio-no-compatible-track',
@@ -47,4 +62,4 @@ export const audioCompatibleTrack: CheckModule = {
       ]
     }
   }
-}
+})

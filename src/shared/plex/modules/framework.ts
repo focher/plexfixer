@@ -40,6 +40,7 @@ import type {
   VideoTranscodeSpec
 } from '../../types.js'
 import type { PrimaryLanguage } from '../tracks.js'
+import type { ParamSchema, ParamValues } from './params.js'
 
 /* ------------------------------------------------------------------ *
  * What every module says about itself
@@ -79,6 +80,12 @@ export interface ModuleDescription {
    * anyway would be lying about what it could keep.
    */
   source?: 'custom'
+  /**
+   * What the module can be tuned by. The values themselves are in
+   * `default.json` and the user's catalog; the module only says what kind of
+   * value each one is and what it is called.
+   */
+  params?: ParamSchema
 }
 
 /** True for a rule the user wrote, which is the only kind that can be edited. */
@@ -208,6 +215,8 @@ export interface MediaContext {
 export interface CheckContext extends MediaContext {
   /** What the checks before this one concluded. */
   readonly state: Readonly<ScanState>
+  /** This module's parameters, resolved from the catalog. */
+  readonly params: ParamValues
 }
 
 /** What a check hands back. */
@@ -235,6 +244,8 @@ export interface CheckModule extends ModuleDescription {
 /** What a repair is handed: the file, what the checks concluded, and what they said. */
 export interface RepairContext extends MediaContext {
   readonly state: Readonly<ScanState>
+  /** This module's parameters, resolved from the catalog. */
+  readonly params: ParamValues
   readonly findings: readonly Finding[]
   /**
    * How much work the run is turning out to be, as it stands.
@@ -294,6 +305,11 @@ export interface RepairModule extends ModuleDescription {
   /** The finding codes this repair answers. */
   answers: readonly FindingCode[]
   /**
+   * Also answers whatever the user's own rules report. Their codes are the
+   * rules' ids, which cannot be listed here: they are made up in Settings.
+   */
+  answersRules?: boolean
+  /**
    * When it runs. `fix` — the default — is a repair that changes what the plan
    * does. `afterPlan` is for the handful that only describe a consequence of
    * the plan, and so cannot run until it is settled.
@@ -303,6 +319,27 @@ export interface RepairModule extends ModuleDescription {
 }
 
 export type AnyModule = CheckModule | RepairModule
+
+/**
+ * A check whose `run` sees its own parameters by name and type.
+ *
+ * Only a typing aid: the engine hands every module a `params` object resolved
+ * against the schema, so the cast is what the schema already guarantees.
+ */
+export const defineCheck = <S extends ParamSchema>(
+  module: Omit<CheckModule, 'run' | 'params'> & {
+    params: S
+    run(context: CheckContext & { readonly params: ParamValues<S> }): CheckResult
+  }
+): CheckModule => module as unknown as CheckModule
+
+/** The same for a repair. */
+export const defineRepair = <S extends ParamSchema>(
+  module: Omit<RepairModule, 'run' | 'params'> & {
+    params: S
+    run(context: RepairContext & { readonly params: ParamValues<S> }): RepairResult
+  }
+): RepairModule => module as unknown as RepairModule
 
 /* ------------------------------------------------------------------ *
  * Running them

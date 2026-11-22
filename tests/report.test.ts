@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS } from '@shared/defaults.js'
+import { DEFAULT_SETTINGS, settingsWith } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { buildFileReport, buildJobReport } from '@shared/report.js'
 import type { Job } from '@shared/types.js'
@@ -110,14 +110,14 @@ describe('buildFileReport', () => {
   it('explains a file that passed, which is the hard case', () => {
     // A clean file tells you nothing on its own: whether it should have been
     // flagged depends on the settings, so the report has to carry them.
-    const clean = analyzeFile(mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]), {
+    const clean = analyzeFile(mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]), settingsWith({
       ...DEFAULT_SETTINGS,
       allowHevc: true,
       maxH264Level: 41
-    })
+    }))
     expect(clean.verdict).toBe('ok')
 
-    const text = buildFileReport({ result: clean, settings: { ...DEFAULT_SETTINGS, allowHevc: true } })
+    const text = buildFileReport({ result: clean, settings: settingsWith({ ...DEFAULT_SETTINGS, allowHevc: true }) })
 
     expect(text).toContain('verdict    ok')
     // The tracks it looked at, so "nothing found" can be checked rather than trusted.

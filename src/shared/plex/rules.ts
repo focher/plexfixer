@@ -176,9 +176,6 @@ export const AUDIO_CODEC_SUPPORT: Record<string, SupportTier> = {
  */
 export const DTS_LOSSLESS_PROFILES = new Set(['dts-hd ma', 'dts-hd master audio', 'dts-x', 'dts:x', 'dts-hd ma + dts:x'])
 
-/** Channel counts beyond this get downmixed or transcoded on many clients. */
-export const MAX_SAFE_CHANNELS = 6
-
 /* ------------------------------------------------------------------ *
  * Subtitles
  * ------------------------------------------------------------------ */

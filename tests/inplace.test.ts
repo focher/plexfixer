@@ -5,13 +5,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS } from '@shared/defaults.js'
+import { settingsWith } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { inPlaceVerdict } from '@shared/plex/inplace.js'
 import { audio, coverArt, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
-const analyze = (file: Parameters<typeof analyzeFile>[0], patch = {}) =>
-  analyzeFile(file, { ...DEFAULT_SETTINGS, ...patch })
+const analyze = (file: Parameters<typeof analyzeFile>[0], patch: Parameters<typeof settingsWith>[0] = {}) =>
+  analyzeFile(file, settingsWith(patch))
 
 /** Two English audio tracks, neither default: a pure flag change. */
 const defaultAudioOnly = () =>
@@ -49,7 +49,7 @@ describe('inPlaceVerdict — what it allows', () => {
 })
 
 describe('inPlaceVerdict — what it refuses', () => {
-  const refusalFor = (file: Parameters<typeof analyzeFile>[0], patch = {}) =>
+  const refusalFor = (file: Parameters<typeof analyzeFile>[0], patch: Parameters<typeof settingsWith>[0] = {}) =>
     inPlaceVerdict(analyze(file, patch)).refusal
 
   it('refuses a container change', () => {

@@ -2,11 +2,11 @@
  * The H.264 level: a number a decoder is allowed to refuse outright.
  */
 
-import type { CheckModule } from '../framework.js'
+import { defineCheck } from '../framework.js'
 import { formatLevel } from '../../rules.js'
 import { h264LevelFit } from '../../h264-level.js'
 
-export const videoH264Level: CheckModule = {
+export const videoH264Level = defineCheck({
   id: 'check.video-h264-level',
   title: 'H.264 level',
   summary: 'Streams labelled above the level older clients will accept',
@@ -24,17 +24,33 @@ export const videoH264Level: CheckModule = {
     'label is wrong and the fix would have been free.',
   raises: ['video-level-too-high'],
 
-  run({ video, settings }) {
+  params: {
+    maxLevel: {
+      type: 'number',
+      label: 'Maximum H.264 level',
+      help: 'Older Apple TVs, Rokus and smart TVs commonly cap at 4.1.',
+      options: [
+        { value: 40, label: 'Level 4.0' },
+        { value: 41, label: 'Level 4.1' },
+        { value: 42, label: 'Level 4.2' },
+        { value: 50, label: 'Level 5.0' },
+        { value: 51, label: 'Level 5.1' },
+        { value: 62, label: 'Level 6.2 (no practical limit)' }
+      ]
+    }
+  },
+
+  run({ video, params }) {
     const stream = video[0]
     if (!stream) return {}
     const codec = stream.codec.toLowerCase()
-    if (codec !== 'h264' || stream.level == null || stream.level <= settings.maxH264Level) return {}
+    if (codec !== 'h264' || stream.level == null || stream.level <= params.maxLevel) return {}
 
     // The level is a label. When the stream's resolution, frame rate, buffer
     // and bitrate all fit the lower level, correcting the label is lossless.
-    const fit = h264LevelFit(stream, stream.level, settings.maxH264Level)
+    const fit = h264LevelFit(stream, stream.level, params.maxLevel)
     const relabel = fit.fits
-    const maxLabel = formatLevel(settings.maxH264Level)
+    const maxLabel = formatLevel(params.maxLevel)
     const streamLabel = formatLevel(stream.level)
 
     // The MP4 header carries its own copy of the level. When it disagrees with
@@ -47,7 +63,7 @@ export const videoH264Level: CheckModule = {
         : ''
 
     return {
-      signals: relabel ? { relabelLevel: settings.maxH264Level } : { needsTranscode: true },
+      signals: relabel ? { relabelLevel: params.maxLevel } : { needsTranscode: true },
       findings: [
         {
           code: 'video-level-too-high',
@@ -71,4 +87,4 @@ export const videoH264Level: CheckModule = {
       ]
     }
   }
-}
+})

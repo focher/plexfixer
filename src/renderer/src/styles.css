@@ -1176,6 +1176,107 @@ button.expander:hover:not(:disabled) {
   max-width: 70ch;
 }
 
+/* ---------- module parameters and flags ---------- */
+
+.param-editor,
+.flag-editor {
+  margin-top: 6px;
+}
+
+.param-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.param-label {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+}
+
+.param-label .hint,
+.flag-row .hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.param-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.param-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.recheck {
+  margin-top: 10px;
+}
+
+.flag-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin: 6px 0;
+}
+
+.flag-row.off {
+  opacity: 0.6;
+}
+
+.flag-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flag-row-head .spacer {
+  flex: 1 1 auto;
+}
+
+.flag-row-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 12px;
+  margin-top: 6px;
+}
+
+.flag-row-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.flag-row-body label.param-inline {
+  flex-direction: row;
+  align-self: end;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.catalog-json {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  resize: vertical;
+}
+
 /* ---------- the rule editor ---------- */
 
 /* Wider than the other dialogs: the script and the list of what a rule can
@@ -1734,6 +1835,13 @@ button.expander:hover:not(:disabled) {
 
 .filterbar .spacer {
   flex: 1 1 auto;
+}
+
+/* A chip and, before the first of a category, the divider that starts it. */
+.filterbar .chip-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .filterbar .chip {

@@ -1,6 +1,7 @@
+import { DEFAULT_CATALOG } from '@shared/plex/catalog/resolve.js'
 import { describe, expect, it } from 'vitest'
 import type { VideoStream } from '@shared/types.js'
-import { DEFAULT_SETTINGS } from '@shared/defaults.js'
+import { DEFAULT_SETTINGS, settingsWith } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import type { AppSettings } from '@shared/types.js'
 import { audio, flags, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
@@ -30,7 +31,7 @@ describe('analyzeFile — container', () => {
   })
 
   it('leaves MKV alone when the user keeps that container', () => {
-    const settings = { ...base, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
+    const settings = settingsWith({ ...base, targetContainer: 'mkv' as const, remuxMkvToMp4: false })
     const result = analyzeFile(mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })]), settings)
     expect(codes(result)).not.toContain('container-not-mp4')
     expect(result.plan.targetContainer).toBe('mkv')
@@ -71,7 +72,7 @@ describe('analyzeFile — container', () => {
   })
 
   it('keeps MKV when the video codec cannot be stream-copied into MP4', () => {
-    const settings = { ...base, allowHevc: true }
+    const settings = settingsWith({ ...base, allowHevc: true })
     const result = analyzeFile(
       mkv([video({ language: 'eng', codec: 'vp8' }), audio({ index: 1, language: 'eng' })]),
       settings
@@ -103,22 +104,22 @@ describe('analyzeFile — video', () => {
   it('accepts a high level when the ceiling is raised', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng', level: 51 }), audio({ index: 1 })]),
-      { ...base, maxH264Level: 62 }
+      settingsWith({ ...base, maxH264Level: 62 })
     )
     expect(codes(result)).not.toContain('video-level-too-high')
   })
 
   it('treats HEVC as compatible by default and limited when the setting is off', () => {
     const streams = [video({ language: 'eng', codec: 'hevc', profile: 'Main 10' }), audio({ index: 1 })]
-    expect(DEFAULT_SETTINGS.allowHevc).toBe(true)
+    expect(DEFAULT_CATALOG.checks['check.video-codec']?.params.allowHevc).toBe(true)
     expect(codes(analyzeFile(mkv(streams), base))).not.toContain('video-codec-limited')
-    expect(codes(analyzeFile(mkv(streams), { ...base, allowHevc: false }))).toContain('video-codec-limited')
+    expect(codes(analyzeFile(mkv(streams), settingsWith({ ...base, allowHevc: false })))).toContain('video-codec-limited')
   })
 
   it('flags HEVC in MP4 carrying the hev1 tag as a metadata-only blocker', () => {
     const result = analyzeFile(
       mp4([video({ language: 'eng', codec: 'hevc', profile: 'Main 10', codecTag: 'hev1' }), audio({ index: 1 })]),
-      { ...base, allowHevc: true }
+      settingsWith({ ...base, allowHevc: true })
     )
     expect(codes(result)).toContain('video-hevc-wrong-tag')
     expect(result.plan.strategy).toBe('remux')
@@ -138,7 +139,7 @@ describe('analyzeFile — video', () => {
   it('flags Dolby Vision profile 5 as unfixable without a re-grade', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng', codec: 'hevc', profile: 'Main 10', dolbyVisionProfile: 5 }), audio({ index: 1 })]),
-      { ...base, allowHevc: true }
+      settingsWith({ ...base, allowHevc: true })
     )
     expect(codes(result)).toContain('video-dolby-vision-profile')
     expect(result.plan.unresolved.map((f) => f.code)).toContain('video-dolby-vision-profile')
@@ -147,7 +148,7 @@ describe('analyzeFile — video', () => {
   it('accepts Dolby Vision profile 8, which falls back to HDR10 cleanly', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng', codec: 'hevc', profile: 'Main 10', dolbyVisionProfile: 8 }), audio({ index: 1 })]),
-      { ...base, allowHevc: true }
+      settingsWith({ ...base, allowHevc: true })
     )
     expect(codes(result)).not.toContain('video-dolby-vision-profile')
   })
@@ -194,7 +195,7 @@ describe('analyzeFile — audio', () => {
   it('does not add a companion track when the setting is off', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng' }), audio({ index: 1, codec: 'truehd', channels: 8 })]),
-      { ...base, ensureAacStereo: false }
+      settingsWith({ ...base, ensureAacStereo: false })
     )
     expect(result.plan.addCompatibilityAudio).toBeUndefined()
   })
@@ -282,7 +283,7 @@ describe('analyzeFile — HEVC codec tags', () => {
         video({ index: 0, codec: 'hevc', codecTag, profile: 'main 10', language: 'eng' }),
         mainAudio({ index: 1, language: 'eng' })
       ]),
-      { ...base, allowHevc: true }
+      settingsWith({ ...base, allowHevc: true })
     )
 
   it('corrects hev1 to hvc1', () => {
@@ -362,7 +363,7 @@ describe('unwanted default subtitles in MP4', () => {
   })
 
   it('still clears it for MKV, which can hold no default at all', () => {
-    const settings = { ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
+    const settings = settingsWith({ ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false })
     const result = analyzeFile(mkv(english()), settings)
     expect(subtitleDefaultChanges(result).map((c) => c.streamIndex)).toContain(3)
   })

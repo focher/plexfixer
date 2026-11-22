@@ -17,6 +17,8 @@ export const PHASE_LABEL: Record<JobPhase, string> = {
   verify: 'Re-probed the output',
   promote: 'Moved into place',
   subtitles: 'Wrote subtitle sidecars',
+  script: 'Ran a repair script',
+  recheck: 'Re-checked the repaired file',
   total: 'Total'
 }
 
