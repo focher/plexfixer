@@ -13,7 +13,8 @@
  * here, next to its tests.
  */
 
-import type { ParamValue } from '../catalog/types.js'
+import type { FindingCode, Severity } from '../../types.js'
+import { FLAG_CATEGORY_ORDER, type FlagCategory, type ParamValue } from '../catalog/types.js'
 import { validateParam, type ParamSchema, type ParamSpec } from '../modules/params.js'
 
 export const SCRIPT_PROTOCOL = 1
@@ -25,6 +26,30 @@ export const isScriptRepairId = (repair: string | null | undefined): repair is s
   typeof repair === 'string' && /^script\.[a-z0-9][a-z0-9-]{0,63}$/.test(repair)
 
 export const scriptIdOf = (repair: string): string => repair.slice('script.'.length)
+
+/** Which folder a script lives in, and so what it is for. */
+export type ScriptKind = 'checks' | 'repairs'
+
+/** A check script's module id in the catalog. */
+export const checkScriptId = (id: string): string => `ext.${id}`
+
+/** One of a check script's flags: its own code, scoped by the script so two scripts cannot collide. */
+export const checkScriptFlag = (id: string, code: string): FindingCode => `ext.${id}.${code}`
+
+export const isCheckScriptId = (id: string): boolean => /^ext\.[a-z0-9][a-z0-9-]{0,63}$/.test(id)
+
+export const isCheckScriptFlag = (code: string): boolean => /^ext\.[a-z0-9][a-z0-9-]{0,63}\.[a-z0-9][a-z0-9-]{0,63}$/.test(code)
+
+/** A flag a check script can raise, as its manifest describes it. */
+export interface ScriptFlag {
+  /** The script's own name for it; the flag id is `ext.<script>.<code>`. */
+  code: string
+  label: string
+  hint: string
+  category: FlagCategory
+  /** What the finding is unless the script says otherwise for a particular file. */
+  severity: Severity
+}
 
 export interface ScriptManifest {
   protocol: 1
@@ -45,10 +70,13 @@ export interface ScriptManifest {
   suggestedFlags: readonly string[]
   /** How long one run may take before it is stopped; none when absent. */
   timeoutSeconds?: number
+  /** For a check script: the flags it can raise. Empty for a repair script. */
+  raises: readonly ScriptFlag[]
 }
 
 /** One folder under `repairs/`, as the native side found it. */
 export interface ScriptListing {
+  kind?: ScriptKind
   id: string
   dir: string
   manifest?: string
@@ -62,7 +90,9 @@ export type ScriptTrust = 'approved' | 'unapproved' | 'changed' | 'broken'
 
 /** A script as the app understands it. */
 export interface ScriptInfo {
+  kind: ScriptKind
   id: string
+  /** `script.<id>` for a repair, `ext.<id>` for a check: its id in the catalog. */
   repairId: string
   dir: string
   manifest?: ScriptManifest
@@ -111,8 +141,44 @@ function readParam(
     : { problems: [`params.${key}: needs a "default" that fits its type`] }
 }
 
+const SEVERITIES: readonly Severity[] = ['info', 'warning', 'blocker']
+const CODE = /^[a-z0-9][a-z0-9-]{0,63}$/
+
+/** The flags a check script declares. */
+function readRaises(raw: unknown): { flags: ScriptFlag[]; problems: string[] } {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { flags: [], problems: ['"raises" must list the flags the check can report, at least one'] }
+  }
+  const read = raw.map((entry, index) => {
+    if (!isRecord(entry)) return { problems: [`raises[${index}]: must be an object`] }
+    const code = entry.code
+    if (typeof code !== 'string' || !CODE.test(code)) {
+      return { problems: [`raises[${index}]: "code" must be lower-case letters, digits and dashes`] }
+    }
+    const category = FLAG_CATEGORY_ORDER.includes(entry.category as FlagCategory) ? (entry.category as FlagCategory) : 'custom'
+    const severity = SEVERITIES.includes(entry.severity as Severity) ? (entry.severity as Severity) : 'warning'
+    return {
+      flag: { code, label: text(entry, 'label', code), hint: text(entry, 'hint'), category, severity },
+      problems: []
+    }
+  })
+  const flags = read.flatMap((entry) => ('flag' in entry && entry.flag ? [entry.flag] : []))
+  const duplicate = flags.find((flag, index) => flags.findIndex((other) => other.code === flag.code) !== index)
+  return {
+    flags,
+    problems: [
+      ...read.flatMap((entry) => entry.problems),
+      ...(duplicate ? [`raises: "${duplicate.code}" is listed twice`] : [])
+    ]
+  }
+}
+
 /** Reads a `plugin.json`, checking it belongs in the folder it was found in. */
-export function parseManifest(source: string, folder: string): { manifest?: ScriptManifest; problems: string[] } {
+export function parseManifest(
+  source: string,
+  folder: string,
+  kind: ScriptKind = 'repairs'
+): { manifest?: ScriptManifest; problems: string[] } {
   const parsed = ((): { value?: unknown; error?: string } => {
     try {
       return { value: JSON.parse(source) }
@@ -129,6 +195,7 @@ export function parseManifest(source: string, folder: string): { manifest?: Scri
     ...readParam(key, value)
   }))
   const command = Array.isArray(raw.command) ? raw.command : []
+  const raises = kind === 'checks' ? readRaises(raw.raises) : { flags: [], problems: [] }
 
   const problems = [
     ...(raw.protocol === SCRIPT_PROTOCOL ? [] : [`"protocol" must be ${SCRIPT_PROTOCOL}`]),
@@ -141,7 +208,8 @@ export function parseManifest(source: string, folder: string): { manifest?: Scri
     ...params.flatMap((param) => param.problems),
     ...(raw.timeoutSeconds !== undefined && !(typeof raw.timeoutSeconds === 'number' && raw.timeoutSeconds > 0)
       ? ['"timeoutSeconds" must be a positive number']
-      : [])
+      : []),
+    ...raises.problems
   ]
   if (problems.length > 0) return { problems }
 
@@ -162,15 +230,16 @@ export function parseManifest(source: string, folder: string): { manifest?: Scri
       suggestedFlags: Array.isArray(raw.suggestedFlags)
         ? raw.suggestedFlags.filter((flag): flag is string => typeof flag === 'string')
         : [],
-      ...(typeof raw.timeoutSeconds === 'number' ? { timeoutSeconds: raw.timeoutSeconds } : {})
+      ...(typeof raw.timeoutSeconds === 'number' ? { timeoutSeconds: raw.timeoutSeconds } : {}),
+      raises: raises.flags
     },
     problems: []
   }
 }
 
 /** What a listing amounts to: its manifest, its problems, and whether it may run. */
-export function scriptInfo(listing: ScriptListing): ScriptInfo {
-  const read = listing.manifest !== undefined ? parseManifest(listing.manifest, listing.id) : { problems: [] }
+export function scriptInfo(listing: ScriptListing, kind: ScriptKind = listing.kind ?? 'repairs'): ScriptInfo {
+  const read = listing.manifest !== undefined ? parseManifest(listing.manifest, listing.id, kind) : { problems: [] }
   const problems = [...(listing.problem ? [listing.problem] : []), ...read.problems]
   const trust: ScriptTrust =
     problems.length > 0 || !read.manifest
@@ -181,8 +250,9 @@ export function scriptInfo(listing: ScriptListing): ScriptInfo {
           ? 'approved'
           : 'changed'
   return {
+    kind,
     id: listing.id,
-    repairId: scriptRepairId(listing.id),
+    repairId: kind === 'checks' ? checkScriptId(listing.id) : scriptRepairId(listing.id),
     dir: listing.dir,
     ...(read.manifest ? { manifest: read.manifest } : {}),
     problems: problems.length > 0 || read.manifest ? problems : ['there is no plugin.json in the folder'],

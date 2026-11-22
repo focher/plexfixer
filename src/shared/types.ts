@@ -127,6 +127,23 @@ export interface MediaFile {
   /** Sidecar subtitle files found next to the media file. */
   sidecarSubtitles: string[]
   tags: Record<string, string>
+  /**
+   * What each check script said about the file when it was scanned, by script.
+   *
+   * Kept with the file, like the probe: a script runs when the file is read,
+   * not whenever settings change, so the analysis that is redone on every
+   * settings change reads its answer from here instead of running it again.
+   */
+  checkReports?: Record<string, CheckReport>
+}
+
+/** One check script's answer about one file. */
+export interface CheckReport {
+  /** The script's files and settings when it ran; a different one means it is due to run again. */
+  fingerprint: string
+  findings: Finding[]
+  /** Why the script did not give an answer, when it did not. */
+  error?: string
 }
 
 /* ------------------------------------------------------------------ *
@@ -202,6 +219,8 @@ export type FindingCode =
    * own choice of repair, including a repair script.
    */
   | `user.${string}`
+  /** What a check script reported: `ext.<script>.<code>`, from the codes its manifest lists. */
+  | `ext.${string}`
 
 export interface Finding {
   code: FindingCode

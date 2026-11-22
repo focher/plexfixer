@@ -77,3 +77,27 @@ export const changedCount = (patch: CatalogPatch, section: EntrySection | 'statu
   section === 'statuses'
     ? Number(patch.statuses !== undefined || patch.statusRules !== undefined)
     : Object.keys(patch[section] ?? {}).length
+
+/**
+ * Switch an approved check script on, and give its flags their names.
+ *
+ * A check script's flags are not in `default.json` — the user added them — so
+ * their chip text comes from the script's manifest, written here once, when
+ * the user approves it. From then on they are the user's to rename, discard
+ * or bind to a repair like any other flag. A flag the user has already set up
+ * keeps what they chose.
+ */
+export function registerCheckScript(
+  patch: CatalogPatch,
+  checkId: string,
+  flags: readonly { id: string; label: string; hint: string; category: FlagDef['category'] }[]
+): CatalogPatch {
+  const named = flags.reduce(
+    (next, flag) =>
+      next.flags?.[flag.id]
+        ? next
+        : setField(setField(setField(next, 'flags', flag.id, 'label', flag.label), 'flags', flag.id, 'hint', flag.hint), 'flags', flag.id, 'category', flag.category),
+    patch
+  )
+  return setField(named, 'checks', checkId, 'enabled', true)
+}

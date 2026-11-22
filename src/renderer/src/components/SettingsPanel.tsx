@@ -15,7 +15,8 @@ import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/mo
 import { readCredential } from '@shared/tmdb.js'
 import { parseScript } from '@shared/plex/modules/script/parse.js'
 import ModuleEditor, { NEW_RULE_TEMPLATE } from './ModuleEditor.js'
-import { FlagEditor, ParamEditor, ParamField, RecheckToggle, ScriptParamEditor } from './ParamEditor.js'
+import { FlagEditor, ParamEditor, ParamField, RecheckToggle } from './ParamEditor.js'
+import ScriptsSection from './ScriptsSection.js'
 import type { ScriptInfo } from '@shared/plex/scripts/manifest.js'
 import CatalogSection from './CatalogSection.js'
 import { catalogFor } from '@shared/plex/catalog/resolve.js'
@@ -282,13 +283,17 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
 
   const catalog = catalogFor(settings)
 
-  // Repair scripts are files on disk, not settings: read when the section
-  // opens, and again on Reload or after approving one.
-  const [scripts, setScripts] = useState<ScriptInfo[]>([])
+  // Scripts are files on disk, not settings: read when the section opens,
+  // and again on Reload or after approving one.
+  const [scripts, setScripts] = useState<{ checks: ScriptInfo[]; repairs: ScriptInfo[] }>({ checks: [], repairs: [] })
   const [scriptsError, setScriptsError] = useState<string>()
   const loadScripts = useCallback(async (): Promise<void> => {
     try {
-      setScripts(await window.plexfixer.scripts.list())
+      const [checks, repairs] = await Promise.all([
+        window.plexfixer.scripts.list('checks'),
+        window.plexfixer.scripts.list('repairs')
+      ])
+      setScripts({ checks, repairs })
       setScriptsError(undefined)
     } catch (error) {
       setScriptsError(error instanceof Error ? error.message : String(error))
@@ -297,23 +302,6 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
   useEffect(() => {
     void loadScripts()
   }, [loadScripts])
-  const approve = async (id: string): Promise<void> => {
-    try {
-      await window.plexfixer.scripts.approve(id)
-    } catch (error) {
-      setScriptsError(error instanceof Error ? error.message : String(error))
-    }
-    await loadScripts()
-  }
-  const revoke = async (id: string): Promise<void> => {
-    await window.plexfixer.scripts.revoke(id).catch(() => undefined)
-    await loadScripts()
-  }
-  // Which flags are bound to each script, to show beside it.
-  const boundTo = (repairId: string): string[] =>
-    Object.entries(catalog.flags)
-      .filter(([, flag]) => flag.repair === repairId)
-      .map(([code]) => code)
 
   // Your own rules are switched off in `disabledModules`; the built-in ones
   // in the catalog, beside their parameters and flags.
@@ -421,7 +409,7 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
               onEdit={() => setEditing({ id: read.id, script: read.script })}
               onDelete={() => remove(read.id)}
             >
-              <FlagEditor flags={read.module?.raises ?? []} settings={settings} scripts={scripts} onChange={set} />
+              <FlagEditor flags={read.module?.raises ?? []} settings={settings} scripts={scripts.repairs} onChange={set} />
             </ModuleRow>
           ))}
         </div>
@@ -444,7 +432,7 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
             onReset={resetOf('checks', module.id, module.raises)}
           >
             <ParamEditor module={module} settings={settings} onChange={set} />
-            <FlagEditor flags={module.raises} settings={settings} scripts={scripts} onChange={set} />
+            <FlagEditor flags={module.raises} settings={settings} scripts={scripts.repairs} onChange={set} />
           </ModuleRow>
         ))}
       </div>
@@ -466,76 +454,28 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
         ))}
       </div>
 
-      <h4 className="modules-heading">Repair scripts — your own repairs</h4>
-      <p className="section-hint">
-        A script is a folder in the repairs folder holding a <span className="mono">plugin.json</span> and the script
-        itself, in any language. It is handed a copy of the file and writes the repaired one. It runs only after you
-        approve it, only on this computer, and only for the flags you bind to it — open a check above and pick the
-        script as a flag's repair. Changing any of its files withdraws the approval.
-      </p>
-      <div className="modules-actions">
-        <button className="ghost" onClick={() => void window.plexfixer.scripts.openFolder()}>
-          Open repairs folder
-        </button>
-        <button className="ghost" onClick={() => void loadScripts()}>
-          Reload
-        </button>
-        {scriptsError ? <span className="muted">{scriptsError}</span> : null}
-      </div>
-      {scripts.length > 0 ? (
-        <div className="modules">
-          {scripts.map((script) => {
-            const manifest = script.manifest
-            const bound = boundTo(script.repairId)
-            const trustLabel = {
-              approved: 'Approved',
-              unapproved: 'Not approved',
-              changed: 'Changed since approved',
-              broken: 'Will not run'
-            }[script.trust]
-            return (
-              <ModuleRow
-                key={script.id}
-                module={{
-                  id: script.repairId,
-                  title: `${manifest?.name ?? script.id} — ${trustLabel}`,
-                  summary: manifest?.summary || (script.problems[0] ?? ''),
-                  whatItDoes: manifest?.whatItDoes ?? 'Nothing, until the problems below are fixed.',
-                  howItWorks: manifest?.howItWorks || `Runs ${manifest?.command.join(' ') ?? '(no command)'} in ${script.dir}.`,
-                  ifDisabled: manifest?.ifDisabled ?? 'It is already not running.'
-                }}
-                enabled={catalog.repairs[script.repairId]?.enabled !== false && script.trust !== 'broken'}
-                problems={script.problems.map((message) => ({ line: 0, message }))}
-                reports={{ label: 'Bound to', codes: bound.length > 0 ? bound : ['no flags yet'] }}
-                onToggle={(enabled) => set({ catalog: setField(settings.catalog, 'repairs', script.repairId, 'enabled', enabled) })}
-                onReset={
-                  isChanged(settings.catalog, 'repairs', script.repairId)
-                    ? () => set({ catalog: resetEntry(settings.catalog, 'repairs', script.repairId) })
-                    : undefined
-                }
-              >
-                <div className="modules-actions">
-                  {script.trust === 'unapproved' || script.trust === 'changed' ? (
-                    <button onClick={() => void approve(script.id)}>Review and approve…</button>
-                  ) : null}
-                  {script.trust === 'approved' ? (
-                    <button className="ghost" onClick={() => void revoke(script.id)}>
-                      Withdraw approval
-                    </button>
-                  ) : null}
-                  {manifest && manifest.suggestedFlags.some((flag) => !bound.includes(flag)) ? (
-                    <span className="muted">Written for: {manifest.suggestedFlags.join(', ')}</span>
-                  ) : null}
-                </div>
-                <ScriptParamEditor script={script} settings={settings} onChange={set} />
-                <RecheckToggle id={script.repairId} settings={settings} onChange={set} />
-              </ModuleRow>
-            )
-          })}
-        </div>
-      ) : (
-        <p className="muted modules-empty">No repair scripts yet. Put one in the repairs folder and press Reload.</p>
-      )}
+      <ScriptsSection
+        kind="checks"
+        scripts={scripts.checks}
+        repairScripts={scripts.repairs}
+        error={scriptsError}
+        onReload={loadScripts}
+        onError={setScriptsError}
+        settings={settings}
+        onChange={set}
+        Row={ModuleRow}
+      />
+      <ScriptsSection
+        kind="repairs"
+        scripts={scripts.repairs}
+        repairScripts={scripts.repairs}
+        error={scriptsError}
+        onReload={loadScripts}
+        onError={setScriptsError}
+        settings={settings}
+        onChange={set}
+        Row={ModuleRow}
+      />
 
       <p className="muted modules-footnote">
         The checks and repairs above ship with PlexFixer. Their logic is part of the app, but everything about how

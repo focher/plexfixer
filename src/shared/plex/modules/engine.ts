@@ -39,7 +39,7 @@ import { CHECK_MODULES, REPAIR_MODULES } from './registry.js'
 import { userCheckModules } from './script/module.js'
 import { paramsFor } from './module-params.js'
 import { isRuleCode } from '../catalog/resolve.js'
-import { isScriptRepairId, scriptIdOf } from '../scripts/manifest.js'
+import { checkScriptId, isScriptRepairId, scriptIdOf } from '../scripts/manifest.js'
 import {
   initialState,
   isModuleEnabled,
@@ -159,7 +159,14 @@ export function analyzeWithModules(
 ): AnalysisResult {
   const media = mediaContext(file, settings, edits)
   const catalog = catalogFor(settings)
-  const { findings: rawFindings, raised, state } = runChecks(media, catalog)
+  const builtIn = runChecks(media, catalog)
+  const { state } = builtIn
+  // What the user's check scripts said when the file was scanned. They have no
+  // signals — a script reports, and its flags are answered by whatever the user
+  // bound them to — so they join after everything else has been decided.
+  const fromScripts = checkScriptFindings(file, catalog)
+  const rawFindings = [...builtIn.findings, ...throughCatalog(fromScripts, catalog)]
+  const raised = new Set([...builtIn.raised, ...fromScripts.map((finding) => finding.code)])
 
   /* --- repairs ------------------------------------------------------- */
 
@@ -317,6 +324,33 @@ function scriptStepsFor(findings: readonly Finding[], catalog: Catalog): ScriptS
     params: { ...(catalog.repairs[repair]?.params ?? {}) },
     flags: [...new Set(bound.filter((entry) => entry.repair === repair).map((entry) => entry.code))]
   }))
+}
+
+/**
+ * Findings from the check scripts' stored answers.
+ *
+ * Only for scripts the catalog has switched on: approving a script writes its
+ * entry, and switching it off there takes its flags away at once, without
+ * waiting for a rescan. A script that could not give an answer says so, as an
+ * info note, rather than the file quietly looking clean.
+ */
+function checkScriptFindings(file: MediaFile, catalog: Catalog): Finding[] {
+  return Object.entries(file.checkReports ?? {})
+    .filter(([id]) => catalog.checks[checkScriptId(id)]?.enabled === true)
+    .flatMap(([id, report]) => [
+      ...report.findings,
+      ...(report.error
+        ? [
+            {
+              code: `ext.${id}.failed` as FindingCode,
+              severity: 'info' as const,
+              remedy: 'none' as const,
+              title: `The ${id} check script could not check this file`,
+              detail: report.error
+            }
+          ]
+        : [])
+    ])
 }
 
 function costNoteFor(strategy: PlanStrategy): string {

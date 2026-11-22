@@ -14,6 +14,11 @@
  *
  * Exactly one `result`, and the file at `output`, mean it worked. A line that
  * is not one of these is kept as log text, so a stray `print` does no harm.
+ *
+ * A check script is told about the file the same way, minus `output`, and
+ * its `result` carries what it found:
+ *
+ *   {"type":"result","findings":[{"code":"adverts","title":"…","detail":"…","streamIndexes":[2]}]}
  */
 
 import type { AppSettings, FindingCode, MediaFile } from '../../types.js'
@@ -73,7 +78,48 @@ export function buildScriptInput(args: {
 export type ScriptEvent =
   | { type: 'progress'; fraction: number; message?: string }
   | { type: 'log'; level: 'info' | 'warn' | 'error'; text: string; detail?: string }
-  | { type: 'result'; message?: string }
+  | { type: 'result'; message?: string; findings?: unknown[] }
+
+/** What a check script is told: the file, and nowhere to write. */
+export interface CheckScriptInput {
+  protocol: typeof SCRIPT_PROTOCOL
+  kind: 'check'
+  script: { id: string; version: string }
+  input: string
+  params: ParamValues
+  file: ScriptInput['file']
+  ffmpegPath: string
+  ffprobePath: string
+  preferredSubtitleLanguage: string
+}
+
+export function buildCheckInput(args: {
+  id: string
+  version: string
+  params: ParamValues
+  file: MediaFile
+  ffmpegPath: string
+  ffprobePath: string
+  settings: Pick<AppSettings, 'preferredSubtitleLanguage'>
+}): CheckScriptInput {
+  return {
+    protocol: SCRIPT_PROTOCOL,
+    kind: 'check',
+    script: { id: args.id, version: args.version },
+    input: args.file.path,
+    params: args.params,
+    file: {
+      path: args.file.path,
+      container: args.file.container,
+      durationSeconds: args.file.durationSeconds,
+      streams: args.file.streams,
+      tags: args.file.tags
+    },
+    ffmpegPath: args.ffmpegPath,
+    ffprobePath: args.ffprobePath,
+    preferredSubtitleLanguage: args.settings.preferredSubtitleLanguage
+  }
+}
 
 const LEVELS = ['info', 'warn', 'error'] as const
 
@@ -107,7 +153,11 @@ export function readScriptLine(line: string): ScriptEvent | undefined {
           }
         : asText
     case 'result':
-      return { type: 'result', ...(message ? { message } : {}) }
+      return {
+        type: 'result',
+        ...(message ? { message } : {}),
+        ...(Array.isArray(event.findings) ? { findings: event.findings } : {})
+      }
     default:
       return asText
   }

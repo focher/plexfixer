@@ -9,7 +9,7 @@
 
 import type { AppSettings, PlanStrategy, RemedyClass, Severity } from '../../types.js'
 import defaultJson from './default.json'
-import { isScriptRepairId } from '../scripts/manifest.js'
+import { isCheckScriptFlag, isCheckScriptId, isScriptRepairId } from '../scripts/manifest.js'
 import {
   FLAG_CATEGORY_ORDER,
   type Catalog,
@@ -317,7 +317,14 @@ export const DEFAULT_CATALOG: Catalog = DEFAULT_CATALOG_RESULT.catalog
 /** The defaults with the user's patch laid over them. */
 export function resolveCatalog(defaults: Catalog, patch: CatalogPatch | undefined): CatalogResult {
   const given: CatalogPatch = isRecord(patch) ? patch : {}
-  const checks = mergeSection('checks', defaults.checks, given.checks, () => CHECK_FIELDS)
+  // A check script is in the catalog once it has been approved and switched
+  // on, which writes its entry; until then it does not run.
+  const checkScripts = Object.fromEntries(
+    Object.keys(isRecord(given.checks) ? given.checks : {})
+      .filter(isCheckScriptId)
+      .map((id) => [id, { enabled: false, params: {} } satisfies CheckEntry])
+  )
+  const checks = mergeSection('checks', { ...defaults.checks, ...checkScripts }, given.checks, () => CHECK_FIELDS)
   const repairs = mergeSection(
     'repairs',
     { ...defaults.repairs, ...scriptRepairs(given) },
@@ -325,9 +332,10 @@ export function resolveCatalog(defaults: Catalog, patch: CatalogPatch | undefine
     () => REPAIR_FIELDS
   )
   // A rule's flag exists in the catalog once the patch says anything about it.
+  // So are a check script's flags, which approving it writes from its manifest.
   const ruleFlags = Object.fromEntries(
     Object.keys(isRecord(given.flags) ? given.flags : {})
-      .filter(isRuleCode)
+      .filter((code) => isRuleCode(code) || isCheckScriptFlag(code))
       .map((code) => [code, ruleFlagDefaults(code)])
   )
   const flags = mergeSection('flags', { ...defaults.flags, ...ruleFlags }, given.flags, (id) =>

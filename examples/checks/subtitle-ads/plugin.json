@@ -1,0 +1,51 @@
+{
+  "protocol": 1,
+  "id": "subtitle-ads",
+  "name": "Subtitle adverts",
+  "version": "1.0.0",
+  "summary": "Finds advert and credit lines in text subtitles",
+  "whatItDoes": "Reads every text subtitle track in the file and looks for cues that match the patterns below — release-group credits, site adverts, \"synced and corrected by\" lines.",
+  "howItWorks": "Each SRT or mov_text track is read with ffmpeg and every cue is matched against the patterns, without regard to case. A track with any match is flagged, with the first few matches listed.",
+  "ifDisabled": "Subtitle adverts are not looked for.",
+  "command": ["python3", "{pluginDir}/check.py"],
+  "timeoutSeconds": 120,
+  "raises": [
+    {
+      "code": "adverts",
+      "label": "Subtitle adverts",
+      "hint": "A text subtitle track carries advert or credit lines.",
+      "category": "subtitle",
+      "severity": "warning"
+    }
+  ],
+  "params": {
+    "patterns": {
+      "type": "list",
+      "label": "Cues that count as adverts",
+      "help": "Regular expressions, matched without regard to case, against each cue's text.",
+      "default": [
+        "opensubtitles",
+        "subtitles? by",
+        "synced (and|&) corrected",
+        "addic7ed",
+        "subscene",
+        "yts\\.",
+        "www\\.",
+        "advertise your product",
+        "support us and become"
+      ]
+    },
+    "codecs": {
+      "type": "list",
+      "label": "Track formats to read",
+      "options": [
+        { "value": "subrip", "label": "SRT (subrip)" },
+        { "value": "mov_text", "label": "MP4 text (mov_text)" },
+        { "value": "webvtt", "label": "WebVTT" },
+        { "value": "ass", "label": "ASS" },
+        { "value": "ssa", "label": "SSA" }
+      ],
+      "default": ["subrip", "mov_text"]
+    }
+  }
+}

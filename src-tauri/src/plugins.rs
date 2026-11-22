@@ -1,6 +1,7 @@
-//! Repair scripts the user adds: discovery, approval, and running them.
+//! Scripts the user adds — checks and repairs: discovery, approval, running.
 //!
-//! A script lives in its own folder under `<app data>/repairs/<id>/`, beside a
+//! A script lives in its own folder under `<app data>/checks/<id>/` or
+//! `<app data>/repairs/<id>/`, beside a
 //! `plugin.json` that names it and says how to start it. Nothing in there runs
 //! until the user has approved it, and the approval is of exactly the files
 //! that were there: the folder is hashed when it is approved, and hashed again
@@ -31,7 +32,7 @@ const MOST_BYTES: u64 = 16 * 1024 * 1024;
 /// The manifest is read whole; nothing sensible is this large.
 const LONGEST_MANIFEST: u64 = 256 * 1024;
 
-const TRUST_FILE: &str = "repair-trust.json";
+const TRUST_FILE: &str = "script-trust.json";
 const MANIFEST: &str = "plugin.json";
 
 #[derive(Clone, Serialize, Debug, PartialEq)]
@@ -178,8 +179,18 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
-fn repairs_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(data_dir(app)?.join("repairs"))
+/// The folder a kind of script lives in. Only the two kinds there are: the
+/// kind is a folder name, and nothing from the caller may become a path.
+fn scripts_dir(app: &AppHandle, kind: &str) -> Result<PathBuf, String> {
+    match kind {
+        "checks" | "repairs" => Ok(data_dir(app)?.join(kind)),
+        other => Err(format!("{other} is not a kind of script")),
+    }
+}
+
+/// Approvals are kept per kind: a check and a repair may share a name.
+fn trust_key(kind: &str, id: &str) -> String {
+    format!("{kind}/{id}")
 }
 
 async fn trusted(app: &AppHandle) -> BTreeMap<String, String> {
@@ -244,8 +255,8 @@ fn listing_of(id: String, dir: PathBuf, trusted_hash: Option<String>) -> Listing
 
 /// Every folder under `repairs/`, hashed.
 #[tauri::command]
-pub async fn plugins_list(app: AppHandle) -> Result<Vec<Listing>, String> {
-    let root = repairs_dir(&app)?;
+pub async fn plugins_list(app: AppHandle, kind: String) -> Result<Vec<Listing>, String> {
+    let root = scripts_dir(&app, &kind)?;
     let trust = trusted(&app).await;
     tokio::task::spawn_blocking(move || {
         let Ok(entries) = std::fs::read_dir(&root) else { return Vec::new() };
@@ -256,7 +267,7 @@ pub async fn plugins_list(app: AppHandle) -> Result<Vec<Listing>, String> {
             .filter(|name| !name.starts_with('.'))
             .map(|id| {
                 let dir = root.join(&id);
-                let trusted_hash = trust.get(&id).cloned();
+                let trusted_hash = trust.get(&trust_key(&kind, &id)).cloned();
                 listing_of(id, dir, trusted_hash)
             })
             .collect();
@@ -269,8 +280,8 @@ pub async fn plugins_list(app: AppHandle) -> Result<Vec<Listing>, String> {
 
 /// The folder scripts go in, created if need be, for "Open repairs folder".
 #[tauri::command]
-pub async fn plugins_folder(app: AppHandle) -> Result<String, String> {
-    let root = repairs_dir(&app)?;
+pub async fn plugins_folder(app: AppHandle, kind: String) -> Result<String, String> {
+    let root = scripts_dir(&app, &kind)?;
     tokio::fs::create_dir_all(&root)
         .await
         .map_err(|e| format!("could not create {}: {e}", root.display()))?;
@@ -284,11 +295,11 @@ pub async fn plugins_folder(app: AppHandle) -> Result<String, String> {
 /// script look like something it is not, and the approval is recorded only
 /// for the hash shown.
 #[tauri::command]
-pub async fn plugins_trust(app: AppHandle, id: String) -> Result<bool, String> {
+pub async fn plugins_trust(app: AppHandle, kind: String, id: String) -> Result<bool, String> {
     if !valid_id(&id) {
         return Err(format!("{id} is not a script id"));
     }
-    let dir = repairs_dir(&app)?.join(&id);
+    let dir = scripts_dir(&app, &kind)?.join(&id);
     let listing = {
         let dir = dir.clone();
         let id = id.clone();
@@ -311,8 +322,9 @@ pub async fn plugins_trust(app: AppHandle, id: String) -> Result<bool, String> {
         .map(|file| format!("  {} ({} bytes)", file.path, file.size))
         .collect::<Vec<_>>()
         .join("\n");
+    let role = if kind == "checks" { "check" } else { "repair" };
     let message = format!(
-        "\"{name}\" will be able to run on this computer, as you, on the media files it is given.\n\n\
+        "This {role} script, \"{name}\", will be able to run on this computer, as you, on the media files it is given.\n\n\
          It starts:\n  {}\n\nThe program is found on your PATH as it is when it runs; only the files below are \
          checked.\n\nFiles:\n{files}\n\nFingerprint {}\n\nApprove it only if you know what it does. Any change to \
          these files withdraws the approval.",
@@ -323,7 +335,7 @@ pub async fn plugins_trust(app: AppHandle, id: String) -> Result<bool, String> {
     let (answer, asked) = tokio::sync::oneshot::channel();
     app.dialog()
         .message(message)
-        .title("Approve this repair script?")
+        .title(if kind == "checks" { "Approve this check script?" } else { "Approve this repair script?" })
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom("Approve".into(), "Cancel".into()))
         .show(move |approved| {
@@ -332,7 +344,7 @@ pub async fn plugins_trust(app: AppHandle, id: String) -> Result<bool, String> {
     let approved = asked.await.unwrap_or(false);
     if approved {
         let mut trust = trusted(&app).await;
-        trust.insert(id, hash);
+        trust.insert(trust_key(&kind, &id), hash);
         save_trusted(&app, &trust).await?;
     }
     Ok(approved)
@@ -340,9 +352,10 @@ pub async fn plugins_trust(app: AppHandle, id: String) -> Result<bool, String> {
 
 /// Withdraw a script's approval.
 #[tauri::command]
-pub async fn plugins_revoke(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn plugins_revoke(app: AppHandle, kind: String, id: String) -> Result<(), String> {
+    scripts_dir(&app, &kind)?;
     let mut trust = trusted(&app).await;
-    if trust.remove(&id).is_some() {
+    if trust.remove(&trust_key(&kind, &id)).is_some() {
         save_trusted(&app, &trust).await?;
     }
     Ok(())
@@ -356,6 +369,7 @@ pub async fn plugins_revoke(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn plugin_start(
     app: AppHandle,
+    kind: String,
     id: String,
     process_id: String,
     input: String,
@@ -375,8 +389,8 @@ pub async fn plugin_start(
         return Err("Repair scripts only run on this computer, and the remote host is switched on.".into());
     }
 
-    let dir = repairs_dir(&app)?.join(&id);
-    let approved = trusted(&app).await.get(&id).cloned();
+    let dir = scripts_dir(&app, &kind)?.join(&id);
+    let approved = trusted(&app).await.get(&trust_key(&kind, &id)).cloned();
     let (hash, text) = {
         let dir = dir.clone();
         tokio::task::spawn_blocking(move || -> Result<(String, String), String> {

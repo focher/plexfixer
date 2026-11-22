@@ -7,7 +7,10 @@
   "whatItDoes": "Takes every text subtitle track out of the file, deletes the cues that match the patterns below — release-group credits, site adverts, \"synced and corrected by\" lines — and puts the cleaned tracks back where they were, with the same language and flags.",
   "howItWorks": "Each SRT or mov_text track is extracted with ffmpeg, cleaned line by line, renumbered, and muxed back in its original position. Every other stream is copied untouched. The finished file is tagged plexfixer_scrubbed so a rule can tell it has been done.",
   "ifDisabled": "Flags bound to this script are reported but not fixed.",
-  "command": ["python3", "{pluginDir}/scrub.py"],
+  "command": [
+    "python3",
+    "{pluginDir}/scrub.py"
+  ],
   "timeoutSeconds": 600,
   "params": {
     "patterns": {
@@ -31,14 +34,35 @@
       "label": "Track formats to clean",
       "help": "Styled ASS/SSA tracks are left alone by default: cleaning them goes through SRT and loses the styling.",
       "options": [
-        { "value": "subrip", "label": "SRT (subrip)" },
-        { "value": "mov_text", "label": "MP4 text (mov_text)" },
-        { "value": "webvtt", "label": "WebVTT" },
-        { "value": "ass", "label": "ASS (loses styling)" },
-        { "value": "ssa", "label": "SSA (loses styling)" }
+        {
+          "value": "subrip",
+          "label": "SRT (subrip)"
+        },
+        {
+          "value": "mov_text",
+          "label": "MP4 text (mov_text)"
+        },
+        {
+          "value": "webvtt",
+          "label": "WebVTT"
+        },
+        {
+          "value": "ass",
+          "label": "ASS (loses styling)"
+        },
+        {
+          "value": "ssa",
+          "label": "SSA (loses styling)"
+        }
       ],
-      "default": ["subrip", "mov_text"]
+      "default": [
+        "subrip",
+        "mov_text"
+      ]
     }
   },
-  "suggestedFlags": ["user.unscrubbed-subtitles"]
+  "suggestedFlags": [
+    "ext.subtitle-ads.adverts",
+    "user.unscrubbed-subtitles"
+  ]
 }

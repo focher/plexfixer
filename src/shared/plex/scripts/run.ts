@@ -8,7 +8,8 @@
  */
 
 import type { RepairHost } from '../../host.js'
-import { readScriptLine, splitLines, type ScriptEvent, type ScriptInput } from './protocol.js'
+import type { ScriptKind } from './manifest.js'
+import { readScriptLine, splitLines, type CheckScriptInput, type ScriptEvent, type ScriptInput } from './protocol.js'
 
 export class ScriptError extends Error {
   constructor(
@@ -24,23 +25,26 @@ export class ScriptError extends Error {
 const STDERR_KEPT = 8 * 1024
 
 export async function runScript(args: {
-  host: RepairHost
+  host: Pick<RepairHost, 'startScript' | 'label' | 'exists'>
+  /** Which folder the script is in; a repair is held to having written its output. */
+  kind?: ScriptKind
   script: string
-  input: ScriptInput
+  input: ScriptInput | CheckScriptInput
   signal: AbortSignal
   timeoutSeconds?: number
   onEvent: (event: ScriptEvent) => void
-}): Promise<{ message?: string }> {
+}): Promise<{ message?: string; findings?: unknown[] }> {
   const { host, script, input, signal } = args
+  const kind = args.kind ?? 'repairs'
   if (!host.startScript) {
     throw new ScriptError(
-      `Repair scripts only run on this computer, and this job is running on ${host.label}.`,
+      `Scripts only run on this computer, and this is running on ${host.label}.`,
       ''
     )
   }
   if (signal.aborted) throw new ScriptError('Cancelled', '')
 
-  const process = host.startScript(script, JSON.stringify(input))
+  const process = host.startScript(kind, script, JSON.stringify(input))
 
   // Collected as the output arrives, so the events reach the job as they happen.
   const seen: { carry: string; results: ScriptEvent[]; stderr: string } = { carry: '', results: [], stderr: '' }
@@ -91,11 +95,13 @@ export async function runScript(args: {
         seen.stderr
       )
     }
-    if (!(await host.exists(input.output))) {
+    if ('output' in input && !(await host.exists(input.output))) {
       throw new ScriptError(`${script} reported success but wrote nothing to ${input.output}`, seen.stderr)
     }
     const [result] = seen.results
-    return result?.type === 'result' && result.message ? { message: result.message } : {}
+    return result?.type === 'result'
+      ? { ...(result.message ? { message: result.message } : {}), ...(result.findings ? { findings: result.findings } : {}) }
+      : {}
   } finally {
     if (timer) clearTimeout(timer)
     signal.removeEventListener('abort', stop)

@@ -17,14 +17,16 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
-import { scriptInfo, type ScriptInfo, type ScriptListing } from '@shared/plex/scripts/manifest.js'
+import { scriptInfo, type ScriptInfo, type ScriptKind, type ScriptListing } from '@shared/plex/scripts/manifest.js'
+import { activeChecks, withCheckReports } from '@shared/plex/scripts/checks.js'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { withDefaults } from '@shared/defaults.js'
 import { parseLaunchArgs } from '@shared/launch.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { ProbeError, probeFile } from '@shared/plex/probe.js'
 import { DOLBY_VISION_HDR10_FILTER } from '@shared/plex/rules.js'
-import { runScan, type KnownFile } from '@shared/plex/scan.js'
+import { runScan, type KnownFile, type ScanRequest } from '@shared/plex/scan.js'
+import type { RepairHost } from '@shared/host.js'
 import { loadLibrary } from '../library.js'
 import { RepairRunner } from '@shared/plex/runner.js'
 import { createBackupRegistry, findBackups } from '@shared/plex/backups-store.js'
@@ -294,10 +296,46 @@ function applyToRunningQueue(settings: AppSettings): void {
   runner?.setConcurrency(settings.concurrency)
 }
 
-/** The repair scripts installed now, read and checked. */
-async function listScripts(): Promise<ScriptInfo[]> {
-  const listings = await invoke<ScriptListing[]>('plugins_list')
-  return listings.map(scriptInfo)
+/** The scripts of one kind installed now, read and checked. */
+async function listScripts(kind: ScriptKind = 'repairs'): Promise<ScriptInfo[]> {
+  const listings = await invoke<ScriptListing[]>('plugins_list', { kind })
+  return listings.map((listing) => scriptInfo(listing, kind))
+}
+
+/** Both kinds, for a repair: its scripts, and the checks its re-check runs. */
+async function allScripts(): Promise<ScriptInfo[]> {
+  const [checks, repairs] = await Promise.all([listScripts('checks'), listScripts('repairs')])
+  return [...checks, ...repairs]
+}
+
+/**
+ * The check scripts a scan runs, and how to run them on one file.
+ *
+ * None on a remote host — scripts only run on this computer — and none when
+ * no script is approved and switched on, so a library without them scans
+ * exactly as it always did.
+ */
+async function checkScripts(
+  ready: { settings: AppSettings; host: RepairHost; ffprobePath: string },
+  signal: AbortSignal
+): Promise<ScanRequest['checks']> {
+  if (ready.host.kind === 'remote') return undefined
+  const active = activeChecks(await listScripts('checks').catch(() => []), ready.settings)
+  if (active.length === 0) return undefined
+  const environment = await environmentFor(ready.settings, false)
+  const ffmpegPath = environment.ffmpegPath ?? ''
+  return {
+    active,
+    run: (file) =>
+      withCheckReports(file, {
+        active,
+        host: ready.host,
+        ffmpegPath,
+        ffprobePath: ready.ffprobePath,
+        settings: ready.settings,
+        signal
+      })
+  }
 }
 
 function buildApi() {
@@ -472,7 +510,11 @@ function buildApi() {
         const known = new Map<string, KnownFile>()
         try {
           for (const entry of await loadLibrary()) {
-            known.set(entry.path, { sizeBytes: entry.file.sizeBytes, modifiedMs: entry.file.modifiedMs })
+            known.set(entry.path, {
+              sizeBytes: entry.file.sizeBytes,
+              modifiedMs: entry.file.modifiedMs,
+              checkReports: entry.file.checkReports
+            })
           }
         } catch (error) {
           // A library that cannot be read is not a reason to refuse to scan;
@@ -494,6 +536,7 @@ function buildApi() {
           // remote mode found nothing at all.
           findMedia: (roots, extensions, recursive) => ready.host.findMedia(roots, extensions, recursive),
           known,
+          checks: await checkScripts(ready, controller.signal),
           signal: controller.signal,
           onProgress: (event) => scanProgress.emit(event)
         })
@@ -519,7 +562,9 @@ function buildApi() {
         // reporting it as unreadable.
         if (!(await ready.host.stat(path))) return { missing: true }
         try {
-          const probed = await probeFile(path, { ffprobePath: ready.ffprobePath, host: ready.host })
+          const read = await probeFile(path, { ffprobePath: ready.ffprobePath, host: ready.host })
+          const checks = await checkScripts(ready, new AbortController().signal)
+          const probed = checks ? await checks.run(read) : read
           return { result: { ...analyzeFile(probed, ready.settings), scannedAt: Date.now() } }
         } catch (error) {
           return {
@@ -566,7 +611,7 @@ function buildApi() {
           const environment = await environmentFor(ready.settings, false)
           // Read once per batch, so a script approved or edited meanwhile is
           // seen as it is now; the native side checks again before running it.
-          const scripts = await listScripts()
+          const scripts = await allScripts()
 
           const jobs: Job[] = []
           for (const request of requests) {
@@ -608,12 +653,13 @@ function buildApi() {
     },
     scripts: {
       /** Every folder under the repairs directory, read and checked. */
-      list: listScripts,
+      list: (kind: ScriptKind): Promise<ScriptInfo[]> => listScripts(kind),
       /** Shows the native approval dialog; resolves true when approved. */
-      approve: (id: string): Promise<boolean> => invoke<boolean>('plugins_trust', { id }),
-      revoke: (id: string): Promise<void> => invoke('plugins_revoke', { id }),
-      /** Creates the repairs folder if need be, and shows it. */
-      openFolder: async (): Promise<void> => revealItemInDir(await invoke<string>('plugins_folder'))
+      approve: (kind: ScriptKind, id: string): Promise<boolean> => invoke<boolean>('plugins_trust', { kind, id }),
+      revoke: (kind: ScriptKind, id: string): Promise<void> => invoke('plugins_revoke', { kind, id }),
+      /** Creates the folder for that kind of script if need be, and shows it. */
+      openFolder: async (kind: ScriptKind): Promise<void> =>
+        revealItemInDir(await invoke<string>('plugins_folder', { kind }))
     },
     shell: {
       reveal: (path: string): Promise<void> => revealItemInDir(path),

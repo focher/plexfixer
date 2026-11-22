@@ -13,14 +13,15 @@ import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
-import { setField } from '@shared/plex/catalog/edit.js'
+import { registerCheckScript, setField, setParam } from '@shared/plex/catalog/edit.js'
 import { catalogFor, resolveCatalog, DEFAULT_CATALOG } from '@shared/plex/catalog/resolve.js'
 import { statusIdOf } from '@shared/plex/catalog/match.js'
 import { parseManifest, scriptInfo, type ScriptInfo } from '@shared/plex/scripts/manifest.js'
+import { activeChecks, findingsFrom, reportsCurrent, withCheckReports } from '@shared/plex/scripts/checks.js'
 import { readScriptLine, splitLines } from '@shared/plex/scripts/protocol.js'
 import { probeFile } from '@shared/plex/probe.js'
 import { RepairRunner } from '@shared/plex/runner.js'
-import type { AppSettings, Job } from '@shared/types.js'
+import type { AppSettings, Job, MediaFile } from '@shared/types.js'
 import { mainAudio, mp4, subtitle, video } from './fixtures.js'
 import { localHost, nodeProcess } from './node-host.js'
 
@@ -153,14 +154,15 @@ afterAll(async () => {
   if (dir) await rm(dir, { recursive: true, force: true })
 })
 
-/** The local host, able to start the example script the way the native side would. */
+/** The local host, able to start the example scripts the way the native side would. */
 const scriptHost = () => ({
   ...localHost(),
-  startScript: (id: string, input: string) => {
-    const manifest = JSON.parse(readFileSync(join(EXAMPLE, 'plugin.json'), 'utf8')) as { id: string; command: string[] }
+  startScript: (kind: 'checks' | 'repairs', id: string, input: string) => {
+    const folder = resolve('examples', kind, id)
+    const manifest = JSON.parse(readFileSync(join(folder, 'plugin.json'), 'utf8')) as { id: string; command: string[] }
     if (manifest.id !== id) throw new Error(`no script ${id}`)
-    const [program, ...rest] = manifest.command.map((part) => part.replace('{pluginDir}', EXAMPLE))
-    const child = spawn(program === 'python3' ? PYTHON! : program!, rest, { cwd: EXAMPLE })
+    const [program, ...rest] = manifest.command.map((part) => part.replace('{pluginDir}', folder))
+    const child = spawn(program === 'python3' ? PYTHON! : program!, rest, { cwd: folder })
     child.stdin.end(input)
     return nodeProcess(child)
   }
@@ -240,5 +242,113 @@ describe.runIf(Boolean(FFMPEG && FFPROBE && PYTHON))('the subtitle scrub, throug
     expect(finished?.state).toBe('failed')
     expect(finished?.message).toContain('has not been approved')
     expect(existsSync(path)).toBe(true)
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Check scripts
+ * ------------------------------------------------------------------ */
+
+const ADS = resolve('examples/checks/subtitle-ads')
+const adsManifest = readFileSync(join(ADS, 'plugin.json'), 'utf8')
+const adsScript: ScriptInfo = scriptInfo(
+  { id: 'subtitle-ads', dir: ADS, manifest: adsManifest, hash: 'a', trustedHash: 'a', files: [] },
+  'checks'
+)
+const ADVERTS = 'ext.subtitle-ads.adverts'
+const adsApproved = (patch: Partial<AppSettings> = {}): AppSettings => ({
+  ...DEFAULT_SETTINGS,
+  ...patch,
+  catalog: registerCheckScript(patch.catalog ?? {}, 'ext.subtitle-ads', [
+    { id: ADVERTS, label: 'Subtitle adverts', hint: '', category: 'subtitle' }
+  ])
+})
+
+describe('a check script', () => {
+  it('declares the flags it raises in its manifest', () => {
+    expect(adsScript.problems).toEqual([])
+    expect(adsScript.repairId).toBe('ext.subtitle-ads')
+    expect(adsScript.manifest?.raises.map((flag) => flag.code)).toEqual(['adverts'])
+    const { problems } = parseManifest(JSON.stringify({ protocol: 1, id: 'x', name: 'X', command: ['run'] }), 'x', 'checks')
+    expect(problems[0]).toContain('"raises"')
+  })
+
+  it('may only report the codes it declared, scoped by its name', () => {
+    const { findings, problems } = findingsFrom(adsScript.manifest!, [
+      { code: 'adverts', title: 'Ads', streamIndexes: [2] },
+      { code: 'drm-protected', title: 'Sneaky' }
+    ])
+    expect(findings.map((f) => f.code)).toEqual([ADVERTS])
+    expect(findings[0]?.severity).toBe('warning')
+    expect(problems[0]).toContain('not one of the codes')
+  })
+
+  it('runs only once approved and switched on in the catalog', () => {
+    expect(activeChecks([adsScript], DEFAULT_SETTINGS)).toEqual([])
+    expect(activeChecks([{ ...adsScript, trust: 'unapproved' }], adsApproved())).toEqual([])
+    expect(activeChecks([adsScript], adsApproved()).map((check) => check.id)).toEqual(['subtitle-ads'])
+  })
+
+  it('is due again when its files or settings change', () => {
+    const [check] = activeChecks([adsScript], adsApproved())
+    const reports = { 'subtitle-ads': { fingerprint: check!.fingerprint } }
+    expect(reportsCurrent(reports, [check!])).toBe(true)
+    const tuned = adsApproved({ catalog: setParam({}, 'checks', 'ext.subtitle-ads', 'codecs', ['subrip']) })
+    expect(reportsCurrent(reports, activeChecks([adsScript], tuned))).toBe(false)
+    expect(reportsCurrent(reports, activeChecks([{ ...adsScript, hash: 'b' }], adsApproved()))).toBe(false)
+  })
+
+  it('has its stored answer read back by analysis, while it is switched on', () => {
+    const reported: MediaFile = {
+      ...subtitled,
+      checkReports: {
+        'subtitle-ads': {
+          fingerprint: 'x',
+          findings: [{ code: ADVERTS, severity: 'warning' as const, remedy: 'manual' as const, title: 'Ads', detail: '' }]
+        }
+      }
+    }
+    expect(analyzeFile(reported, adsApproved()).findings.map((f) => f.code)).toContain(ADVERTS)
+    const off = adsApproved()
+    const switchedOff = { ...off, catalog: setField(off.catalog, 'checks', 'ext.subtitle-ads', 'enabled', false) }
+    expect(analyzeFile(reported, switchedOff).findings.map((f) => f.code)).not.toContain(ADVERTS)
+  })
+
+  it('says so when it could not check the file, rather than the file looking clean', () => {
+    const failed = { ...subtitled, checkReports: { 'subtitle-ads': { fingerprint: 'x', findings: [], error: 'boom' } } }
+    const note = analyzeFile(failed, adsApproved()).findings.find((f) => f.code === 'ext.subtitle-ads.failed')
+    expect(note?.severity).toBe('info')
+    expect(note?.detail).toBe('boom')
+  })
+})
+
+describe.runIf(Boolean(FFMPEG && FFPROBE && PYTHON))('the subtitle-ads check and the scrub, together', () => {
+  it('finds the adverts, the scrub removes them, and the re-check finds none', { timeout: 90_000 }, async () => {
+    const path = await movieWithAdverts()
+    const host = scriptHost()
+    const base = adsApproved()
+    const settings = { ...base, catalog: setField(base.catalog, 'flags', ADVERTS, 'repair', 'script.subtitle-scrub') }
+    const active = activeChecks([adsScript], settings)
+    const checks = { active, host, ffmpegPath: FFMPEG!, ffprobePath: FFPROBE!, settings, signal: new AbortController().signal }
+
+    const file = await withCheckReports(await probeFile(path, { ffprobePath: FFPROBE!, host }), checks)
+    expect(file.checkReports?.['subtitle-ads']?.error).toBeUndefined()
+    const result = analyzeFile(file, settings)
+    const advert = result.findings.find((f) => f.code === ADVERTS)
+    expect(advert?.title).toContain('2 advert lines')
+    expect(result.plan.scriptSteps?.[0]?.script).toBe('subtitle-scrub')
+
+    let finished: Job | undefined
+    const runner = new RepairRunner({ ffmpegPath: FFMPEG!, ffprobePath: FFPROBE! }, 1, (job) => {
+      if (job.state === 'done' || job.state === 'failed' || job.state === 'skipped') finished = job
+    }, host)
+    runner.enqueue({ result, settings, mode: 'safe-remux', scripts: [adsScript, approved] })
+    for (let waited = 0; !finished && waited < 60_000; waited += 50) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    const log = finished?.log.map((entry) => `${entry.text}\n${entry.detail ?? ''}`).join('\n')
+    expect(finished?.state, log).toBe('done')
+    expect(finished?.remaining).toEqual([])
+    expect(finished?.rechecked?.checkReports?.['subtitle-ads']?.findings).toEqual([])
   })
 })

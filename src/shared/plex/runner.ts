@@ -48,6 +48,7 @@ import { remainingFlags, wantsRecheck } from './recheck.js'
 import type { ScriptInfo } from './scripts/manifest.js'
 import { buildScriptInput } from './scripts/protocol.js'
 import { ScriptError, runScript } from './scripts/run.js'
+import { activeChecks, withCheckReports } from './scripts/checks.js'
 import { resolveParams } from './modules/params.js'
 import { TaskQueue } from './queue.js'
 import { REFUSAL_REASON, inPlaceVerdict } from './inplace.js'
@@ -443,7 +444,7 @@ export class RepairRunner {
     output: string,
     signal: AbortSignal
   ): Promise<void> {
-    const info = options.scripts?.find((script) => script.id === step.script)
+    const info = options.scripts?.find((script) => script.kind === 'repairs' && script.id === step.script)
     if (!info?.manifest) {
       throw new Error(`The repair script ${step.script} is not installed. Add it under Settings → Checks & repairs.`)
     }
@@ -515,10 +516,20 @@ export class RepairRunner {
     this.setStage(id, 'recheck')
     const started = performance.now()
     try {
-      const file = await probeFile(finalPath, {
+      const read = await probeFile(finalPath, {
         ffprobePath: this.binaries.ffprobePath,
         includeSidecars: true,
         host: this.host
+      })
+      // The user's check scripts look again too: a flag one of them raised is
+      // as much the job's to fix as any built-in one.
+      const file = await withCheckReports(read, {
+        active: activeChecks(options.scripts ?? [], settings),
+        host: this.host,
+        ffmpegPath: this.binaries.ffmpegPath,
+        ffprobePath: this.binaries.ffprobePath,
+        settings,
+        signal: new AbortController().signal
       })
       const after = analyzeFile(file, settings)
       const remaining = remainingFlags(result, after)

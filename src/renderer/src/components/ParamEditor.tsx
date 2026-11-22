@@ -7,7 +7,7 @@ import { paramsFor } from '@shared/plex/modules/module-params.js'
 import type { ParamSpec } from '@shared/plex/modules/params.js'
 import { moduleById } from '@shared/plex/modules/registry.js'
 import { resolveParams } from '@shared/plex/modules/params.js'
-import type { ScriptInfo } from '@shared/plex/scripts/manifest.js'
+import { isCheckScriptFlag, type ScriptInfo } from '@shared/plex/scripts/manifest.js'
 
 type Section = 'checks' | 'repairs'
 type OnChange = (patch: Partial<AppSettings>) => void
@@ -193,7 +193,7 @@ export function FlagEditor({
   onChange: OnChange
 }): React.JSX.Element | null {
   const catalog = catalogFor(settings)
-  const known = flags.filter((flag) => flag in catalog.flags || isRuleCode(flag))
+  const known = flags.filter((flag) => flag in catalog.flags || isRuleCode(flag) || isCheckScriptFlag(flag))
   if (known.length === 0) return null
   const patch = settings.catalog
   const set = <K extends keyof ReturnType<typeof flagDef>>(flag: string, field: K, value: ReturnType<typeof flagDef>[K]): void =>
@@ -268,7 +268,7 @@ export function FlagEditor({
                     {repairTitle && shippedRepair ? <option value={shippedRepair}>{repairTitle}</option> : null}
                     <option value="">{isRuleCode(flag) ? 'What the rule asks for' : 'Report only'}</option>
                     {scripts
-                      .filter((script) => script.manifest)
+                      .filter((script) => script.manifest && script.kind === 'repairs')
                       .map((script) => (
                         <option key={script.repairId} value={script.repairId}>
                           Script: {script.manifest?.name}
@@ -331,7 +331,8 @@ export function ScriptParamEditor({
   const manifest = script.manifest
   const entries = Object.entries(manifest?.params ?? {})
   if (!manifest || entries.length === 0) return null
-  const values = resolveParams(manifest.params, manifest.defaults, catalogFor(settings).repairs[script.repairId]?.params)
+  const section = script.kind === 'checks' ? 'checks' : 'repairs'
+  const values = resolveParams(manifest.params, manifest.defaults, catalogFor(settings)[section][script.repairId]?.params)
   return (
     <div className="param-editor">
       <h4>Settings</h4>
@@ -344,7 +345,7 @@ export function ScriptParamEditor({
           <ParamControl
             spec={spec}
             value={values[key] as ParamValue}
-            onChange={(next) => onChange({ catalog: setParam(settings.catalog, 'repairs', script.repairId, key, next) })}
+            onChange={(next) => onChange({ catalog: setParam(settings.catalog, section, script.repairId, key, next) })}
           />
         </div>
       ))}

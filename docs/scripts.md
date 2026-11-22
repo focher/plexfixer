@@ -1,12 +1,22 @@
-# Repair scripts
+# Check and repair scripts
 
-A repair script is your own repair, written in any language. PlexFixer works out what is wrong with a file and runs the scripts you have bound to those problems. The script gets a copy of the file and writes the repaired one.
+Scripts are your own checks and repairs, written in any language. There are two kinds:
 
-A worked example is in [examples/repairs/subtitle-scrub/](../examples/repairs/subtitle-scrub/). It removes advert and credit cues from text subtitles.
+- **A check script** looks at a file and reports flags.
+- **A repair script** is given a copy of a file and writes the repaired one.
+
+PlexFixer works out what is wrong with each file and runs the repairs you have bound to those flags.
+
+There are two worked examples:
+
+- [examples/checks/subtitle-ads/](../examples/checks/subtitle-ads/) finds advert and credit lines in text subtitles.
+- [examples/repairs/subtitle-scrub/](../examples/repairs/subtitle-scrub/) removes them.
+
+Bind the check's flag to the repair and you have the whole loop.
 
 ## How the pieces fit
 
-1. **Checks raise flags.** Every check, built-in or a rule you wrote, reports problems as flags such as `mp4-not-faststart` or `user.unscrubbed-subtitles`. The chips above the library are these flags, and the status tiles are rules over them. Both can be edited, under *Settings → Statuses & catalog*.
+1. **Checks raise flags.** Every check reports problems as flags. That includes built-in checks, rules you wrote and check scripts, so flags look like `mp4-not-faststart`, `user.unscrubbed-subtitles` or `ext.subtitle-ads.adverts`. The chips above the library are these flags, and the status tiles are rules over them. You build those rules under *Settings → Statuses & catalog*.
 2. **Each flag has one repair.** That is its built-in repair, your script, or nothing (report only).
    - To choose, open a check, or one of your rules, under *Settings → Checks & repairs*, and set the flag's **Repair**.
    - The shipped defaults are in [src/shared/plex/catalog/default.json](../src/shared/plex/catalog/default.json). Only your changes are stored, so any Reset button puts things back.
@@ -16,13 +26,28 @@ A worked example is in [examples/repairs/subtitle-scrub/](../examples/repairs/su
 
 ## Installing a script
 
-1. Under *Settings → Checks & repairs → Repair scripts*, press **Open repairs folder**. It is `repairs/` in PlexFixer's data directory. On macOS that is `~/Library/Application Support/com.timothyweaver.plexfixer/repairs/`.
+1. Under *Settings → Checks & repairs*, press **Open checks folder** or **Open repairs folder**.
+   - These are `checks/` and `repairs/` in PlexFixer's data directory.
+   - On macOS that is `~/Library/Application Support/com.timothyweaver.plexfixer/`.
 2. Copy the script's folder in. The folder name must equal the manifest's `id`, using lower-case letters, digits and dashes only.
 3. Press **Reload**. The script appears as *Not approved*.
 4. Press **Review and approve…**. A native dialog shows the command, every file in the folder, and a fingerprint of them. Approve it only if you know what it does.
-5. Bind a flag to it.
-   - For the example, create a rule from [rule.txt](../examples/repairs/subtitle-scrub/rule.txt).
-   - Then set that rule's flag's Repair to *Script: Subtitle scrub*.
+   - Approving a check script switches it on and adds its flags.
+5. For the examples:
+   1. Approve both.
+   2. Rescan, so the check reads your files.
+   3. Open *Subtitle adverts*. Under *Flags it raises*, set the Repair of *Subtitle adverts* to *Script: Subtitle scrub*.
+
+### Check scripts and scan time
+
+A check script runs when a file is scanned. It is not run when you change a setting.
+
+What it found is kept with the file, and analysis reads it back from there. An unchanged file is not checked again unless one of these has changed since it was last checked:
+
+- the script's files;
+- the script's settings.
+
+So a slow script slows the first scan and nothing after it. Turning a check script off in Settings removes its flags immediately, without a rescan.
 
 ## Approval and safety
 
@@ -53,9 +78,21 @@ A worked example is in [examples/repairs/subtitle-scrub/](../examples/repairs/su
     "strict":   { "type": "boolean", "label": "Be strict", "default": false },
     "mode":     { "type": "string", "label": "Mode", "options": [{ "value": "a", "label": "A" }], "default": "a" }
   },
-  "suggestedFlags": ["user.unscrubbed-subtitles"]  // a hint shown in Settings; nothing is bound automatically
+  "suggestedFlags": ["ext.subtitle-ads.adverts"]  // repair scripts: a hint shown in Settings; nothing is bound automatically
 }
 ```
+
+A check script's manifest also lists the flags it can raise. It may report only these:
+
+```jsonc
+"raises": [
+  { "code": "adverts", "label": "Subtitle adverts", "hint": "Shown on the chip's tooltip",
+    "category": "subtitle",      // file, video, audio, container, subtitle, tracks or custom
+    "severity": "warning" }      // info, warning or blocker, unless a finding says otherwise
+]
+```
+
+The flag's id is `ext.<script id>.<code>`. A check that runs longer than `timeoutSeconds` (60 by default) is stopped, and the file gets a note saying the check could not run.
 
 ## The protocol
 
@@ -100,6 +137,25 @@ The script has worked when all of these are true:
 
 On any failure the job fails, the original is left untouched, and the last 8 KB of stderr appear in the job log.
 
+### What a check script says back
+
+A check script gets the same document on stdin, with these differences:
+
+- there is no `output`;
+- `kind` is `"check"`.
+
+Its one `result` line lists what it found:
+
+```json
+{"type":"result","findings":[{"code":"adverts","title":"2 advert lines in track 2","detail":"For example: …","streamIndexes":[2]}]}
+```
+
+- An empty `findings` list means the file is clean.
+- Each finding's `code` must be one the manifest lists.
+- `severity` and `remedy` are optional.
+
 ### Telling a done file from a new one
 
-A flag bound to your script comes back on every scan unless something about the file changes. The usual trick is to tag the output (`-metadata my_tag=1` with ffmpeg, plus `-movflags +use_metadata_tags` for MP4) and add `when tag.my_tag is missing` to the rule that raises the flag. The example does exactly that.
+When the flag comes from a check script that looks at the content itself, like the subtitle-ads example, a repaired file simply stops being flagged.
+
+When the flag comes from a rule that cannot see the content, it comes back on every scan unless something about the file changes. The usual trick is to tag the output (`-metadata my_tag=1` with ffmpeg, plus `-movflags +use_metadata_tags` for MP4) and add `when tag.my_tag is missing` to the rule that raises the flag. The example does exactly that.

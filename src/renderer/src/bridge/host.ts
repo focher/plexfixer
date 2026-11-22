@@ -161,8 +161,8 @@ export function tauriHost(platform: string): RepairHost {
       return streaming((id) => invoke('process_start', { id, command, args }))
     },
 
-    startScript(script: string, input: string): HostProcess {
-      return streaming((id) => invoke('plugin_start', { id: script, processId: id, input }))
+    startScript(kind: 'checks' | 'repairs', script: string, input: string): HostProcess {
+      return streaming((id) => invoke('plugin_start', { kind, id: script, processId: id, input }))
     },
 
     kill: (marker: string): Promise<void> => invoke('process_kill_matching', { marker })
