@@ -34,6 +34,48 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.2.8',
+    headline: 'Looking a film up no longer closes the app \u2014 and now you can look up a whole shelf at once, and name the files from what comes back.',
+    changes: [
+      {
+        title: 'Searching themoviedb.org no longer closes the window',
+        body:
+          'It closed the app outright, and only sometimes, which made it look like anything but what it was: ' +
+          'the encryption the request needed had not been set up unless an update check happened to have run ' +
+          'first. It is now set up before the request rather than by luck.'
+      },
+      {
+        title: 'Look up a whole selection at once',
+        body:
+          'Bulk \u2192 Metadata lookup searches every selected file and shows you one list to review. Only the ' +
+          'answers it is confident about arrive ticked; the rest sit there with the reason beside them \u2014 a ' +
+          'year that disagrees with the file name, a title that drifted, two results that look equally likely ' +
+          '\u2014 and every row has the other results to pick from instead. Nothing is written until you press ' +
+          'Apply.'
+      },
+      {
+        title: 'Name repaired files from their own metadata',
+        body:
+          'Settings \u2192 Output takes a pattern such as {title} ({year}), and a repaired file is named from ' +
+          'what it says about itself \u2014 including the title and release date a lookup just wrote in. A file ' +
+          'missing any field you use keeps the name it has, so nothing is ever written as half a title.'
+      },
+      {
+        title: 'A rule for files that say nothing about themselves',
+        body:
+          'Under Settings \u2192 Checks & repairs, "Metadata worth looking up" points out files with no title ' +
+          'of their own, or carrying the file name again, or a ripper\u2019s leftovers. It ships switched off, ' +
+          'because it is true of most of a library and is cleared by hand.'
+      },
+      {
+        title: 'Better guesses from file names with a date in them',
+        body:
+          'A release date in the file name left a stray bracket in the search box \u2014 Casino Royale ' +
+          '(14-11-2006).mkv was searched for as "Casino Royale (". Both halves of that are now read properly.'
+      }
+    ]
+  },
+  {
     version: '0.2.7',
     headline: 'The rules are yours to read, to switch off, and to add to — and you can now edit a file yourself.',
     changes: [
