@@ -2889,3 +2889,153 @@ button.browser-row:hover:not(:disabled) {
 .stage-stall {
   color: var(--warn);
 }
+
+/* ------------------------------------------------------------------ *
+ * Checks & repairs as a draft, and scripts as a form
+ * ------------------------------------------------------------------ */
+
+.module-says {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.modules-heading-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Stays in view while the list scrolls, so unsaved changes are never out of sight. */
+.modules-savebar {
+  position: sticky;
+  bottom: 0;
+  margin-top: 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+.modules-savebar.pending {
+  border-color: var(--accent-line);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.modules-savebar .modules-actions {
+  margin: 0;
+}
+
+.script-form {
+  margin: 0 0 22px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+.script-form fieldset {
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+
+.script-form legend {
+  margin-bottom: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.script-form-grid,
+.script-form-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 8px;
+  align-items: end;
+}
+
+.script-form-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.script-form-grid label,
+.script-form-row label,
+.script-form-source {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.script-form .wide {
+  grid-column: 1 / -1;
+}
+
+.script-form-id {
+  font-size: 12px;
+}
+
+.script-form-source {
+  margin-top: 8px;
+}
+
+.script-form-source textarea {
+  width: 100%;
+  min-height: 180px;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.script-form-default {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.script-form-files {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.script-form-files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.script-form-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.script-form-chips .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.script-form-chips .chip button {
+  padding: 0 4px;
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

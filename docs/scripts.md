@@ -24,19 +24,32 @@ Bind the check's flag to the repair and you have the whole loop.
 4. **The output is checked before it replaces anything.** The last output is re-probed and checked like any repair's: video and audio still present, and the running time not cut short. Only then does it replace the original, with a backup if you keep them.
 5. **Then it is checked again.** If the repair's *Re-run the checks* box is on, the finished file is probed and analysed again. Any flag the job meant to fix that is still there is reported as *still flagged*. Nothing is retried automatically.
 
-## Installing a script
+## Adding a script
 
-1. Under *Settings → Checks & repairs*, press **Open checks folder** or **Open repairs folder**.
-   - These are `checks/` and `repairs/` in PlexFixer's data directory.
-   - On macOS that is `~/Library/Application Support/com.timothyweaver.plexfixer/`.
-2. Copy the script's folder in. The folder name must equal the manifest's `id`, using lower-case letters, digits and dashes only.
-3. Press **Reload**. The script appears as *Not approved*.
-4. Press **Review and approve…**. A native dialog shows the command, every file in the folder, and a fingerprint of them. Approve it only if you know what it does.
+Everything is done under *Settings → Checks & repairs*, in the **Check scripts** and **Repair scripts** groups. You never need to find a folder or write a manifest: the app keeps both for you.
+
+1. Press **New check script** or **New repair script**. A form opens.
+   - **About it:** the name, a one-line summary, and what it does. The id is made from the name.
+   - **How it runs:** what runs it (Python 3, Bash, Node.js, or another program) and the script itself. Either write it in the box, which starts with a working skeleton, or press **Choose a file…** to copy one in from your computer.
+   - **Settings it takes:** each one becomes a control under the script, which you can change later without touching the script.
+   - **Flags it can raise** (check scripts): the only flags it may report.
+   - **Written for** (repair scripts): the flags it is meant to fix, offered first when you pick a flag's repair.
+2. Press **Save script**. The script appears as *Not approved*.
+3. Press **Review and approve…**. A native dialog shows the command, every file, and a fingerprint of them. Approve it only if you know what it does.
    - Approving a check script switches it on and adds its flags.
-5. For the examples:
-   1. Approve both.
-   2. Rescan, so the check reads your files.
-   3. Open *Subtitle adverts*. Under *Flags it raises*, set the Repair of *Subtitle adverts* to *Script: Subtitle scrub*.
+4. To change a script later, press **Edit script**. Saving withdraws the approval until you approve it again. **Delete script** is at the bottom of the form.
+
+### The examples
+
+Both ship inside the app. Press **Add the subtitle adverts example** under Check scripts and **Add the subtitle scrub example** under Repair scripts, then:
+
+1. Approve both.
+2. Rescan, so the check reads your files.
+3. Open *Subtitle adverts*. Under *Flags it raises*, set the Repair of *Subtitle adverts* to *Script: Subtitle scrub*, and press **Save checks & repairs**.
+
+### Saving changes
+
+Changes to checks, repairs and scripts' settings are held until you press **Save checks & repairs** at the bottom of the section; **Discard changes** throws them away. Creating, editing, approving and deleting a script happen as soon as you press their buttons.
 
 ### Check scripts and scan time
 
@@ -58,7 +71,11 @@ So a slow script slows the first scan and nothing after it. Turning a check scri
 - **Scripts run only on this computer.** While the remote host is switched on, scripts do not run.
 - **The interpreter is not covered.** A script runs as you. Its interpreter, such as `python3`, is whatever is on your `PATH` when it runs, and that is not part of the fingerprint.
 
-## plugin.json
+## Reference: what the form writes
+
+This section is for script authors who want to know what is stored. The form writes it; nobody needs to.
+
+Each script is a folder, `checks/<id>/` or `repairs/<id>/`, in PlexFixer's data directory, holding the script's files and a `plugin.json`:
 
 ```jsonc
 {

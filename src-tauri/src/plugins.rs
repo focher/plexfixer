@@ -250,6 +250,169 @@ fn listing_of(id: String, dir: PathBuf, trusted_hash: Option<String>) -> Listing
 }
 
 /* ------------------------------------------------------------------ *
+ * Writing a script from the form
+ * ------------------------------------------------------------------ */
+
+/// The largest file the form reads or writes; a script, not a data set.
+const LONGEST_SOURCE: u64 = 1024 * 1024;
+/// The most files the form writes in one go.
+const MOST_SOURCES: usize = 32;
+
+/// One of a script's files, as the form sees it.
+#[derive(Clone, Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceFile {
+    /// Relative to the script's folder, with `/` between parts.
+    name: String,
+    size: u64,
+    /// The text, when the file is text and small enough to edit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptSource {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest: Option<String>,
+    files: Vec<SourceFile>,
+}
+
+/// A name the form may write: one plain file in the script's folder.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.starts_with('.')
+        && name != MANIFEST
+        && !name.contains(['/', '\\'])
+        && !name.chars().any(char::is_control)
+}
+
+fn read_source(dir: &Path) -> Result<ScriptSource, String> {
+    let manifest = read_manifest(dir).ok();
+    let files = files_in(dir)?
+        .into_iter()
+        .filter(|(name, _, _)| name != MANIFEST)
+        .map(|(name, path, size)| {
+            let content = (size <= LONGEST_SOURCE)
+                .then(|| std::fs::read(&path).ok())
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok());
+            SourceFile { name, size, content }
+        })
+        .collect();
+    Ok(ScriptSource { manifest, files })
+}
+
+/// Write a script's manifest and files under `root/<id>`.
+///
+/// `previous` is the id it was saved under before, or `None` for a new
+/// script, which may not take the folder of one that is already there. Files
+/// not named in `write` or `remove` are left as they are.
+fn save_source(
+    root: &Path,
+    id: &str,
+    previous: Option<&str>,
+    manifest: &str,
+    write: &BTreeMap<String, String>,
+    remove: &[String],
+) -> Result<(), String> {
+    if !valid_id(id) {
+        return Err("the id may use only lower-case letters, digits and dashes".into());
+    }
+    let parsed: Value = serde_json::from_str(manifest).map_err(|e| format!("the manifest is not JSON: {e}"))?;
+    if parsed.get("id").and_then(Value::as_str) != Some(id) {
+        return Err(format!("the manifest must be for {id}"));
+    }
+    if manifest.len() as u64 > LONGEST_MANIFEST {
+        return Err("the manifest is too large".into());
+    }
+    if write.len() > MOST_SOURCES {
+        return Err(format!("a script may be saved with at most {MOST_SOURCES} files"));
+    }
+    if let Some(name) = write.keys().chain(remove).find(|name| !plain_name(name)) {
+        return Err(format!("\"{name}\" cannot be a file name here"));
+    }
+    if let Some((name, _)) = write.iter().find(|(_, text)| text.len() as u64 > LONGEST_SOURCE) {
+        return Err(format!("{name} is larger than 1 MB"));
+    }
+
+    let dir = root.join(id);
+    match previous {
+        None => {
+            if dir.exists() {
+                return Err(format!("there is already a script called {id}"));
+            }
+            std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {id}: {e}"))?;
+        }
+        Some(previous) if previous != id => {
+            if !valid_id(previous) {
+                return Err(format!("{previous} is not a script id"));
+            }
+            if dir.exists() {
+                return Err(format!("there is already a script called {id}"));
+            }
+            std::fs::rename(root.join(previous), &dir).map_err(|e| format!("could not rename {previous}: {e}"))?;
+        }
+        Some(_) => {
+            if !dir.is_dir() {
+                return Err(format!("there is no script called {id}"));
+            }
+        }
+    }
+
+    for name in remove.iter().filter(|name| !write.contains_key(*name)) {
+        match std::fs::remove_file(dir.join(name)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("could not remove {name}: {e}")),
+            _ => {}
+        }
+    }
+    for (name, text) in write {
+        std::fs::write(dir.join(name), text).map_err(|e| format!("could not write {name}: {e}"))?;
+    }
+    std::fs::write(dir.join(MANIFEST), manifest).map_err(|e| format!("could not write the manifest: {e}"))
+}
+
+/// A picked file, as text the form can hold.
+fn imported(path: &Path) -> Result<SourceFile, String> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| plain_name(name))
+        .ok_or("that file's name cannot be used in a script")?;
+    let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if size > LONGEST_SOURCE {
+        return Err(format!("{name} is larger than 1 MB"));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("could not read {name}: {e}"))?;
+    let content = String::from_utf8(bytes).map_err(|_| format!("{name} is not a text file"))?;
+    Ok(SourceFile { name, size, content: Some(content) })
+}
+
+type ExampleFiles = Vec<(&'static str, &'static str)>;
+
+/// The examples that ship inside the app, by kind and name.
+fn example_files(kind: &str, example: &str) -> Option<(&'static str, ExampleFiles)> {
+    match (kind, example) {
+        ("checks", "subtitle-ads") => Some((
+            "subtitle-ads",
+            vec![
+                (MANIFEST, include_str!("../../examples/checks/subtitle-ads/plugin.json")),
+                ("check.py", include_str!("../../examples/checks/subtitle-ads/check.py")),
+            ],
+        )),
+        ("repairs", "subtitle-scrub") => Some((
+            "subtitle-scrub",
+            vec![
+                (MANIFEST, include_str!("../../examples/repairs/subtitle-scrub/plugin.json")),
+                ("scrub.py", include_str!("../../examples/repairs/subtitle-scrub/scrub.py")),
+            ],
+        )),
+        _ => None,
+    }
+}
+
+/* ------------------------------------------------------------------ *
  * Commands
  * ------------------------------------------------------------------ */
 
@@ -278,14 +441,117 @@ pub async fn plugins_list(app: AppHandle, kind: String) -> Result<Vec<Listing>, 
     .map_err(|e| e.to_string())
 }
 
-/// The folder scripts go in, created if need be, for "Open repairs folder".
+/// A script's files as the form edits them: its manifest, and the text of the rest.
 #[tauri::command]
-pub async fn plugins_folder(app: AppHandle, kind: String) -> Result<String, String> {
-    let root = scripts_dir(&app, &kind)?;
-    tokio::fs::create_dir_all(&root)
+pub async fn plugins_read(app: AppHandle, kind: String, id: String) -> Result<ScriptSource, String> {
+    if !valid_id(&id) {
+        return Err(format!("{id} is not a script id"));
+    }
+    let dir = scripts_dir(&app, &kind)?.join(&id);
+    tokio::task::spawn_blocking(move || read_source(&dir))
         .await
-        .map_err(|e| format!("could not create {}: {e}", root.display()))?;
-    Ok(root.to_string_lossy().into_owned())
+        .map_err(|e| e.to_string())?
+}
+
+/// Write a script from the form: a new one, or an existing one under its old id.
+///
+/// Whatever is written, the folder's hash changes with it, so a script saved
+/// here is no longer approved and has to be approved again before it runs.
+/// When the id changes the folder moves, and the old id's approval goes.
+#[tauri::command]
+pub async fn plugins_save(
+    app: AppHandle,
+    kind: String,
+    id: String,
+    previous_id: Option<String>,
+    manifest: String,
+    write: BTreeMap<String, String>,
+    remove: Vec<String>,
+) -> Result<(), String> {
+    let root = scripts_dir(&app, &kind)?;
+    let saved = {
+        let (id, previous_id) = (id.clone(), previous_id.clone());
+        tokio::task::spawn_blocking(move || {
+            save_source(&root, &id, previous_id.as_deref(), &manifest, &write, &remove)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    saved?;
+    if let Some(previous) = previous_id.filter(|previous| *previous != id) {
+        let mut trust = trusted(&app).await;
+        if trust.remove(&trust_key(&kind, &previous)).is_some() {
+            save_trusted(&app, &trust).await?;
+        }
+    }
+    Ok(())
+}
+
+/// A file the user picks, read as text for the form to put in a script.
+///
+/// The webview never names the path: the native picker does, and only what
+/// was picked is read. `None` when the user cancels.
+#[tauri::command]
+pub async fn plugins_import_file(app: AppHandle) -> Result<Option<SourceFile>, String> {
+    let (answer, asked) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose the script file")
+        .pick_file(move |picked| {
+            let _ = answer.send(picked);
+        });
+    let Some(picked) = asked.await.unwrap_or(None) else { return Ok(None) };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || imported(&path).map(Some))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Delete a script, after asking in a native dialog; true when it is gone.
+#[tauri::command]
+pub async fn plugins_delete(app: AppHandle, kind: String, id: String) -> Result<bool, String> {
+    if !valid_id(&id) {
+        return Err(format!("{id} is not a script id"));
+    }
+    let dir = scripts_dir(&app, &kind)?.join(&id);
+    let (answer, asked) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(format!("Delete the script \"{id}\" and all of its files? This cannot be undone."))
+        .title("Delete this script?")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("Delete".into(), "Cancel".into()))
+        .show(move |confirmed| {
+            let _ = answer.send(confirmed);
+        });
+    if !asked.await.unwrap_or(false) {
+        return Ok(false);
+    }
+    tokio::fs::remove_dir_all(&dir)
+        .await
+        .map_err(|e| format!("could not delete {id}: {e}"))?;
+    let mut trust = trusted(&app).await;
+    if trust.remove(&trust_key(&kind, &id)).is_some() {
+        save_trusted(&app, &trust).await?;
+    }
+    Ok(true)
+}
+
+/// Add one of the examples that ship with the app, as a new script; its id.
+#[tauri::command]
+pub async fn plugins_add_example(app: AppHandle, kind: String, example: String) -> Result<String, String> {
+    let (id, files) = example_files(&kind, &example).ok_or_else(|| format!("there is no example called {example}"))?;
+    let root = scripts_dir(&app, &kind)?;
+    tokio::task::spawn_blocking(move || {
+        let manifest = files.iter().find(|(name, _)| *name == MANIFEST).map(|(_, text)| *text).unwrap_or("");
+        let write = files
+            .iter()
+            .filter(|(name, _)| *name != MANIFEST)
+            .map(|(name, text)| (name.to_string(), text.to_string()))
+            .collect();
+        save_source(&root, id, None, manifest, &write, &[]).map(|_| id.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Ask the user, in a native dialog, to approve a script as it is now.
@@ -504,5 +770,63 @@ mod tests {
         assert!(command_of(&json!({ "id": "scrub" }), "scrub", &dir).is_err());
         assert!(command_of(&json!({ "id": "scrub", "command": [] }), "scrub", &dir).is_err());
         assert!(command_of(&json!({ "id": "scrub", "command": ["a", 3] }), "scrub", &dir).is_err());
+    }
+
+    fn files(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries.iter().map(|(name, text)| (name.to_string(), text.to_string())).collect()
+    }
+
+    #[test]
+    fn a_saved_script_reads_back() {
+        let root = scratch("save");
+        let manifest = r#"{"id":"scrub","command":["python3"]}"#;
+        save_source(&root, "scrub", None, manifest, &files(&[("scrub.py", "print(1)")]), &[]).unwrap();
+        let source = read_source(&root.join("scrub")).unwrap();
+        assert_eq!(source.manifest.as_deref(), Some(manifest));
+        assert_eq!(
+            source.files,
+            vec![SourceFile { name: "scrub.py".into(), size: 8, content: Some("print(1)".into()) }]
+        );
+
+        // A second new script may not take the folder.
+        assert!(save_source(&root, "scrub", None, manifest, &BTreeMap::new(), &[]).is_err());
+
+        // Saving again replaces what is named, removes what is asked, keeps the rest.
+        std::fs::write(root.join("scrub/keep.txt"), "kept").unwrap();
+        save_source(&root, "scrub", Some("scrub"), manifest, &files(&[("new.py", "x")]), &["scrub.py".into()]).unwrap();
+        let names: Vec<_> = read_source(&root.join("scrub")).unwrap().files.into_iter().map(|f| f.name).collect();
+        assert_eq!(names, vec!["keep.txt", "new.py"]);
+    }
+
+    #[test]
+    fn a_new_id_moves_the_folder() {
+        let root = scratch("rename");
+        save_source(&root, "old", None, r#"{"id":"old"}"#, &files(&[("a.py", "a")]), &[]).unwrap();
+        save_source(&root, "new", Some("old"), r#"{"id":"new"}"#, &BTreeMap::new(), &[]).unwrap();
+        assert!(!root.join("old").exists());
+        assert!(root.join("new/a.py").is_file());
+    }
+
+    #[test]
+    fn only_plain_names_in_its_own_folder_are_written() {
+        let root = scratch("names");
+        let manifest = r#"{"id":"s"}"#;
+        for bad in ["../escape.py", "sub/dir.py", ".hidden", "plugin.json", ""] {
+            assert!(save_source(&root, "s", None, manifest, &files(&[(bad, "x")]), &[]).is_err(), "{bad}");
+        }
+        assert!(save_source(&root, "s", None, manifest, &BTreeMap::new(), &["../x".into()]).is_err());
+        assert!(save_source(&root, "s", None, r#"{"id":"other"}"#, &BTreeMap::new(), &[]).is_err());
+        assert!(save_source(&root, "../s", None, r#"{"id":"../s"}"#, &BTreeMap::new(), &[]).is_err());
+    }
+
+    #[test]
+    fn the_examples_are_for_their_own_folders() {
+        for (kind, example) in [("checks", "subtitle-ads"), ("repairs", "subtitle-scrub")] {
+            let (id, files) = example_files(kind, example).unwrap();
+            let manifest: Value = serde_json::from_str(files[0].1).unwrap();
+            assert_eq!(manifest["id"], id);
+            assert!(files.iter().skip(1).all(|(name, _)| plain_name(name)));
+        }
+        assert!(example_files("checks", "subtitle-scrub").is_none());
     }
 }

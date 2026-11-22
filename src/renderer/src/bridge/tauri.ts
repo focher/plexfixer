@@ -296,6 +296,30 @@ function applyToRunningQueue(settings: AppSettings): void {
   runner?.setConcurrency(settings.concurrency)
 }
 
+/** One of a script's files, as the native side read it. */
+export interface ScriptSourceFile {
+  name: string
+  size: number
+  /** Absent when the file is not text, or too large to edit. */
+  content?: string
+}
+
+export interface ScriptSource {
+  manifest?: string
+  files: ScriptSourceFile[]
+}
+
+export interface ScriptSave {
+  kind: ScriptKind
+  id: string
+  previousId?: string
+  manifest: string
+  /** Files to write, by name. */
+  write: Record<string, string>
+  /** Files to delete, by name. */
+  remove: string[]
+}
+
 /** The scripts of one kind installed now, read and checked. */
 async function listScripts(kind: ScriptKind = 'repairs'): Promise<ScriptInfo[]> {
   const listings = await invoke<ScriptListing[]>('plugins_list', { kind })
@@ -657,9 +681,18 @@ function buildApi() {
       /** Shows the native approval dialog; resolves true when approved. */
       approve: (kind: ScriptKind, id: string): Promise<boolean> => invoke<boolean>('plugins_trust', { kind, id }),
       revoke: (kind: ScriptKind, id: string): Promise<void> => invoke('plugins_revoke', { kind, id }),
-      /** Creates the folder for that kind of script if need be, and shows it. */
-      openFolder: async (kind: ScriptKind): Promise<void> =>
-        revealItemInDir(await invoke<string>('plugins_folder', { kind }))
+      /** A script's manifest and the text of its other files, for the form. */
+      read: (kind: ScriptKind, id: string): Promise<ScriptSource> => invoke<ScriptSource>('plugins_read', { kind, id }),
+      /** Writes a script from the form; `previousId` is absent for a new one. */
+      save: (save: ScriptSave): Promise<void> => invoke('plugins_save', { ...save }),
+      /** A text file the user picks in a native dialog; undefined when they cancel. */
+      importFile: async (): Promise<ScriptSourceFile | undefined> =>
+        (await invoke<ScriptSourceFile | null>('plugins_import_file')) ?? undefined,
+      /** Asks in a native dialog, then deletes; resolves true when it is gone. */
+      remove: (kind: ScriptKind, id: string): Promise<boolean> => invoke<boolean>('plugins_delete', { kind, id }),
+      /** Adds an example that ships with the app; resolves to its id. */
+      addExample: (kind: ScriptKind, example: string): Promise<string> =>
+        invoke<string>('plugins_add_example', { kind, example })
     },
     shell: {
       reveal: (path: string): Promise<void> => revealItemInDir(path),
