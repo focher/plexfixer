@@ -2665,3 +2665,60 @@ button.browser-row:hover:not(:disabled) {
 .template-preview p:last-child {
   margin-bottom: 0;
 }
+
+/* --- looking a whole selection up ---------------------------------------- */
+
+.bulk-metadata-dialog {
+  width: min(820px, 92vw);
+}
+
+.bulk-metadata-rows {
+  max-height: 52vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 10px;
+}
+
+.bulk-metadata-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bulk-metadata-row:last-child {
+  border-bottom: none;
+}
+
+.bulk-metadata-row.taken {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.bulk-metadata-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.bulk-metadata-file {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bulk-metadata-match {
+  margin-top: 4px;
+}
+
+.bulk-metadata-match select {
+  width: 100%;
+}
+
+.bulk-metadata-warn {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--warn, #d9a441);
+}

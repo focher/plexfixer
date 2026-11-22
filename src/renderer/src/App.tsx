@@ -15,6 +15,7 @@ import { DEFAULT_SORT, nextSort, sortResults, type SortState } from '@shared/sor
 import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
 import MenuButton from './components/MenuButton.js'
+import BulkMetadataDialog from './components/BulkMetadataDialog.js'
 import { repairConfirmation, summarizeRepair } from '@shared/bulk.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
@@ -114,6 +115,8 @@ export default function App(): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [scanErrors, setScanErrors] = useState<ScanError[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // The paths a bulk metadata lookup is open for; undefined when it is not.
+  const [lookingUp, setLookingUp] = useState<string[] | undefined>()
   const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
   const [codecs, setCodecs] = useState<CodecFilter>(emptyCodecFilter)
   const [status, setStatus] = useState<FileStatus>()
@@ -567,6 +570,17 @@ export default function App(): React.JSX.Element {
     await window.plexfixer.jobs.enqueue([{ file: entry.file, scanRoot: entry.scanRoot, edits }], 'safe-remux')
   }, [])
 
+  /** The same thing for a whole selection, queued in one go. */
+  const applyMetadataMany = useCallback(async (edits: { path: string; edit: MetadataEdit }[]) => {
+    const items = edits.flatMap(({ path, edit }) => {
+      const entry = libraryRef.current.get(path)
+      return entry ? [{ file: entry.file, scanRoot: entry.scanRoot, edits: edit }] : []
+    })
+    if (items.length === 0) return
+    setTab('jobs')
+    await window.plexfixer.jobs.enqueue(items, 'safe-remux')
+  }, [])
+
   /* --- drag and drop ---------------------------------------------------- */
 
   /**
@@ -778,6 +792,14 @@ export default function App(): React.JSX.Element {
                       label: 'Force transcode',
                       hint: 'Fix everything, re-encoding video only where a remux cannot',
                       onSelect: () => void repair(selectedPaths, 'force-transcode')
+                    },
+                    {
+                      key: 'metadata',
+                      label: 'Metadata lookup',
+                      hint: 'Search themoviedb.org for each file and review the answers before writing',
+                      disabled: !settings || settings.tmdbCredential.trim() === '',
+                      disabledHint: 'Add your themoviedb.org key under Settings → Metadata first',
+                      onSelect: () => setLookingUp(selectedPaths)
                     }
                   ]}
                 />
@@ -1222,6 +1244,21 @@ export default function App(): React.JSX.Element {
 
       {whatsNew.length > 0 ? (
         <WhatsNewDialog notes={whatsNew} onClose={() => setWhatsNew([])} />
+      ) : null}
+
+      {lookingUp && settings ? (
+        <BulkMetadataDialog
+          files={lookingUp.flatMap((path) => {
+            const entry = library.get(path)
+            return entry ? [entry.file] : []
+          })}
+          settings={settings}
+          onClose={() => setLookingUp(undefined)}
+          onApply={(edits) => {
+            setLookingUp(undefined)
+            void applyMetadataMany(edits)
+          }}
+        />
       ) : null}
 
       {browsingRemote ? (
