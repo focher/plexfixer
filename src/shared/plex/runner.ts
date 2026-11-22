@@ -10,6 +10,8 @@ import { newId } from '../ids.js'
 import type {
   AnalysisResult,
   AppSettings,
+  FindingCode,
+  ScriptStep,
   EncoderCapabilities,
   Job,
   JobLogLevel,
@@ -37,9 +39,16 @@ import {
   promoteOutput,
   redirectOutput,
   resolveOutputPath,
+  scriptTemporaryPathFor,
   temporaryPathFor
 } from './output.js'
 import { outputProblem } from './verify.js'
+import { analyzeFile } from './analyze.js'
+import { remainingFlags, wantsRecheck } from './recheck.js'
+import type { ScriptInfo } from './scripts/manifest.js'
+import { buildScriptInput } from './scripts/protocol.js'
+import { ScriptError, runScript } from './scripts/run.js'
+import { resolveParams } from './modules/params.js'
 import { TaskQueue } from './queue.js'
 import { REFUSAL_REASON, inPlaceVerdict } from './inplace.js'
 import type { BackupRecord } from '../backups.js'
@@ -59,6 +68,8 @@ export interface EnqueueOptions {
   mode: RepairMode
   caps?: EncoderCapabilities
   scanRoot?: string
+  /** The repair scripts installed now, for any the plan runs. */
+  scripts?: readonly ScriptInfo[]
 }
 
 export type JobListener = (job: Job) => void
@@ -423,6 +434,112 @@ export class RepairRunner {
     return base
   }
 
+  /** Run one repair script from `input` to `output`, feeding what it says into the job. */
+  private async runScriptStep(
+    id: string,
+    options: EnqueueOptions,
+    step: ScriptStep,
+    input: string,
+    output: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    const info = options.scripts?.find((script) => script.id === step.script)
+    if (!info?.manifest) {
+      throw new Error(`The repair script ${step.script} is not installed. Add it under Settings → Checks & repairs.`)
+    }
+    if (info.trust !== 'approved') {
+      throw new Error(
+        info.trust === 'changed'
+          ? `The repair script ${info.manifest.name} has changed since it was approved. Review and approve it again.`
+          : `The repair script ${info.manifest.name} has not been approved yet.`
+      )
+    }
+    const manifest = info.manifest
+    this.setStage(id, 'scripts')
+    this.log(id, 'info', `Running repair script ${manifest.name}`, `${manifest.command.join(' ')}\nreads   ${input}\nwrites  ${output}`)
+    const started = performance.now()
+    try {
+      const { message } = await runScript({
+        host: this.host,
+        script: step.script,
+        signal,
+        timeoutSeconds: manifest.timeoutSeconds,
+        input: buildScriptInput({
+          id: step.script,
+          version: manifest.version,
+          input,
+          output,
+          flags: step.flags,
+          params: resolveParams(manifest.params, manifest.defaults, step.params),
+          file: options.result.file,
+          ffmpegPath: this.binaries.ffmpegPath,
+          ffprobePath: this.binaries.ffprobePath,
+          settings: options.settings
+        }),
+        onEvent: (event) => {
+          if (event.type === 'log') this.log(id, event.level, event.text, event.detail)
+          if (event.type === 'progress') {
+            const job = this.jobs.get(id)
+            if (job) this.update({ ...job, progress: { ...job.progress, fraction: event.fraction }, message: event.message ?? job.message })
+          }
+        }
+      })
+      this.addPhase(id, 'script', performance.now() - started, { note: manifest.name })
+      this.log(id, 'info', `${manifest.name} finished${message ? `: ${message}` : ''}`)
+    } catch (error) {
+      this.addPhase(id, 'script', performance.now() - started, { note: `${manifest.name} failed` })
+      if (error instanceof ScriptError && error.stderrTail) {
+        this.log(id, 'error', error.message, error.stderrTail)
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Run the checks again on what the repair wrote, when its repairs ask for it.
+   *
+   * Never fails the job: the repair is done by now, and a probe that does not
+   * work is worth a line in the log, not a red row. Nothing is repaired again
+   * on the strength of what it finds — a flag that is still there is reported.
+   */
+  private async recheck(
+    id: string,
+    options: EnqueueOptions,
+    finalPath: string
+  ): Promise<{ file?: MediaFile; remaining?: FindingCode[]; notes: string[] }> {
+    const { result, settings } = options
+    if (!wantsRecheck(result, settings)) {
+      this.log(id, 'info', 'Not re-checking the file: its repairs are set not to')
+      return { notes: [] }
+    }
+    this.setStage(id, 'recheck')
+    const started = performance.now()
+    try {
+      const file = await probeFile(finalPath, {
+        ffprobePath: this.binaries.ffprobePath,
+        includeSidecars: true,
+        host: this.host
+      })
+      const after = analyzeFile(file, settings)
+      const remaining = remainingFlags(result, after)
+      this.addPhase(id, 'recheck', performance.now() - started)
+      if (remaining.length > 0) {
+        this.log(
+          id,
+          'warn',
+          `Re-checked: ${remaining.length} flag${remaining.length === 1 ? '' : 's'} this repair was meant to fix ${remaining.length === 1 ? 'is' : 'are'} still there`,
+          remaining.join('\n')
+        )
+        return { file, remaining, notes: [`still flagged: ${remaining.join(', ')}`] }
+      }
+      this.log(id, 'info', `Re-checked: ${after.findings.length === 0 ? 'no flags left' : 'every flag it set out to fix is gone'}`)
+      return { file, remaining, notes: [] }
+    } catch (error) {
+      this.log(id, 'warn', 'Could not re-check the repaired file; rescan it to see where it stands', String(error))
+      return { notes: [] }
+    }
+  }
+
   /**
    * Write a metadata-only repair straight into the file.
    *
@@ -435,6 +552,9 @@ export class RepairRunner {
    */
   private async tryInPlace(id: string, options: EnqueueOptions, outputPath: string): Promise<boolean> {
     const { result, settings } = options
+    // A repair script is handed a whole file to read and one to write, so a
+    // plan with one is always written out in full.
+    if ((result.plan.scriptSteps ?? []).length > 0) return false
     if (this.host.kind === 'remote') {
       this.slowPath(
         id,
@@ -601,18 +721,25 @@ export class RepairRunner {
       })
       // Re-read: the lines above are updates of their own, and spreading the
       // snapshot taken before them would throw the measurements away.
+      const recheck = await this.recheck(id, options, result.file.path)
       const finished = this.jobs.get(id) ?? running
       const seconds = finished.startedAt ? ((Date.now() - finished.startedAt) / 1000).toFixed(1) : '?'
+      const notes = [
+        backupPath
+          ? `edited in place — nothing copied; original kept in ${this.host.paths.join(BACKUP_LABEL, this.host.paths.basename(backupPath))}`
+          : 'edited in place — nothing copied',
+        ...recheck.notes
+      ]
       this.update({
         ...finished,
         state: 'done',
         stage: 'finished',
         outputPath: result.file.path,
         progress: { ...finished.progress, fraction: 1 },
-        message: backupPath
-          ? `edited in place — nothing copied; original kept in ${this.host.paths.join(BACKUP_LABEL, this.host.paths.basename(backupPath))}`
-          : 'edited in place — nothing copied',
+        message: notes.join('; '),
         finishedAt: Date.now(),
+        rechecked: recheck.file,
+        remaining: recheck.remaining,
         log: [...finished.log, { at: Date.now(), level: 'info', text: `Done in ${seconds}s` }]
       })
     }
@@ -685,6 +812,9 @@ export class RepairRunner {
     // failure with the repair already done, and must not be reported — or
     // cleaned up after — as though nothing had been touched.
     let promotedTo: string | undefined
+    // The file the next step reads: ffmpeg's output, then each script's.
+    let working = temporaryPath
+    const scriptTemporaries: string[] = []
 
     try {
       let probed: MediaFile | undefined
@@ -718,10 +848,36 @@ export class RepairRunner {
       const problem = outputProblem(result.file, probed)
       if (problem) throw new Error(problem)
 
+      // Repair scripts work on what ffmpeg wrote, one after another, each
+      // writing a new temporary. What the last one wrote is checked the same
+      // way ffmpeg's output was, and only then promoted.
+      const steps = result.plan.scriptSteps ?? []
+      if (steps.length > 0) {
+        for (const [at, step] of steps.entries()) {
+          const next = scriptTemporaryPathFor(outputPath, this.host, at)
+          scriptTemporaries.push(next)
+          await this.runScriptStep(id, options, step, working, next, signal)
+          await discardTemporary(working, this.host)
+          working = next
+        }
+        this.setStage(id, 'verifying')
+        const scriptVerifyStarted = performance.now()
+        const scripted = await probeFile(working, {
+          ffprobePath: this.binaries.ffprobePath,
+          includeSidecars: false,
+          host: this.host
+        })
+        this.addPhase(id, 'verify', performance.now() - scriptVerifyStarted, { note: 'after the repair scripts' })
+        this.log(id, 'info', 'Re-probed what the scripts wrote', describeStreams(scripted))
+        const scriptProblem = outputProblem(result.file, scripted)
+        if (scriptProblem) throw new Error(`After the repair scripts: ${scriptProblem}`)
+        outputBytes = scripted.sizeBytes
+      }
+
       this.setStage(id, 'promoting')
       const promoteStarted = performance.now()
       const { finalPath, backupPath, originalLeft } = await promoteOutput(
-        temporaryPath,
+        working,
         outputPath,
         result.file.path,
         settings,
@@ -786,6 +942,9 @@ export class RepairRunner {
       if (backupPath) notes.push(`original kept in ${this.host.paths.join(BACKUP_LABEL, this.host.paths.basename(backupPath))}`)
       if (extracted > 0) notes.push(`${extracted} subtitle sidecar${extracted === 1 ? '' : 's'} written`)
 
+      const recheck = await this.recheck(id, options, finalPath)
+      notes.push(...recheck.notes)
+
       const running = this.jobs.get(id)
       if (running) {
         this.addPhase(id, 'total', running.startedAt ? Date.now() - running.startedAt : 0)
@@ -799,6 +958,8 @@ export class RepairRunner {
           progress: { ...job.progress, fraction: 1 },
           message: notes.length > 0 ? notes.join('; ') : undefined,
           finishedAt: Date.now(),
+          rechecked: recheck.file,
+          remaining: recheck.remaining,
           log: [...job.log, { at: Date.now(), level: 'info', text: `Done in ${seconds}s` }]
         })
       }
@@ -807,7 +968,10 @@ export class RepairRunner {
       // repaired file in its temporary as the only copy beside the library —
       // tidying that away is how a failed move used to become a lost file.
       const stranded = error instanceof PromoteError
-      if (!stranded && !promotedTo) await discardTemporary(temporaryPath, this.host)
+      if (!stranded && !promotedTo) {
+        await discardTemporary(temporaryPath, this.host)
+        for (const scripted of scriptTemporaries) await discardTemporary(scripted, this.host)
+      }
       const running = this.jobs.get(id)
       if (!running) return
       const cancelled = signal.aborted

@@ -110,6 +110,17 @@ export function temporaryPathFor(outputPath: string, host: RepairHost): string {
   return host.paths.join(dir, `.plexfixer-${temporaryTag()}-${base}`)
 }
 
+/**
+ * The scratch path a repair script writes to: beside the destination like the
+ * others, and named by its place in the plan, because each script reads the
+ * file the step before it wrote and cannot write over what it is reading.
+ */
+export function scriptTemporaryPathFor(outputPath: string, host: RepairHost, step: number): string {
+  const dir = host.paths.dirname(outputPath)
+  const base = host.paths.basename(outputPath)
+  return host.paths.join(dir, `.plexfixer-${temporaryTag()}-script${step + 1}-${base}`)
+}
+
 /** Append " (2)", " (3)" … until the path is free. */
 export async function uniquePath(path: string, host: RepairHost): Promise<string> {
   if (!(await host.exists(path))) return path

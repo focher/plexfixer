@@ -66,6 +66,44 @@ function startRouting(): Promise<void> {
  * saved. Nothing here vouches for a path: a check that takes the caller's word
  * for what is allowed is not a check.
  */
+
+/**
+ * A process the native side streams: output events while it runs, one event
+ * when it ends. `start` asks for it to be started under the id given.
+ */
+function streaming(start: (id: string) => Promise<unknown>): HostProcess {
+  const id = newId()
+  const stdout: ((chunk: string) => void)[] = []
+  const stderr: ((chunk: string) => void)[] = []
+
+  outputListeners.set(id, (event) => {
+    for (const listener of event.stream === 'stdout' ? stdout : stderr) listener(event.text)
+  })
+
+  const closed = new Promise<{ code: number | null; signalName?: string }>((resolve, reject) => {
+    endedListeners.set(id, (event) => {
+      outputListeners.delete(id)
+      endedListeners.delete(id)
+      resolve({ code: event.code, signalName: event.signalName })
+    })
+
+    void startRouting()
+      .then(() => start(id))
+      .catch((error: unknown) => {
+        outputListeners.delete(id)
+        endedListeners.delete(id)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      })
+  })
+
+  return {
+    onStdout: (listener) => stdout.push(listener),
+    onStderr: (listener) => stderr.push(listener),
+    closed,
+    terminate: () => void invoke('process_terminate', { id })
+  }
+}
+
 export function tauriHost(platform: string): RepairHost {
   return {
     kind: 'local',
@@ -120,38 +158,11 @@ export function tauriHost(platform: string): RepairHost {
       invoke('find_media', { roots, extensions, recursive }),
 
     spawnProcess(command: string, args: string[]): HostProcess {
-      const id = newId()
-      const stdout: ((chunk: string) => void)[] = []
-      const stderr: ((chunk: string) => void)[] = []
+      return streaming((id) => invoke('process_start', { id, command, args }))
+    },
 
-      outputListeners.set(id, (event) => {
-        for (const listener of event.stream === 'stdout' ? stdout : stderr) listener(event.text)
-      })
-
-      const closed = new Promise<{ code: number | null; signalName?: string }>((resolve, reject) => {
-        endedListeners.set(id, (event) => {
-          outputListeners.delete(id)
-          endedListeners.delete(id)
-          resolve({ code: event.code, signalName: event.signalName })
-        })
-
-        void startRouting()
-          .then(() =>
-            invoke('process_start', { id, command, args })
-          )
-          .catch((error: unknown) => {
-            outputListeners.delete(id)
-            endedListeners.delete(id)
-            reject(error instanceof Error ? error : new Error(String(error)))
-          })
-      })
-
-      return {
-        onStdout: (listener) => stdout.push(listener),
-        onStderr: (listener) => stderr.push(listener),
-        closed,
-        terminate: () => void invoke('process_terminate', { id })
-      }
+    startScript(script: string, input: string): HostProcess {
+      return streaming((id) => invoke('plugin_start', { id: script, processId: id, input }))
     },
 
     kill: (marker: string): Promise<void> => invoke('process_kill_matching', { marker })

@@ -17,6 +17,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
+import { scriptInfo, type ScriptInfo, type ScriptListing } from '@shared/plex/scripts/manifest.js'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { withDefaults } from '@shared/defaults.js'
 import { parseLaunchArgs } from '@shared/launch.js'
@@ -293,6 +294,12 @@ function applyToRunningQueue(settings: AppSettings): void {
   runner?.setConcurrency(settings.concurrency)
 }
 
+/** The repair scripts installed now, read and checked. */
+async function listScripts(): Promise<ScriptInfo[]> {
+  const listings = await invoke<ScriptListing[]>('plugins_list')
+  return listings.map(scriptInfo)
+}
+
 function buildApi() {
   return {
     settings: {
@@ -546,6 +553,9 @@ function buildApi() {
           const ready = await toolchain()
           if ('problem' in ready) throw new Error(ready.problem)
           const environment = await environmentFor(ready.settings, false)
+          // Read once per batch, so a script approved or edited meanwhile is
+          // seen as it is now; the native side checks again before running it.
+          const scripts = await listScripts()
 
           const jobs: Job[] = []
           for (const request of requests) {
@@ -565,7 +575,8 @@ function buildApi() {
                 settings: ready.settings,
                 mode: repairModeFor(probed.path, overrides, ready.settings.defaultMode, mode),
                 caps: environment.capabilities,
-                scanRoot: request.scanRoot
+                scanRoot: request.scanRoot,
+                scripts
               })
             )
           }
@@ -581,6 +592,15 @@ function buildApi() {
       clearFinished: async (): Promise<void> => runner?.clearFinished(),
       clearQueued: async (): Promise<number> => runner?.clearQueued() ?? 0,
       onUpdate: (listener: (job: Job) => void): Unsubscribe => jobUpdate.on(listener)
+    },
+    scripts: {
+      /** Every folder under the repairs directory, read and checked. */
+      list: listScripts,
+      /** Shows the native approval dialog; resolves true when approved. */
+      approve: (id: string): Promise<boolean> => invoke<boolean>('plugins_trust', { id }),
+      revoke: (id: string): Promise<void> => invoke('plugins_revoke', { id }),
+      /** Creates the repairs folder if need be, and shows it. */
+      openFolder: async (): Promise<void> => revealItemInDir(await invoke<string>('plugins_folder'))
     },
     shell: {
       reveal: (path: string): Promise<void> => revealItemInDir(path),

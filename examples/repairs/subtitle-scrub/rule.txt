@@ -1,0 +1,12 @@
+# Paste this into Settings → Checks & repairs → New rule, then open the rule
+# and set its flag's repair to "Script: Subtitle scrub".
+#
+# It flags files with text subtitles the scrub script has not been through.
+# The script tags what it writes, so a scrubbed file stops matching.
+
+name Unscrubbed subtitles
+summary Text subtitles that may still carry adverts
+when subtitle.codec in subrip, mov_text
+when tag.plexfixer_scrubbed is missing
+report warning "Text subtitles not scrubbed"
+       "Text subtitles that have not been through the subtitle scrub script, so they may still carry advert or credit lines."

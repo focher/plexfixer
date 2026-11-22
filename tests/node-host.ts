@@ -69,7 +69,7 @@ const localPaths: HostPaths = {
  * a webview as well as here; this is the ten lines that make Node's version
  * fit it.
  */
-function nodeProcess(child: ChildProcessWithoutNullStreams): HostProcess {
+export function nodeProcess(child: ChildProcessWithoutNullStreams): HostProcess {
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')
   return {
