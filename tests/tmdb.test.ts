@@ -221,4 +221,42 @@ describe('guessing what to search for', () => {
     // asking can tell, and the search box is editable for exactly this.
     expect(guessTitle('1917.mkv')).toEqual({ title: '', year: '1917' })
   })
+
+  it('takes a bracketed release date, not just a bracketed year', () => {
+    expect(guessTitle('Casino Royale (2006-11-14).mkv')).toEqual({ title: 'Casino Royale', year: '2006' })
+    expect(guessTitle('Casino Royale [2006.11.14].mkv')).toEqual({ title: 'Casino Royale', year: '2006' })
+    expect(guessTitle('Casino Royale (2006-11).m4v')).toEqual({ title: 'Casino Royale', year: '2006' })
+  })
+
+  it('does not leave the bracket behind when the year is cut out of one', () => {
+    // The bug this is here for: a date written day-first is not a bracketed
+    // year, so the year is found bare — inside a bracket that then has
+    // nothing to close it.
+    expect(guessTitle('Casino Royale (14-11-2006).mkv')).toEqual({ title: 'Casino Royale', year: '2006' })
+    expect(guessTitle('Casino Royale [14 November 2006].mkv')).toEqual({
+      title: 'Casino Royale',
+      year: '2006'
+    })
+    expect(guessTitle('Casino.Royale.(2006.11.14).1080p.mkv').title).toBe('Casino Royale')
+  })
+
+  it('prefers a bracketed date over a later bare year', () => {
+    // The bracketed one is the release; the bare one is whoever remastered
+    // it. Reading the date as a date is the only way to tell them apart.
+    expect(guessTitle('Casino Royale (2006-11-14) 2019 Remaster.mkv')).toEqual({
+      title: 'Casino Royale',
+      year: '2006'
+    })
+  })
+
+  it('leaves a bracket that closes where it is', () => {
+    expect(guessTitle('Fanny and Alexander (TV Cut).mkv')).toEqual({
+      title: 'Fanny and Alexander (TV Cut)',
+      year: undefined
+    })
+    expect(guessTitle('Fanny and Alexander (TV Cut) (1982).mkv')).toEqual({
+      title: 'Fanny and Alexander (TV Cut)',
+      year: '1982'
+    })
+  })
 })

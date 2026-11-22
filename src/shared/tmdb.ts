@@ -182,8 +182,11 @@ const NOISE =
  * A year in brackets, which is the convention Plex asks for and the only
  * unambiguous form: `Blade Runner 2049 (2017)` has two numbers that look like
  * years and only one of them is one.
+ *
+ * A full release date counts: some libraries write `(2017-05-05)`, and the
+ * year is still the only part of it worth searching on.
  */
-const BRACKETED_YEAR = /[([](19\d{2}|20\d{2})[)\]]/
+const BRACKETED_YEAR = /[([](19\d{2}|20\d{2})(?:[-./]\d{1,2}){0,2}[)\]]/
 
 /** A year standing on its own, for names written without the brackets. */
 const BARE_YEAR = /\b(19\d{2}|20\d{2})\b/g
@@ -191,6 +194,22 @@ const BARE_YEAR = /\b(19\d{2}|20\d{2})\b/g
 export interface GuessedTitle {
   title: string
   year?: string
+}
+
+/**
+ * Drop a bracket that never closes, and everything after it.
+ *
+ * Cutting the year out of the middle of a name leaves whatever opened the
+ * bracket it was sitting in: `Blade Runner (05-05-2017)` cut at the year
+ * leaves `Blade Runner (05-05-`. A half-open bracket is never part of a
+ * title, so everything from it onwards goes. A bracket that does close is
+ * left alone — `Fanny and Alexander (TV Cut)` means it.
+ */
+function dropUnclosedBracket(name: string): string {
+  const open = Math.max(name.lastIndexOf('('), name.lastIndexOf('['))
+  if (open === -1) return name
+  const close = Math.max(name.lastIndexOf(')'), name.lastIndexOf(']'))
+  return close > open ? name : name.slice(0, open)
 }
 
 /**
@@ -229,10 +248,10 @@ export function guessTitle(fileName: string): GuessedTitle {
   if (noise) name = name.slice(0, noise.index)
 
   // Separators, then the punctuation a title is left wearing.
-  name = name
+  name = dropUnclosedBracket(name)
     .replace(/[._]+/g, ' ')
-    .replace(/\s*-\s*$/, '')
     .replace(/\s+/g, ' ')
+    .replace(/[\s\-–—]+$/, '')
     .trim()
 
   return { title: name, year }

@@ -29,6 +29,10 @@ serde_json = "1"
 # unions features across the build, so this gets whatever the updater asked
 # for — naming a different stack would pull a second one in beside it.
 reqwest = { version = "0.13", default-features = false, features = ["charset", "http2"] }
+# Named only to install the cipher suites reqwest will look for and will
+# not supply. Same version and same one feature the updater already asks
+# for, so this adds a line and no crates. See src/tmdb.rs.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 tokio = { version = "1", features = ["process", "fs", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
