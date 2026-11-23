@@ -178,6 +178,17 @@ jobs:
             echo "no TAURI_SIGNING_PRIVATE_KEY — building without update packages"
             extra="--no-updater"
           fi
+
+          # A secret that was never set still arrives, as an empty string, and
+          # the Tauri CLI takes the *presence* of APPLE_CERTIFICATE to mean
+          # there is a certificate to import — so an empty one failed the
+          # build at the codesigning step instead of skipping it. Unset them
+          # and the build goes through unsigned, which is what a run that
+          # proves the platform compiles actually wants.
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD
+          fi
+
           node scripts/dist.mjs $BUILD_TARGETS $extra
         env:
           BUILD_TARGETS: ${{ steps.pick.outputs.targets }}
