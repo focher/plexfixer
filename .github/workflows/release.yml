@@ -77,7 +77,10 @@ jobs:
           - name: macOS (Apple Silicon + Intel)
             runner: macos-latest
             targets: mac-arm mac-intel
-            rust: aarch64-apple-darwin,x86_64-apple-darwin
+            # Space separated, like `targets` above: this is split into
+            # arguments by the shell. A comma makes it one target with a
+            # comma in its name, which rustup rightly refuses.
+            rust: aarch64-apple-darwin x86_64-apple-darwin
           - name: Windows x64
             runner: windows-latest
             targets: win
