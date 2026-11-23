@@ -34,6 +34,42 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.2.9',
+    headline: 'Episodes are looked up and named as episodes, and you can correct any search that went astray.',
+    changes: [
+      {
+        title: 'Episodes are found by number, not by name',
+        body:
+          'An episode is found by series, season and number \u2014 the only thing a file name reliably carries ' +
+          'and the only thing that identifies an episode at all, since two series share episode names and half ' +
+          'the episodes in a library have no name in the file. S01E02, 1x02 and "Season 1 Episode 2" are all ' +
+          'read. What gets written is the episode\u2019s own name and air date, with the series in its own ' +
+          'field, so a season is no longer twenty-four files called the same thing.'
+      },
+      {
+        title: 'Correct any search and run it again',
+        body:
+          'Every row in Bulk \u2192 Metadata lookup now carries the terms it searched on \u2014 title and year ' +
+          'for a film, series, season, episode and year for an episode \u2014 and a Look up button beside them. ' +
+          'The thing most often wrong is not the answer but the question, and a file name is a poor question.'
+      },
+      {
+        title: 'Films and episodes are named by separate patterns',
+        body:
+          'Settings \u2192 Output now takes one pattern for films and another for episodes, because the two have ' +
+          'never been named the same way: an episode has no release year and a film has no season. A file is ' +
+          'treated as an episode when its tags say so, or failing that when its name does.'
+      },
+      {
+        title: 'Write every MP4 as .m4v, or as .mp4',
+        body:
+          'An .m4v file is an MP4 \u2014 Apple\u2019s name for one with video in it \u2014 and Plex plays either. ' +
+          'Settings \u2192 Output will now write all of them one way or the other, for a library that is half ' +
+          'one and half the other. Left as it is, a file that already names its container keeps the name it has.'
+      }
+    ]
+  },
+  {
     version: '0.2.8',
     headline: 'Looking a film up no longer closes the app \u2014 and now you can look up a whole shelf at once, and name the files from what comes back.',
     changes: [
