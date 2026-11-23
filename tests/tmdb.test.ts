@@ -10,12 +10,17 @@ import { describe, expect, it } from 'vitest'
 import {
   authHeader,
   detailsUrl,
+  episodeTags,
+  episodeUrl,
+  guessEpisode,
   guessTitle,
+  parseEpisode,
   parseDetails,
   parseSearch,
   readCredential,
   searchUrl,
-  tagsFromMatch
+  tagsFromMatch,
+  type TmdbCredential
 } from '@shared/tmdb.js'
 
 const KEY = readCredential('abcdef0123456789abcdef0123456789')!
@@ -257,6 +262,128 @@ describe('guessing what to search for', () => {
     expect(guessTitle('Fanny and Alexander (TV Cut) (1982).mkv')).toEqual({
       title: 'Fanny and Alexander (TV Cut)',
       year: '1982'
+    })
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Episodes
+ * ------------------------------------------------------------------ */
+
+describe('guessEpisode', () => {
+  it('reads the convention Plex asks for', () => {
+    expect(guessEpisode('Breaking Bad - S05E14 - Ozymandias.mkv')).toEqual({
+      show: 'Breaking Bad',
+      season: 5,
+      episode: 14,
+      year: undefined
+    })
+  })
+
+  it('reads it out of a scene name', () => {
+    expect(guessEpisode('Breaking.Bad.S05E14.1080p.BluRay.x264-GROUP.mkv')).toMatchObject({
+      show: 'Breaking Bad',
+      season: 5,
+      episode: 14
+    })
+  })
+
+  it('reads the other two ways people write it', () => {
+    expect(guessEpisode('Breaking Bad 5x14.mkv')).toMatchObject({ show: 'Breaking Bad', season: 5, episode: 14 })
+    expect(guessEpisode('Breaking Bad Season 5 Episode 14.mkv')).toMatchObject({
+      show: 'Breaking Bad',
+      season: 5,
+      episode: 14
+    })
+  })
+
+  it('keeps a year that tells two series of a name apart', () => {
+    expect(guessEpisode('Doctor Who (2005) - S01E01 - Rose.mkv')).toEqual({
+      show: 'Doctor Who',
+      season: 1,
+      episode: 1,
+      year: '2005'
+    })
+  })
+
+  it('takes a season zero, which is how a special is numbered', () => {
+    expect(guessEpisode('The Show - S00E01 - Pilot.mkv')).toMatchObject({ season: 0, episode: 1 })
+  })
+
+  it('says nothing about a film', () => {
+    // Guessing the other way round turns a film with a number in its title
+    // into episode 2 of something.
+    expect(guessEpisode('Casino Royale (2006).mkv')).toBeUndefined()
+    expect(guessEpisode('Blade Runner 2049 (2017).mkv')).toBeUndefined()
+    expect(guessEpisode('Se7en.1995.1080p.mkv')).toBeUndefined()
+    expect(guessEpisode('THX 1138.mkv')).toBeUndefined()
+  })
+
+  it('does not find a season inside a word', () => {
+    expect(guessEpisode('Matrix.mkv')).toBeUndefined()
+    expect(guessEpisode('Sense8.mkv')).toBeUndefined()
+  })
+
+  it('does not take more digits than the number has', () => {
+    expect(guessEpisode('Show S01E02 extra.mkv')).toMatchObject({ season: 1, episode: 2 })
+    expect(guessEpisode('Show.S2010E01.mkv')).toBeUndefined()
+  })
+})
+
+describe('episodeUrl and parseEpisode', () => {
+  const key = readCredential('abcdef0123456789abcdef0123456789') as TmdbCredential
+
+  it('asks for one episode by number', () => {
+    expect(episodeUrl(key, 1396, 5, 14)).toBe(
+      'https://api.themoviedb.org/3/tv/1396/season/5/episode/14?api_key=abcdef0123456789abcdef0123456789'
+    )
+  })
+
+  it('reads the episode’s own name and air date', () => {
+    const body = JSON.stringify({ name: 'Ozymandias', air_date: '2013-09-15', overview: 'Everything comes apart.' })
+    expect(parseEpisode(body)).toEqual({
+      title: 'Ozymandias',
+      date: '2013-09-15',
+      overview: 'Everything comes apart.'
+    })
+  })
+
+  it('refuses an episode with no name', () => {
+    expect(parseEpisode(JSON.stringify({ air_date: '2013-09-15' }))).toBeUndefined()
+    expect(parseEpisode(JSON.stringify({ success: false }))).toBeUndefined()
+  })
+})
+
+describe('episodeTags', () => {
+  const episode = {
+    series: { id: 1396, kind: 'tv' as const, title: 'Breaking Bad', year: '2008', overview: '' },
+    season: 5,
+    number: 14,
+    title: 'Ozymandias',
+    date: '2013-09-15',
+    overview: 'Everything comes apart.',
+    genres: ['Drama', 'Crime']
+  }
+
+  it('writes the episode’s name as the title, not the series’', () => {
+    // Twenty-four files all called "Breaking Bad" tell a player nothing.
+    expect(episodeTags(episode)).toEqual({
+      title: 'Ozymandias',
+      show: 'Breaking Bad',
+      season_number: '5',
+      episode_id: '14',
+      date: '2013-09-15',
+      description: 'Everything comes apart.',
+      genre: 'Drama, Crime'
+    })
+  })
+
+  it('leaves out what it does not have', () => {
+    expect(episodeTags({ ...episode, date: undefined, overview: '', genres: undefined })).toEqual({
+      title: 'Ozymandias',
+      show: 'Breaking Bad',
+      season_number: '5',
+      episode_id: '14'
     })
   })
 })

@@ -21,8 +21,12 @@ import { languageOptions } from '@shared/languages.js'
 import {
   authHeader,
   detailsUrl,
+  episodeTags,
+  episodeUrl,
+  guessEpisode,
   guessTitle,
   parseDetails,
+  parseEpisode,
   parseSearch,
   readCredential,
   searchUrl,
@@ -49,12 +53,16 @@ export default function MetadataDialog({
   const { file } = result
   const existing = useMemo(() => tagsOf(file), [file])
   const guess = useMemo(() => guessTitle(file.fileName), [file.fileName])
+  const guessedEpisode = useMemo(() => guessEpisode(file.fileName), [file.fileName])
 
   const [tags, setTags] = useState<Record<string, string>>(() => ({ ...existing }))
   const [tracks, setTracks] = useState<Record<number, TrackEdit>>({})
-  const [kind, setKind] = useState<TmdbKind>('movie')
-  const [query, setQuery] = useState(guess.title)
-  const [year, setYear] = useState(guess.year ?? '')
+  // An episode file is treated as one from the start: its name said so.
+  const [kind, setKind] = useState<TmdbKind>(guessedEpisode ? 'tv' : 'movie')
+  const [query, setQuery] = useState(guessedEpisode?.show ?? guess.title)
+  const [year, setYear] = useState(guessedEpisode?.year ?? guess.year ?? '')
+  const [season, setSeason] = useState(guessedEpisode ? String(guessedEpisode.season) : '')
+  const [episodeNumber, setEpisodeNumber] = useState(guessedEpisode ? String(guessedEpisode.episode) : '')
   const [lookup, setLookup] = useState<Lookup>({ state: 'idle' })
   // Folded away for a film, which is most files, and open from the start for
   // anything that already looks like an episode.
@@ -115,21 +123,63 @@ export default function MetadataDialog({
     }
   }
 
-  /** Take a match, and fill in the genres it did not come with. */
+  const wantsEpisode = kind === 'tv' && /^\d+$/.test(season.trim()) && /^\d+$/.test(episodeNumber.trim())
+
+  /**
+   * Take a match, and fill in the genres it did not come with.
+   *
+   * With a season and an episode filled in, the series picked here is only
+   * the way to the episode: what gets written is the episode's own name and
+   * air date, with the series in its own field. Writing the series name as
+   * the file's title would leave a season of files all called the same thing.
+   */
   async function take(match: TmdbMatch): Promise<void> {
-    let full = match
-    try {
-      if (!credential) throw new Error('no credential')
-      const body = await window.plexfixer.tmdb.get(
-        detailsUrl(credential, match.kind, match.id),
-        authHeader(credential)
-      )
-      full = parseDetails(body, match.kind) ?? match
-    } catch {
-      // The search already gave a title, a year and a summary. Losing the
-      // genres is not a reason to refuse the rest of it.
+    if (!credential) return
+
+    const genres = async (): Promise<string[] | undefined> => {
+      try {
+        const body = await window.plexfixer.tmdb.get(
+          detailsUrl(credential, match.kind, match.id),
+          authHeader(credential)
+        )
+        return parseDetails(body, match.kind)?.genres
+      } catch {
+        // The search already gave a title, a year and a summary. Losing the
+        // genres is not a reason to refuse the rest of it.
+        return undefined
+      }
     }
-    setTags((previous) => ({ ...previous, ...tagsFromMatch(full) }))
+
+    if (wantsEpisode) {
+      try {
+        const body = await window.plexfixer.tmdb.get(
+          episodeUrl(credential, match.id, Number(season), Number(episodeNumber)),
+          authHeader(credential)
+        )
+        const read = parseEpisode(body)
+        if (!read) throw new Error('no such episode')
+        const written = episodeTags({
+          series: match,
+          season: Number(season),
+          number: Number(episodeNumber),
+          title: read.title,
+          date: read.date,
+          overview: read.overview,
+          genres: await genres()
+        })
+        setTags((previous) => ({ ...previous, ...written }))
+        setLookup({ state: 'idle' })
+      } catch {
+        setLookup({
+          state: 'failed',
+          message: `“${match.title}” has no season ${season} episode ${episodeNumber}. Check the numbers, or clear them to write the series itself.`
+        })
+      }
+      return
+    }
+
+    const found = await genres()
+    setTags((previous) => ({ ...previous, ...tagsFromMatch(found ? { ...match, genres: found } : match) }))
     setLookup({ state: 'idle' })
   }
 
@@ -198,12 +248,32 @@ export default function MetadataDialog({
                 className="block-grow"
                 aria-label="What to search for"
                 value={query}
-                placeholder="Casino Royale"
+                placeholder={kind === 'tv' ? 'Breaking Bad' : 'Casino Royale'}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void lookItUp()
                 }}
               />
+              {kind === 'tv' ? (
+                <>
+                  <input
+                    type="text"
+                    className="metadata-number"
+                    aria-label="Season"
+                    value={season}
+                    placeholder="S"
+                    onChange={(event) => setSeason(event.target.value)}
+                  />
+                  <input
+                    type="text"
+                    className="metadata-number"
+                    aria-label="Episode"
+                    value={episodeNumber}
+                    placeholder="E"
+                    onChange={(event) => setEpisodeNumber(event.target.value)}
+                  />
+                </>
+              ) : null}
               <input
                 type="text"
                 className="metadata-year"
@@ -232,6 +302,13 @@ export default function MetadataDialog({
                 ))}
               </ul>
             ) : null}
+            <p className="block-note">
+              {kind === 'tv'
+                ? wantsEpisode
+                  ? `Pick the series and this writes season ${season} episode ${episodeNumber} — its own name and air date, with the series in its own field.`
+                  : 'Fill in a season and an episode to write that episode. Left empty, picking a series writes the series itself.'
+                : null}
+            </p>
             <p className="block-note">
               The title you searched for is sent to themoviedb.org. Nothing else about the file is.
             </p>

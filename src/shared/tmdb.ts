@@ -153,6 +153,69 @@ export function parseDetails(body: string, kind: TmdbKind): TmdbMatch | undefine
   return { ...match, genres: genres.length > 0 ? genres : undefined }
 }
 
+/**
+ * One episode of one series.
+ *
+ * An episode is not a search result: you find the series, then ask for the
+ * episode by number. The series is what `search/tv` returns; everything else
+ * here comes from the episode call.
+ */
+export interface TmdbEpisode {
+  series: TmdbMatch
+  season: number
+  number: number
+  /** The episode's own name. */
+  title: string
+  /** When it first aired. */
+  date?: string
+  overview: string
+  /** The series' genres — an episode has none of its own. */
+  genres?: string[]
+}
+
+/** One episode, by number, of a series already found. */
+export function episodeUrl(
+  credential: TmdbCredential,
+  seriesId: number,
+  season: number,
+  episode: number
+): string {
+  return url(`tv/${seriesId}/season/${season}/episode/${episode}`, credential, {})
+}
+
+/** The episode's own name, air date and summary. */
+export function parseEpisode(
+  body: string
+): { title: string; date?: string; overview: string } | undefined {
+  const parsed: unknown = JSON.parse(body)
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const entry = parsed as Record<string, unknown>
+  const title = asString(entry.name)
+  if (title === '') return undefined
+  const date = asString(entry.air_date)
+  return { title, date: date === '' ? undefined : date, overview: asString(entry.overview) }
+}
+
+/**
+ * What an episode writes into the file.
+ *
+ * The title is the episode's, not the series' — a player showing twenty-four
+ * files all called "Breaking Bad" has been told nothing. The series name goes
+ * in its own field, which is where a player looks for it.
+ */
+export function episodeTags(episode: TmdbEpisode): Record<string, string> {
+  const tags: Record<string, string> = {
+    title: episode.title,
+    show: episode.series.title,
+    season_number: String(episode.season),
+    episode_id: String(episode.number)
+  }
+  if (episode.date) tags.date = episode.date
+  if (episode.overview) tags.description = episode.overview
+  if (episode.genres?.length) tags.genre = episode.genres.join(', ')
+  return tags
+}
+
 /** What a match would write into the file. */
 export function tagsFromMatch(match: TmdbMatch): Record<string, string> {
   const tags: Record<string, string> = { title: match.title }
@@ -255,15 +318,78 @@ export function guessTitle(fileName: string): GuessedTitle {
     }
   }
 
-  const noise = NOISE.exec(name)
-  if (noise) name = name.slice(0, noise.index)
+  return { title: tidy(name), year }
+}
 
-  // Separators, then the punctuation a title is left wearing.
-  name = dropUnclosedBracket(name)
+/**
+ * A name with the release's leavings taken off it.
+ *
+ * Everything from the first piece of encoding vocabulary onwards, then the
+ * separators a ripper uses for spaces, then the punctuation a title is left
+ * wearing once something has been cut out of the middle of it.
+ */
+export function tidy(text: string): string {
+  const noise = NOISE.exec(text)
+  const name = noise ? text.slice(0, noise.index) : text
+  return dropUnclosedBracket(name)
     .replace(/[._]+/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/[\s\-–—]+$/, '')
     .trim()
+}
 
-  return { title: name, year }
+/* ------------------------------------------------------------------ *
+ * Episodes
+ * ------------------------------------------------------------------ */
+
+/**
+ * The three ways a season and an episode get written into a file name.
+ *
+ * `S01E02` is the convention Plex asks for and what most things produce;
+ * `1x02` is what the rest produce; the spelt-out form turns up in files
+ * somebody named by hand. All three want a separator in front, so a number
+ * inside a title cannot be mistaken for a season.
+ */
+const EPISODE_PATTERNS: readonly RegExp[] = [
+  /(?:^|[\s._\-[(])s(\d{1,2})[\s._-]?e(\d{1,3})(?![\d])/i,
+  /(?:^|[\s._\-[(])(\d{1,2})x(\d{1,3})(?![\d])/i,
+  /(?:^|[\s._\-[(])season[\s._-]*(\d{1,2})[\s._-]*episode[\s._-]*(\d{1,3})(?![\d])/i
+]
+
+export interface GuessedEpisode {
+  /** The series name, as far as the file name gives one. */
+  show: string
+  season: number
+  episode: number
+  /** A year beside the show name, which tells two series of a name apart. */
+  year?: string
+}
+
+/**
+ * The series, season and episode a file name describes.
+ *
+ * `undefined` for anything that does not plainly say — a file is a film
+ * unless it says otherwise, because guessing the other way round turns a
+ * film with a number in its title into episode 2 of something.
+ */
+export function guessEpisode(fileName: string): GuessedEpisode | undefined {
+  const name = fileName.replace(/\.[a-z0-9]{2,4}$/i, '')
+
+  for (const pattern of EPISODE_PATTERNS) {
+    const found = pattern.exec(name)
+    if (!found || found.index === undefined) continue
+    const season = Number(found[1])
+    const episode = Number(found[2])
+    // `S00` is how a special is numbered, so only the episode has to be real.
+    if (!Number.isFinite(season) || !Number.isFinite(episode)) continue
+
+    // Whatever sits in front of the marker is the series, and it is written
+    // with the same leavings a film's name is.
+    const before = name.slice(0, found.index)
+    const bracketed = /[([](19\d{2}|20\d{2})[)\]]/.exec(before)
+    const show = tidy(bracketed ? before.slice(0, bracketed.index) : before)
+    return { show, season, episode, year: bracketed?.[1] }
+  }
+
+  return undefined
 }
