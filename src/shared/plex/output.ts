@@ -5,7 +5,7 @@
 import type { AppSettings } from '../types.js'
 import type { RepairHost } from '../host.js'
 import { newId } from '../ids.js'
-import { nameFor, type NamingProblem } from './naming.js'
+import { nameFor, templateFor, type NamingProblem } from './naming.js'
 
 /**
  * A tag that is this run of the app and no other.
@@ -45,11 +45,22 @@ const CONTAINER_EXTENSIONS: Record<'mp4' | 'mkv', string[]> = {
   mkv: ['.mkv']
 }
 
-function extensionFor(sourcePath: string, targetContainer: 'mp4' | 'mkv', host: RepairHost): string {
-  const current = host.paths.extname(sourcePath).toLowerCase()
-  return CONTAINER_EXTENSIONS[targetContainer].includes(current)
-    ? host.paths.extname(sourcePath)
-    : `.${targetContainer}`
+function extensionFor(
+  sourcePath: string,
+  targetContainer: 'mp4' | 'mkv',
+  settings: AppSettings,
+  host: RepairHost
+): string {
+  const written = host.paths.extname(sourcePath)
+  const current = written.toLowerCase()
+
+  // Asked for one of the two by name, every MP4 gets it — which is how a
+  // library that is half .mp4 and half .m4v is made to agree with itself.
+  if (targetContainer === 'mp4' && settings.mp4Extension !== 'keep') {
+    return `.${settings.mp4Extension}`
+  }
+
+  return CONTAINER_EXTENSIONS[targetContainer].includes(current) ? written : `.${targetContainer}`
 }
 
 /**
@@ -94,10 +105,15 @@ export function resolveOutput(
   const { join, dirname, basename, extname, isAbsolute, relative } = host.paths
   const dir = dirname(sourcePath)
   const sourceStem = basename(sourcePath, extname(sourcePath))
-  const named = nameFor(settings.filenameTemplate, tags, sourceStem)
+  const template = templateFor(
+    { movie: settings.movieTemplate, episode: settings.episodeTemplate },
+    tags,
+    basename(sourcePath)
+  )
+  const named = nameFor(template, tags, sourceStem)
   const stem = named.stem
   const problem = named.problem
-  const extension = extensionFor(sourcePath, targetContainer, host)
+  const extension = extensionFor(sourcePath, targetContainer, settings, host)
 
   switch (settings.outputPlacement) {
     case 'in-place':

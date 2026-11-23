@@ -8,7 +8,14 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { TEMPLATE_TOKENS, explainProblem, nameFor, sanitizeFilename } from '@shared/plex/naming.js'
+import {
+  TEMPLATE_TOKENS,
+  explainProblem,
+  looksLikeEpisode,
+  nameFor,
+  sanitizeFilename,
+  templateFor
+} from '@shared/plex/naming.js'
 
 const film = { title: 'Casino Royale', date: '2006-11-14', genre: 'Action, Thriller' }
 const episode = { title: 'Ozymandias', show: 'Breaking Bad', season_number: '5', episode_id: '14' }
@@ -147,5 +154,27 @@ describe('sanitizeFilename', () => {
   it('leaves an ordinary name exactly as it is', () => {
     expect(sanitizeFilename('Casino Royale (2006)')).toBe('Casino Royale (2006)')
     expect(sanitizeFilename("Amélie — director's cut")).toBe("Amélie — director's cut")
+  })
+})
+
+describe('which pattern applies', () => {
+  const templates = { movie: '{title} ({year})', episode: '{show} - S{season}E{episode}' }
+
+  it('believes what the file says before anything else', () => {
+    expect(looksLikeEpisode({ show: 'Breaking Bad', season_number: '5', episode_id: '14' }, 'anything.mkv')).toBe(true)
+    expect(looksLikeEpisode({ season_number: '5', episode_id: '14' }, 'anything.mkv')).toBe(true)
+    // A series name on its own is not an episode — a whole-series file is
+    // not a thing this renames by number.
+    expect(looksLikeEpisode({ show: 'Breaking Bad' }, 'anything.mkv')).toBe(false)
+  })
+
+  it('reads the file name when the tags say nothing', () => {
+    expect(looksLikeEpisode({}, 'Breaking.Bad.S05E14.mkv')).toBe(true)
+    expect(looksLikeEpisode({}, 'Casino Royale (2006).mkv')).toBe(false)
+  })
+
+  it('treats a film as a film, which is the commoner thing to have', () => {
+    expect(templateFor(templates, { title: 'Casino Royale' }, 'Casino Royale.mkv')).toBe('{title} ({year})')
+    expect(templateFor(templates, {}, 'Breaking.Bad.S05E14.mkv')).toBe('{show} - S{season}E{episode}')
   })
 })

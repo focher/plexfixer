@@ -18,6 +18,8 @@
  * assumed to contain a slash until proven otherwise.
  */
 
+import { guessEpisode } from '../tmdb.js'
+
 /** The longest stem this will write, before the suffix and the extension. */
 const MAX_STEM = 180
 
@@ -49,11 +51,41 @@ export const TEMPLATE_TOKENS: readonly TemplateToken[] = [
 const KEYS = new Set(TEMPLATE_TOKENS.map((token) => token.key))
 
 /** What Plex asks for, and what most people want the moment they see it. */
-export const SUGGESTED_TEMPLATES: readonly { template: string; label: string }[] = [
-  { template: '{title} ({year})', label: 'Films, the way Plex asks for them' },
-  { template: '{show} - S{season}E{episode} - {title}', label: 'Episodes' },
-  { template: '{title} ({date})', label: 'Films, with the full release date' }
+export const SUGGESTED_MOVIE_TEMPLATES: readonly { template: string; label: string }[] = [
+  { template: '{title} ({year})', label: 'The way Plex asks for them' },
+  { template: '{title} ({date})', label: 'With the full release date' }
 ]
+
+export const SUGGESTED_EPISODE_TEMPLATES: readonly { template: string; label: string }[] = [
+  { template: '{show} - S{season}E{episode} - {title}', label: 'The way Plex asks for them' },
+  { template: 'S{season}E{episode} - {title}', label: 'Inside a folder already named for the series' },
+  { template: '{show} - S{season}E{episode}', label: 'Without the episode name' }
+]
+
+/**
+ * Whether this file is an episode of something.
+ *
+ * What the file says comes first: a `show` tag with a number beside it is a
+ * statement, not a guess. Failing that the name is read, which is all there
+ * is to go on before a lookup has been done — and a file that says nothing
+ * and is named like nothing is treated as a film, because that is the commoner
+ * thing to have and the pattern will decline to use it anyway.
+ */
+export function looksLikeEpisode(tags: Record<string, string>, fileName: string): boolean {
+  const has = (key: string): boolean => (tags[key] ?? '').trim() !== ''
+  if (has('show') && (has('season_number') || has('episode_id'))) return true
+  if (has('season_number') && has('episode_id')) return true
+  return guessEpisode(fileName) !== undefined
+}
+
+/** The pattern that applies to this file: films and episodes are named apart. */
+export function templateFor(
+  templates: { movie: string; episode: string },
+  tags: Record<string, string>,
+  fileName: string
+): string {
+  return looksLikeEpisode(tags, fileName) ? templates.episode : templates.movie
+}
 
 const TOKEN = /\{([a-z_]+)\}/g
 

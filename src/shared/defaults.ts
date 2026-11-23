@@ -42,7 +42,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // A week to notice a repair that went wrong, then the space comes back.
   backupRetentionDays: 7,
   outputSuffix: '.plexfixed',
-  filenameTemplate: '',
+  mp4Extension: 'keep',
+  movieTemplate: '',
+  episodeTemplate: '',
 
   hardwareEncoder: 'auto',
   videoQuality: 21,
@@ -93,5 +95,14 @@ export function withDefaults(partial: Partial<AppSettings> | undefined | null): 
       ;(merged as any)[key] = value
     }
   }
+
+  // 0.2.8 had one naming pattern for everything. A single pattern was a film
+  // pattern in practice, so it is carried over to films rather than silently
+  // dropped on the one upgrade where somebody might have set it.
+  const beforeTheSplit = (partial as { filenameTemplate?: unknown }).filenameTemplate
+  if (typeof beforeTheSplit === 'string' && beforeTheSplit !== '' && merged.movieTemplate === '') {
+    merged.movieTemplate = beforeTheSplit
+  }
+
   return merged
 }

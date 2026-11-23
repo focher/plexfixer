@@ -296,7 +296,7 @@ describe('redirectOutput', () => {
 
 describe('resolveOutputPath — a naming pattern', () => {
   const tags = { title: 'Casino Royale', date: '2006-11-14' }
-  const pattern = settings({ filenameTemplate: '{title} ({year})' })
+  const pattern = settings({ movieTemplate: '{title} ({year})' })
 
   it('renames the file in place', () => {
     expect(resolveOutputPath('/m/Casino.Royale.2006.1080p.mkv', 'mp4', pattern, localHost(), undefined, tags)).toBe(
@@ -306,7 +306,7 @@ describe('resolveOutputPath — a naming pattern', () => {
 
   it('names the file in the output folder too', () => {
     const out = settings({
-      filenameTemplate: '{title} ({year})',
+      movieTemplate: '{title} ({year})',
       outputPlacement: 'output-dir',
       outputDirectory: '/out'
     })
@@ -318,7 +318,7 @@ describe('resolveOutputPath — a naming pattern', () => {
   it('keeps the suffix beside the original, where the name has to differ', () => {
     // A pattern that reproduced the source name would otherwise point the
     // output at the input.
-    const sibling = settings({ filenameTemplate: '{title} ({year})', outputPlacement: 'sibling' })
+    const sibling = settings({ movieTemplate: '{title} ({year})', outputPlacement: 'sibling' })
     expect(resolveOutputPath('/m/Casino Royale (2006).mkv', 'mp4', sibling, localHost(), undefined, tags)).toBe(
       '/m/Casino Royale (2006).plexfixed.mp4'
     )
@@ -344,7 +344,7 @@ describe('resolveOutputPath — a naming pattern', () => {
     const path = resolveOutputPath(
       '/m/Movie.mkv',
       'mp4',
-      settings({ filenameTemplate: '{title}' }),
+      settings({ movieTemplate: '{title}' }),
       localHost(),
       undefined,
       escape
@@ -353,11 +353,74 @@ describe('resolveOutputPath — a naming pattern', () => {
     expect(path).toBe('/m/-..-..-etc-cron.d-evil.mp4')
   })
 
+  it('names an episode by the episode pattern, not the film one', () => {
+    const both = settings({
+      movieTemplate: '{title} ({year})',
+      episodeTemplate: '{show} - S{season}E{episode} - {title}'
+    })
+    const episode = { title: 'Ozymandias', show: 'Breaking Bad', season_number: '5', episode_id: '14' }
+    expect(resolveOutputPath('/m/Breaking.Bad.S05E14.mkv', 'mp4', both, localHost(), undefined, episode)).toBe(
+      '/m/Breaking Bad - S05E14 - Ozymandias.mp4'
+    )
+    // And the film pattern still applies to a film, with no episode tags.
+    expect(resolveOutputPath('/m/Casino.Royale.mkv', 'mp4', both, localHost(), undefined, tags)).toBe(
+      '/m/Casino Royale (2006).mp4'
+    )
+  })
+
+  it('reads the file name when the tags do not say which it is', () => {
+    // Before any lookup has been done there are no tags to go on, and an
+    // episode named by the film pattern would be named wrongly or not at all.
+    const both = settings({ movieTemplate: '{title}', episodeTemplate: '{name} [episode]' })
+    expect(resolveOutputPath('/m/Breaking.Bad.S05E14.mkv', 'mp4', both, localHost(), undefined, {})).toBe(
+      '/m/Breaking.Bad.S05E14 [episode].mp4'
+    )
+  })
+
   it('reports why it did not rename, for the job log', () => {
     expect(resolveOutput('/m/Movie.mkv', 'mp4', pattern, localHost(), undefined, {}).problem).toEqual({
       kind: 'empty',
       token: 'title'
     })
     expect(resolveOutput('/m/Movie.mkv', 'mp4', pattern, localHost(), undefined, tags).problem).toBeUndefined()
+  })
+})
+
+describe('resolveOutputPath — the MP4 extension', () => {
+  it('leaves a file that already names the container alone', () => {
+    // An iTunes library is full of .m4v, and renaming every file in it so
+    // Plex has to re-match them is a poor trade for a consistent suffix.
+    expect(resolveOutputPath('/m/Episode.m4v', 'mp4', settings(), localHost())).toBe('/m/Episode.m4v')
+    expect(resolveOutputPath('/m/Episode.mp4', 'mp4', settings(), localHost())).toBe('/m/Episode.mp4')
+    expect(resolveOutputPath('/m/Episode.mkv', 'mp4', settings(), localHost())).toBe('/m/Episode.mp4')
+  })
+
+  it('writes .m4v for every MP4 when asked to', () => {
+    const m4v = settings({ mp4Extension: 'm4v' })
+    expect(resolveOutputPath('/m/Episode.mkv', 'mp4', m4v, localHost())).toBe('/m/Episode.m4v')
+    expect(resolveOutputPath('/m/Episode.mp4', 'mp4', m4v, localHost())).toBe('/m/Episode.m4v')
+    expect(resolveOutputPath('/m/Episode.m4v', 'mp4', m4v, localHost())).toBe('/m/Episode.m4v')
+  })
+
+  it('writes .mp4 for every MP4 when asked to', () => {
+    const mp4 = settings({ mp4Extension: 'mp4' })
+    expect(resolveOutputPath('/m/Episode.m4v', 'mp4', mp4, localHost())).toBe('/m/Episode.mp4')
+    expect(resolveOutputPath('/m/Episode.MKV', 'mp4', mp4, localHost())).toBe('/m/Episode.mp4')
+  })
+
+  it('leaves MKV out of it entirely', () => {
+    expect(resolveOutputPath('/m/Episode.mp4', 'mkv', settings({ mp4Extension: 'm4v' }), localHost())).toBe(
+      '/m/Episode.mkv'
+    )
+  })
+
+  it('works alongside a naming pattern', () => {
+    const both = settings({ mp4Extension: 'm4v', movieTemplate: '{title} ({year})' })
+    expect(
+      resolveOutputPath('/m/Casino.Royale.mkv', 'mp4', both, localHost(), undefined, {
+        title: 'Casino Royale',
+        date: '2006-11-14'
+      })
+    ).toBe('/m/Casino Royale (2006).m4v')
   })
 })

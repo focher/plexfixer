@@ -13,7 +13,13 @@ import { CHECK_MODULES, REPAIR_MODULES } from '@shared/plex/modules/registry.js'
 import { isModuleEnabled, withModuleEnabled, type ModuleDescription, type ModuleSwitch } from '@shared/plex/modules/framework.js'
 import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
 import { readCredential } from '@shared/tmdb.js'
-import { SUGGESTED_TEMPLATES, TEMPLATE_TOKENS, explainProblem, nameFor } from '@shared/plex/naming.js'
+import {
+  SUGGESTED_EPISODE_TEMPLATES,
+  SUGGESTED_MOVIE_TEMPLATES,
+  TEMPLATE_TOKENS,
+  explainProblem,
+  nameFor
+} from '@shared/plex/naming.js'
 import { parseScript } from '@shared/plex/modules/script/parse.js'
 import ModuleEditor, { NEW_RULE_TEMPLATE } from './ModuleEditor.js'
 
@@ -699,13 +705,90 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
 }
 
 /**
- * The naming pattern, with a worked example under it.
+ * One naming pattern, with a worked example under it.
  *
- * A pattern is written blind otherwise: the tokens are invented by this app,
+ * A pattern is written blind otherwise: the fields are invented by this app,
  * the tags come out of the file, and nothing on screen would say which of the
  * two was wrong until a folder had been renamed. So the example is live, and
- * it is a file that lacks a release date as often as not — because the rule
- * that matters is what happens then.
+ * the second line is always a file that is *missing* something — because the
+ * rule that matters is the one about what happens then.
+ */
+function TemplateField({
+  label,
+  hint,
+  placeholder,
+  value,
+  presets,
+  full,
+  short,
+  shortNote,
+  onChange
+}: {
+  label: string
+  hint: string
+  placeholder: string
+  value: string
+  presets: readonly { template: string; label: string }[]
+  /** A file with everything, for the first example. */
+  full: Record<string, string>
+  /** The same file missing one field, for the second. */
+  short: Record<string, string>
+  shortNote: string
+  onChange: (template: string) => void
+}): React.JSX.Element {
+  const preview = nameFor(value, full, 'The.Source.Name.1080p')
+  const lacking = nameFor(value, short, 'The.Source.Name.1080p')
+
+  return (
+    <Field label={label} hint={hint}>
+      <input
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        spellCheck={false}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <div className="template-presets">
+        {presets.map((preset) => (
+          <button key={preset.template} className="ghost" title={preset.label} onClick={() => onChange(preset.template)}>
+            {preset.template}
+          </button>
+        ))}
+        {value === '' ? null : (
+          <button className="ghost" onClick={() => onChange('')}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      {value.trim() === '' ? null : (
+        <div className="template-preview">
+          {preview.problem ? (
+            <p className="metadata-problem">{explainProblem(preview.problem)}</p>
+          ) : (
+            <>
+              <p className="block-note">
+                Written as <strong className="mono">{preview.stem}</strong>
+              </p>
+              <p className="block-note">
+                {lacking.problem
+                  ? `${shortNote} keeps the name it has.`
+                  : `${shortNote} would be written as ${lacking.stem}`}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </Field>
+  )
+}
+
+/**
+ * Both patterns, and the fields they may use.
+ *
+ * Two of them because the two kinds of file have never been named the same
+ * way, and one pattern covering both would decline to use itself on half a
+ * library — an episode has no release year and a film has no season.
  */
 function FilenameTemplateField({
   settings,
@@ -714,64 +797,45 @@ function FilenameTemplateField({
   settings: AppSettings
   set: (patch: Partial<AppSettings>) => void
 }): React.JSX.Element {
-  const example = { title: 'Casino Royale', date: '2006-11-14', genre: 'Action', show: 'Breaking Bad', season_number: '5', episode_id: '14' }
-  const preview = nameFor(settings.filenameTemplate, example, 'Casino.Royale.2006.1080p.BluRay.x264')
-  const bare = nameFor(settings.filenameTemplate, { title: 'Casino Royale' }, 'Casino.Royale.1080p')
-
   return (
-    <Field
-      label="Name repaired files"
-      hint="Leave empty to keep the name each file already has."
-    >
-      <input
-        type="text"
-        value={settings.filenameTemplate}
+    <>
+      <TemplateField
+        label="Name films"
+        hint="Leave empty to keep the name each file already has."
         placeholder="{title} ({year})"
-        spellCheck={false}
-        onChange={(event) => set({ filenameTemplate: event.target.value })}
+        value={settings.movieTemplate}
+        presets={SUGGESTED_MOVIE_TEMPLATES}
+        full={{ title: 'Casino Royale', date: '2006-11-14', genre: 'Action' }}
+        short={{ title: 'Casino Royale' }}
+        shortNote="The same film with no release date"
+        onChange={(movieTemplate) => set({ movieTemplate })}
       />
-      <div className="template-presets">
-        {SUGGESTED_TEMPLATES.map((preset) => (
-          <button
-            key={preset.template}
-            className="ghost"
-            title={preset.label}
-            onClick={() => set({ filenameTemplate: preset.template })}
-          >
-            {preset.template}
-          </button>
-        ))}
-        {settings.filenameTemplate === '' ? null : (
-          <button className="ghost" onClick={() => set({ filenameTemplate: '' })}>
-            Clear
-          </button>
-        )}
-      </div>
 
-      {settings.filenameTemplate.trim() === '' ? null : (
-        <div className="template-preview">
-          {preview.problem ? (
-            <p className="metadata-problem">{explainProblem(preview.problem)}</p>
-          ) : (
-            <>
-              <p className="block-note">
-                A film tagged <em>Casino Royale</em>, released 14 November 2006, would be written as{' '}
-                <strong className="mono">{preview.stem}</strong>
-              </p>
-              <p className="block-note">
-                {bare.problem?.kind === 'empty'
-                  ? `A file with a title but no release date keeps the name it has — ${explainProblem(bare.problem).replace(/^This file has/, 'it has')}`
-                  : `The same file without a release date would be written as ${bare.stem}`}
-              </p>
-            </>
-          )}
-          <p className="block-note">
-            Fields: {TEMPLATE_TOKENS.map((token) => `{${token.key}}`).join(' ')} — a file missing any field you
-            use keeps the name it has, so nothing is ever written as half a title.
-          </p>
-        </div>
+      <TemplateField
+        label="Name episodes"
+        hint="Used for any file whose tags or name say which season and episode it is."
+        placeholder="{show} - S{season}E{episode} - {title}"
+        value={settings.episodeTemplate}
+        presets={SUGGESTED_EPISODE_TEMPLATES}
+        full={{
+          title: 'Ozymandias',
+          show: 'Breaking Bad',
+          season_number: '5',
+          episode_id: '14',
+          date: '2013-09-15'
+        }}
+        short={{ show: 'Breaking Bad', season_number: '5', episode_id: '14' }}
+        shortNote="The same episode with no name of its own"
+        onChange={(episodeTemplate) => set({ episodeTemplate })}
+      />
+
+      {settings.movieTemplate.trim() === '' && settings.episodeTemplate.trim() === '' ? null : (
+        <p className="section-hint">
+          Fields: {TEMPLATE_TOKENS.map((token) => `{${token.key}}`).join(' ')} — a file missing any field you use
+          keeps the name it has, so nothing is ever written as half a title.
+        </p>
       )}
-    </Field>
+    </>
   )
 }
 
@@ -813,6 +877,20 @@ function OutputSection(props: SettingsPanelProps): React.JSX.Element {
           </div>
         </Field>
       ) : null}
+
+      <Field
+        label="MP4 extension"
+        hint="An .m4v file is an MP4 — Apple's name for one with video in it. Plex plays either."
+      >
+        <select
+          value={settings.mp4Extension}
+          onChange={(event) => set({ mp4Extension: event.target.value as AppSettings['mp4Extension'] })}
+        >
+          <option value="keep">Keep what the file has — .mp4 for anything else</option>
+          <option value="mp4">Always .mp4</option>
+          <option value="m4v">Always .m4v</option>
+        </select>
+      </Field>
 
       <FilenameTemplateField settings={settings} set={set} />
 

@@ -428,13 +428,27 @@ export interface AppSettings {
   /** Suffix used for sibling output. */
   outputSuffix: string
   /**
-   * A pattern for naming repaired files, in `{field}` tokens.
+   * Patterns for naming repaired files, in `{field}` tokens.
+   *
+   * Two of them, because the two kinds of file are named differently and
+   * always have been: a film is its title and its year, an episode is its
+   * series, its numbers and then its own name. One pattern covering both
+   * would decline to use itself on half a library.
    *
    * Empty, the default, means a repaired file keeps the name its source had.
    * See src/shared/plex/naming.ts for what a token may be and for what
    * happens when one of them has nothing behind it.
    */
-  filenameTemplate: string
+  /**
+   * Which extension an MP4 is written with.
+   *
+   * `.m4v` is an MP4 — Apple's name for one with video in it, and what an
+   * iTunes library is full of. `keep` leaves a file that is already one of
+   * the two alone, which is the only answer that never renames anything.
+   */
+  mp4Extension: 'keep' | 'mp4' | 'm4v'
+  movieTemplate: string
+  episodeTemplate: string
 
   /** Hardware encoder preference for forced transcodes. */
   hardwareEncoder: 'auto' | 'nvenc' | 'videotoolbox' | 'qsv' | 'amf' | 'none'
