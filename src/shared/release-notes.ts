@@ -34,6 +34,28 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.2.10',
+    headline: 'A file that only needs a new name is renamed, not rewritten \u2014 and season and episode numbers are written one way everywhere.',
+    changes: [
+      {
+        title: 'A new name is a rename, not a copy',
+        body:
+          'A file that is already everything Plex wants, but carries the wrong name, used to be skipped \u2014 ' +
+          'the naming pattern only ever took effect through a repair. It is now renamed, and renamed is all it ' +
+          'is: the file stays exactly where it lies on disk and not one byte of it is read or written. A repair ' +
+          'that only touches the header does the same, so six gigabytes over a share costs what it should.'
+      },
+      {
+        title: 'Season and episode numbers lose their leading zeros',
+        body:
+          'A number typed as 01, one written into a file by something else, and one that came back from a ' +
+          'lookup are the same season, and are now written the same way: bare. Files are named S5E14 rather ' +
+          'than S05E14, and re-applying an edit that changed nothing no longer looks like a change worth ' +
+          'rewriting the file for. Season 0 stays 0, where the specials live.'
+      }
+    ]
+  },
+  {
     version: '0.2.9',
     headline: 'Episodes are looked up and named as episodes, and you can correct any search that went astray.',
     changes: [
