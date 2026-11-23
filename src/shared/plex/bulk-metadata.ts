@@ -30,6 +30,7 @@ import {
   type TmdbKind,
   type TmdbMatch
 } from '../tmdb.js'
+import { bareNumber } from './metadata.js'
 
 /** The terms a row is searched on, which a person may correct. */
 export type AskedFor =
@@ -237,7 +238,9 @@ export function episodeProposal(
     ...base,
     found: {
       id: best.id,
-      label: `${best.title} — S${asked.season.padStart(2, '0')}E${asked.episode.padStart(2, '0')} — ${episode.title}`,
+      // The same numbers the file will be named with, so the row predicts
+      // the rename rather than contradicting it.
+      label: `${best.title} — S${bareNumber(asked.season)}E${bareNumber(asked.episode)} — ${episode.title}`,
       tags: episodeTags(episode)
     },
     confidence,

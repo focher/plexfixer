@@ -19,6 +19,7 @@
  */
 
 import { guessEpisode } from '../tmdb.js'
+import { bareNumber } from './metadata.js'
 
 /** The longest stem this will write, before the suffix and the extension. */
 const MAX_STEM = 180
@@ -42,8 +43,8 @@ export const TEMPLATE_TOKENS: readonly TemplateToken[] = [
   { key: 'year', label: 'Year', hint: 'The four digits at the front of the release date' },
   { key: 'date', label: 'Release date', hint: 'The release date in full, as the file carries it' },
   { key: 'show', label: 'Series', hint: 'The series name, for an episode' },
-  { key: 'season', label: 'Season', hint: 'The season number, padded to two digits' },
-  { key: 'episode', label: 'Episode', hint: 'The episode number, padded to two digits' },
+  { key: 'season', label: 'Season', hint: 'The season number, with no leading zeros' },
+  { key: 'episode', label: 'Episode', hint: 'The episode number, with no leading zeros' },
   { key: 'genre', label: 'Genre', hint: 'The genre tag, as written' },
   { key: 'name', label: 'Current name', hint: 'The name it has now, without the extension' }
 ]
@@ -107,10 +108,7 @@ export interface NamedFile {
   problem?: NamingProblem
 }
 
-function pad(value: string): string {
-  const digits = value.trim()
-  return /^\d$/.test(digits) ? `0${digits}` : digits
-}
+/* Numbers are written bare — see `bareNumber`, which is where the rule lives. */
 
 function valueFor(key: string, tags: Record<string, string>, sourceStem: string): string {
   const tag = (name: string): string => (tags[name] ?? '').trim()
@@ -124,9 +122,9 @@ function valueFor(key: string, tags: Record<string, string>, sourceStem: string)
     case 'show':
       return tag('show')
     case 'season':
-      return pad(tag('season_number'))
+      return bareNumber(tag('season_number'))
     case 'episode':
-      return pad(tag('episode_id'))
+      return bareNumber(tag('episode_id'))
     case 'genre':
       return tag('genre')
     case 'name':

@@ -196,7 +196,7 @@ describe('a file that only needs a new name', () => {
     const job = await run(result, inPlace({ episodeTemplate: '{show} - S{season}E{episode} - {title}' }))
 
     expect(job.state).toBe('done')
-    expect(job.outputPath).toBe(join(dir, 'The Wire - S01E03 - The Buys.mp4'))
+    expect(job.outputPath).toBe(join(dir, 'The Wire - S1E3 - The Buys.mp4'))
   })
 })
 

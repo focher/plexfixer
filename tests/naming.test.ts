@@ -35,14 +35,24 @@ describe('nameFor', () => {
     expect(nameFor('{year}', { date: 'sometime in 2006' }, 'x').problem).toEqual({ kind: 'empty', token: 'year' })
   })
 
-  it('pads a season and an episode to two digits', () => {
+  it('writes a season and an episode as bare numbers', () => {
     expect(nameFor('{show} - S{season}E{episode} - {title}', episode, 'x').stem).toBe(
-      'Breaking Bad - S05E14 - Ozymandias'
+      'Breaking Bad - S5E14 - Ozymandias'
     )
   })
 
-  it('leaves a number that is already two digits alone', () => {
+  it('strips the leading zeros off a number the file arrived with', () => {
+    expect(nameFor('S{season}E{episode}', { season_number: '05', episode_id: '014' }, 'x').stem).toBe('S5E14')
+    // Which is the same name the lookup's own numbers would have produced.
+    expect(nameFor('S{season}E{episode}', { season_number: '5', episode_id: '14' }, 'x').stem).toBe('S5E14')
+  })
+
+  it('leaves a number that needs no stripping alone', () => {
     expect(nameFor('S{season}E{episode}', { season_number: '10', episode_id: '112' }, 'x').stem).toBe('S10E112')
+  })
+
+  it('keeps season 0, which is where specials live', () => {
+    expect(nameFor('S{season}E{episode}', { season_number: '00', episode_id: '03' }, 'x').stem).toBe('S0E3')
   })
 
   it('offers the current name, for adding to rather than replacing', () => {

@@ -174,7 +174,8 @@ describe('episodeProposal', () => {
       season_number: '5',
       episode_id: '14'
     })
-    expect(row.found?.label).toContain('S05E14')
+    // The numbers the file will be named with, not a padded form of them.
+    expect(row.found?.label).toContain('S5E14')
   })
 
   it('tells a missing series from a missing episode', () => {

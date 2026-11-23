@@ -360,7 +360,7 @@ describe('resolveOutputPath — a naming pattern', () => {
     })
     const episode = { title: 'Ozymandias', show: 'Breaking Bad', season_number: '5', episode_id: '14' }
     expect(resolveOutputPath('/m/Breaking.Bad.S05E14.mkv', 'mp4', both, localHost(), undefined, episode)).toBe(
-      '/m/Breaking Bad - S05E14 - Ozymandias.mp4'
+      '/m/Breaking Bad - S5E14 - Ozymandias.mp4'
     )
     // And the film pattern still applies to a film, with no episode tags.
     expect(resolveOutputPath('/m/Casino.Royale.mkv', 'mp4', both, localHost(), undefined, tags)).toBe(

@@ -44,25 +44,53 @@ export const EDITABLE_TAGS: readonly {
 
 const TAG_KEYS = new Set(EDITABLE_TAGS.map((tag) => tag.key))
 
+/** The tags that hold a number, and are read back as one. */
+const NUMBERED = new Set(['season_number', 'episode_id'])
+
+/**
+ * A season or episode number with its leading zeros taken off.
+ *
+ * `01` and `1` are the same season, but they are not the same string, and the
+ * difference leaks everywhere: one file is named `S01E03` and the next `S1E3`
+ * because one number was typed and the other came from a lookup; re-applying
+ * an edit that changed nothing rewrites the file because `01` is not `1`.
+ * There is one way to write a number here, and this is it.
+ *
+ * Only the zeros in front go. `0` itself stays — season 0 is where specials
+ * live — and anything that is not a plain number is left exactly as it was
+ * rather than mangled into one.
+ */
+export function bareNumber(value: string): string {
+  return value.trim().replace(/^0+(?=\d)/, '')
+}
+
 /** Only the keys on the list, and only the ones that say something. */
 export function cleanTags(tags: Record<string, string> | undefined): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(tags ?? {})) {
     if (!TAG_KEYS.has(key)) continue
-    const trimmed = value.trim()
+    const trimmed = NUMBERED.has(key) ? bareNumber(value) : value.trim()
     if (trimmed === '') continue
     out[key] = trimmed
   }
   return out
 }
 
-/** What a file already says, for the fields that can be changed. */
+/**
+ * What a file already says, for the fields that can be changed.
+ *
+ * Numbers are normalised on the way in as well as on the way out. A file
+ * written by something else may carry `season_number=01`, and reading it back
+ * as `01` would show a padded number in the editor, name the file with one,
+ * and make re-applying an unchanged edit look like a change worth rewriting
+ * six gigabytes for.
+ */
 export function tagsOf(file: MediaFile): Record<string, string> {
   const out: Record<string, string> = {}
   for (const { key } of EDITABLE_TAGS) {
     // ffprobe reports tag names in whatever case the container used.
     const found = Object.entries(file.tags).find(([name]) => name.toLowerCase() === key)
-    if (found) out[key] = found[1]
+    if (found) out[key] = NUMBERED.has(key) ? bareNumber(found[1]) : found[1]
   }
   return out
 }

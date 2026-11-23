@@ -13,6 +13,7 @@ import { inPlaceVerdict } from '@shared/plex/inplace.js'
 import { buildRepairCommand } from '@shared/plex/command.js'
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.js'
 import {
+  bareNumber,
   changesAnything,
   cleanTags,
   isEmptyEdit,
@@ -169,5 +170,54 @@ describe('what an edit costs', () => {
   it('has to rewrite the file for a file tag', () => {
     const result = analyzeFile(film(), settings, { tags: { title: 'Heat' } })
     expect(inPlaceVerdict(result).refusal).toBe('changes-the-file-tags')
+  })
+})
+
+/**
+ * Season and episode numbers, which arrive in two forms and must leave in one.
+ *
+ * A lookup gives `5`; a file somebody else wrote says `05`; somebody typing
+ * into the box may give either. Three forms of the same season name the file
+ * three different ways and make an edit that changes nothing look like a
+ * repair, so there is one way to write the number and the rest are normalised
+ * to it on the way in and on the way out.
+ */
+describe('season and episode numbers', () => {
+  it('takes the leading zeros off, and nothing else', () => {
+    expect(bareNumber('01')).toBe('1')
+    expect(bareNumber('007')).toBe('7')
+    expect(bareNumber(' 012 ')).toBe('12')
+    expect(bareNumber('14')).toBe('14')
+  })
+
+  it('keeps season 0, which is where specials live', () => {
+    expect(bareNumber('0')).toBe('0')
+    expect(bareNumber('00')).toBe('0')
+  })
+
+  it('leaves something that is not a number alone rather than mangling it', () => {
+    expect(bareNumber('Pilot')).toBe('Pilot')
+    expect(bareNumber('')).toBe('')
+  })
+
+  it('normalises what the file says', () => {
+    const file = mp4([video()], { tags: { show: 'The Wire', season_number: '01', episode_id: '03' } })
+    expect(tagsOf(file)).toEqual({ show: 'The Wire', season_number: '1', episode_id: '3' })
+  })
+
+  it('normalises what is about to be written', () => {
+    expect(cleanTags({ season_number: '01', episode_id: '003' })).toEqual({
+      season_number: '1',
+      episode_id: '3'
+    })
+  })
+
+  it('does not call a padded number a change worth rewriting the file for', () => {
+    const file = mp4([video()], { tags: { season_number: '01', episode_id: '03' } })
+    expect(changesAnything({ tags: { season_number: '1', episode_id: '3' } }, file)).toBe(false)
+    // Typed back exactly as the file has it, which is the same number again.
+    expect(changesAnything({ tags: { season_number: '01', episode_id: '03' } }, file)).toBe(false)
+    // A real change is still a change.
+    expect(changesAnything({ tags: { season_number: '2' } }, file)).toBe(true)
   })
 })
