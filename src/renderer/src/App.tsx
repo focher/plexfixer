@@ -545,7 +545,10 @@ export default function App(): React.JSX.Element {
         settingsRef.current?.defaultMode ?? 'safe-remux',
         mode
       )
-      const question = repairConfirmation(summary, requests.length, mode)
+      const settings = settingsRef.current
+      const mayRename =
+        (settings?.movieTemplate.trim() ?? '') !== '' || (settings?.episodeTemplate.trim() ?? '') !== ''
+      const question = repairConfirmation(summary, requests.length, mode, mayRename)
       if (question && !window.confirm(question)) return
       // Switched before the files are queued, not after. Each one is re-probed
       // on its way in, so a large batch takes a while to arrive — and watching

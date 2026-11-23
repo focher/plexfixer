@@ -37,7 +37,8 @@ import {
   promoteOutput,
   redirectOutput,
   resolveOutput,
-  temporaryPathFor
+  temporaryPathFor,
+  uniquePath
 } from './output.js'
 import { outputProblem } from './verify.js'
 import { TaskQueue } from './queue.js'
@@ -364,7 +365,10 @@ export class RepairRunner {
         {
           at: Date.now(),
           level: 'info',
-          text: `Queued ${describeStrategy(result.plan.strategy)}`,
+          text:
+            result.plan.strategy === 'none' && onlyTheName(settings, result.file.path, outputPath)
+              ? 'Queued a rename'
+              : `Queued ${describeStrategy(result.plan.strategy)}`,
           detail:
             `source     ${result.file.path}\n` +
             `target     ${outputPath}\n` +
@@ -397,15 +401,30 @@ export class RepairRunner {
     }
 
     if (result.plan.strategy === 'none') {
-      const job: Job = {
-        ...base,
-        stage: 'finished',
-        state: 'skipped',
-        message: 'Already Plex-ready — nothing to change',
-        log: [...base.log, { at: Date.now(), level: 'info', text: 'Skipped: already Plex-ready' }]
+      // A file with nothing wrong with it can still have the wrong *name*,
+      // once a naming pattern is set. That is a rename and nothing else — no
+      // byte of it changes — so it is worth doing and must not cost what a
+      // repair costs.
+      if (!onlyTheName(settings, result.file.path, outputPath)) {
+        const job: Job = {
+          ...base,
+          stage: 'finished',
+          state: 'skipped',
+          message: 'Already Plex-ready — nothing to change',
+          log: [...base.log, { at: Date.now(), level: 'info', text: 'Skipped: already Plex-ready' }]
+        }
+        this.update(job)
+        return job
       }
-      this.update(job)
-      return job
+
+      this.update(base)
+      void this.queue.add({
+        id,
+        run: async () => {
+          await this.justRename(id, result.file.path, outputPath)
+        }
+      })
+      return base
     }
 
     if (result.plan.requiresTranscode && mode !== 'force-transcode') {
@@ -443,6 +462,93 @@ export class RepairRunner {
   }
 
   /**
+   * Give the file its new name, moving it rather than copying it.
+   *
+   * A rename within a folder costs nothing and reads nothing: the file keeps
+   * its place on disk and only the directory entry changes. Writing the file
+   * out under the new name and deleting the old one would read and write every
+   * byte to reach the same end, and across a network share that is the entire
+   * cost of the job.
+   *
+   * A different file already sitting at the new name is left exactly where it
+   * is, as everywhere else here, and the next free name is taken instead.
+   * Returns where the file ended up.
+   */
+  private async renameTo(id: string, sourcePath: string, outputPath: string): Promise<string> {
+    await this.host.mkdirp(this.host.paths.dirname(outputPath))
+    const finalPath = await uniquePath(outputPath, this.host)
+    await this.host.rename(sourcePath, finalPath)
+    if (finalPath !== outputPath) {
+      this.log(
+        id,
+        'warn',
+        `A different file was already at ${this.host.paths.basename(outputPath)}, so it was left alone`,
+        `kept       ${outputPath}\nrenamed    ${finalPath}\n\n` +
+          'Renaming this file was asked for; replacing that one was not, so the next free name was taken.'
+      )
+    }
+    this.log(
+      id,
+      'info',
+      'Renamed the file',
+      `from       ${sourcePath}\nto         ${finalPath}\n\n` +
+        'Nothing was copied: the file stays exactly where it is on disk and only its name changed.'
+    )
+    return finalPath
+  }
+
+  /**
+   * A job whose whole content is a new name.
+   *
+   * The file is already everything Plex wants it to be; the naming pattern
+   * says it should be called something else. There is nothing to back up,
+   * because nothing is being changed — the same bytes answer to a new name.
+   */
+  private async justRename(id: string, sourcePath: string, outputPath: string): Promise<void> {
+    const queued = this.jobs.get(id)
+    if (!queued) return
+    this.update({ ...queued, state: 'running', stage: 'promoting', startedAt: Date.now(), command: [] })
+
+    try {
+      const finalPath = await this.renameTo(id, sourcePath, outputPath)
+      const running = this.jobs.get(id)
+      if (!running) return
+      const elapsed = running.startedAt ? Date.now() - running.startedAt : 0
+      this.addPhase(id, 'promote', elapsed, { note: 'renamed; nothing copied' })
+      this.addPhase(id, 'total', elapsed)
+      // Re-read: the two lines above are updates of their own, and spreading
+      // the snapshot taken before them would throw the measurements away.
+      const finished = this.jobs.get(id) ?? running
+      this.update({
+        ...finished,
+        state: 'done',
+        stage: 'finished',
+        outputPath: finalPath,
+        progress: { ...finished.progress, fraction: 1 },
+        message: `renamed to ${this.host.paths.basename(finalPath)} — nothing copied`,
+        finishedAt: Date.now(),
+        log: [...finished.log, { at: Date.now(), level: 'info', text: 'Done' }]
+      })
+    } catch (error) {
+      const running = this.jobs.get(id)
+      if (!running) return
+      const text = error instanceof Error ? error.message : String(error)
+      this.update({
+        ...running,
+        state: 'failed',
+        stage: 'finished',
+        message: text,
+        finishedAt: Date.now(),
+        log: [
+          ...running.log,
+          { at: Date.now(), level: 'error', text: `Could not rename the file: ${text}` },
+          { at: Date.now(), level: 'info', text: 'The file is untouched, under the name it had' }
+        ]
+      })
+    }
+  }
+
+  /**
    * Write a metadata-only repair straight into the file.
    *
    * Returns false when the plan is anything more than language tags and
@@ -461,7 +567,10 @@ export class RepairRunner {
       )
       return false
     }
-    if (settings.outputPlacement !== 'in-place' || outputPath !== result.file.path) {
+    // A different *name* in the same folder is no reason to rewrite the file:
+    // the header edit happens where the file lies and the rename follows it.
+    // A different *place* is, because that is a second file, not a move.
+    if (settings.outputPlacement !== 'in-place') {
       this.slowPath(id, 'the repaired file is being written somewhere else, not over the original')
       return false
     }
@@ -607,6 +716,27 @@ export class RepairRunner {
       return false
     }
 
+    // The edit is done and verified; the name is the last thing left. A
+    // failure here leaves a correctly repaired file under its old name, which
+    // is worth saying but is not a failed repair.
+    let finalPath = result.file.path
+    let renameFailed: string | undefined
+    if (outputPath !== finalPath) {
+      this.setStage(id, 'promoting')
+      try {
+        finalPath = await this.renameTo(id, finalPath, outputPath)
+      } catch (error) {
+        renameFailed = error instanceof Error ? error.message : String(error)
+        this.log(
+          id,
+          'warn',
+          'The file was repaired, but could not be renamed',
+          `${renameFailed}\n\nThe repair itself is done; the file is still called ` +
+            `${this.host.paths.basename(finalPath)}.`
+        )
+      }
+    }
+
     const running = this.jobs.get(id)
     if (running) {
       const elapsed = running.startedAt ? Date.now() - running.startedAt : 0
@@ -622,15 +752,21 @@ export class RepairRunner {
       // snapshot taken before them would throw the measurements away.
       const finished = this.jobs.get(id) ?? running
       const seconds = finished.startedAt ? ((Date.now() - finished.startedAt) / 1000).toFixed(1) : '?'
+      const notes = [
+        'edited in place — nothing copied',
+        finalPath !== result.file.path ? `renamed to ${this.host.paths.basename(finalPath)}` : undefined,
+        renameFailed ? 'could not be renamed' : undefined,
+        backupPath
+          ? `original kept in ${this.host.paths.join(BACKUP_LABEL, this.host.paths.basename(backupPath))}`
+          : undefined
+      ].filter(Boolean)
       this.update({
         ...finished,
         state: 'done',
         stage: 'finished',
-        outputPath: result.file.path,
+        outputPath: finalPath,
         progress: { ...finished.progress, fraction: 1 },
-        message: backupPath
-          ? `edited in place — nothing copied; original kept in ${this.host.paths.join(BACKUP_LABEL, this.host.paths.basename(backupPath))}`
-          : 'edited in place — nothing copied',
+        message: notes.join('; '),
         finishedAt: Date.now(),
         log: [...finished.log, { at: Date.now(), level: 'info', text: `Done in ${seconds}s` }]
       })
@@ -1211,6 +1347,17 @@ function describeFfmpegFailure(error: unknown): string {
 }
 
 const BACKUP_LABEL = '.plexfixer-backups'
+
+/**
+ * Whether the only thing a job would change is the file's name.
+ *
+ * Only ever true for in-place output. Writing beside the original, or into an
+ * output folder, is a request for a *second* file — the original stays where
+ * it is — and a rename does not produce one.
+ */
+function onlyTheName(settings: AppSettings, sourcePath: string, outputPath: string): boolean {
+  return settings.outputPlacement === 'in-place' && outputPath !== sourcePath
+}
 
 /** Whether a job has reached a state it will not move out of. */
 function isFinished(state: Job['state']): boolean {

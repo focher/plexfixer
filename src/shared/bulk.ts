@@ -56,7 +56,17 @@ const plural = (count: number, one: string, many: string): string => `${count} $
  * a click should not start by accident. A single file (the row's own button)
  * never asks.
  */
-export function repairConfirmation(summary: RepairSummary, total: number, mode?: RepairMode): string | undefined {
+export function repairConfirmation(
+  summary: RepairSummary,
+  total: number,
+  mode?: RepairMode,
+  /**
+   * Whether a naming pattern is set. A file with nothing wrong with it is not
+   * skipped outright then: if its name does not match the pattern it is
+   * renamed, which is a move and nothing more.
+   */
+  mayRename = false
+): string | undefined {
   if (total <= 1 || summary.reencode === 0) return undefined
   const action = mode ? MODE_LABEL[mode] : 'Repair'
   const lines = [
@@ -67,7 +77,9 @@ export function repairConfirmation(summary: RepairSummary, total: number, mode?:
     summary.needsReencodeSkipped > 0 &&
       `${plural(summary.needsReencodeSkipped, 'file needs', 'files need')} a re-encode ${summary.needsReencodeSkipped === 1 ? 'its' : 'their'} mode does not allow, and will be skipped.`,
     summary.nothingToDo > 0 &&
-      `${plural(summary.nothingToDo, 'file has', 'files have')} nothing to do and will be skipped.`,
+      (mayRename
+        ? `${plural(summary.nothingToDo, 'file has', 'files have')} nothing to repair, and will only be renamed if the naming pattern asks for it.`
+        : `${plural(summary.nothingToDo, 'file has', 'files have')} nothing to do and will be skipped.`),
     summary.reportOnly > 0 &&
       `${plural(summary.reportOnly, 'file is', 'files are')} set to Report only and will be skipped.`
   ].filter(Boolean)
