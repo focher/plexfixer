@@ -34,6 +34,37 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.2.12',
+    headline: 'Transcribing on your own machine now takes two buttons: PlexFixer installs whisper.cpp and fetches the model itself.',
+    changes: [
+      {
+        title: 'It installs whisper.cpp for you \u2014 on the graphics card, if you have one',
+        body:
+          'Local transcription needed a binary nothing installs, from a releases page where the version tags ' +
+          'carry no files and the builds hang off rolling ones. Settings \u2192 Subtitles now offers the two that ' +
+          'matter on Windows \u2014 NVIDIA, which runs on the card and turns an afternoon into minutes, and ' +
+          'processor-only \u2014 and downloads, checks and unpacks one into the app\u2019s own folder. The NVIDIA ' +
+          'build carries its own CUDA runtime, so there is nothing else to install. On a Mac, where whisper.cpp ' +
+          'publishes no command-line build at all, PlexFixer finds a Homebrew one instead.'
+      },
+      {
+        title: 'And fetches the model, which is the other half',
+        body:
+          'Six models with what each is for, from 148 MB of English to 3.1 GB of everything, with the ' +
+          'quantised large turbo at 574 MB suggested as the one to take if you only take one. Both the build ' +
+          'and the model are held to a published SHA-256 as they download and thrown away if they do not ' +
+          'match \u2014 a model file is read by a program this app then runs.'
+      },
+      {
+        title: 'A whisper-cli you installed yourself is used without being named',
+        body:
+          'Settings still wins when it names a path. Failing that, PlexFixer uses a build it installed, then ' +
+          'anything already on PATH \u2014 so Homebrew\u2019s is picked up with nothing typed in. Removing a build it ' +
+          'installed is one button, and deletes one folder.'
+      }
+    ]
+  },
+  {
     version: '0.2.11',
     headline: 'Subtitles: found, timed against the audio, written from the audio, translated \u2014 and a re-encode now asks where it should go.',
     changes: [
