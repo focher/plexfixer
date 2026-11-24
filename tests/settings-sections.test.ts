@@ -29,7 +29,10 @@ describe('settings sections', () => {
 
   it('falls back on a section that no longer exists, rather than showing an empty pane', () => {
     // A build that drops or renames a section leaves this behind in storage.
-    expect(sectionFrom('subtitles')).toBe(DEFAULT_SETTINGS_SECTION)
+    // Not `subtitles`, which this test used to use and which is now a real
+    // section — the fallback has to be checked against an id that will not
+    // quietly become valid one release later.
+    expect(sectionFrom('a-section-that-will-never-exist')).toBe(DEFAULT_SETTINGS_SECTION)
     expect(sectionFrom('LANGUAGES')).toBe(DEFAULT_SETTINGS_SECTION)
   })
 })

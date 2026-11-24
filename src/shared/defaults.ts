@@ -72,6 +72,40 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Empty until somebody pastes in a key of their own.
   tmdbCredential: '',
 
+  subtitleProvider: 'opensubtitles',
+  // Empty until somebody pastes in a key and an account of their own.
+  openSubtitlesKey: '',
+  openSubtitlesUsername: '',
+  openSubtitlesPassword: '',
+  // Just the preferred subtitle language until told otherwise.
+  subtitleSearchLanguages: [],
+  // A quarter of a second. Past that a person notices; inside it, moving the
+  // file is churn.
+  subtitleSyncToleranceMs: 250,
+
+  // Local by default, because it is the one that costs nothing and sends
+  // nothing anywhere. It does need a binary and a model file, and says so
+  // until it has them.
+  transcriptionEngine: 'whisper-local',
+  whisperPath: '',
+  whisperModelPath: '',
+  whisperThreads: 0,
+  subtitleTranscriptionEndpoint: '',
+  subtitleTranscriptionCredential: '',
+  subtitleTranscriptionModel: '',
+  // Ten minutes: comfortably inside the 25 MB that both speech endpoints
+  // accept, with room for a cut that lands late at a natural break.
+  transcriptionChunkMinutes: 10,
+
+  // Ollama for the same reason: a model on your own machine, no key, no bill.
+  translationEngine: 'ollama',
+  subtitleTranslationEndpoint: '',
+  subtitleTranslationCredential: '',
+  subtitleTranslationModel: '',
+  // Forty lines is about two minutes of film — long enough for a scene to hold
+  // together in one request, short enough that a batch to redo is cheap.
+  translationBatchSize: 40,
+
   mediaExtensions: ['mkv', 'm4v', 'mp4'],
   recursive: true,
 

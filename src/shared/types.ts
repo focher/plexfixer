@@ -513,6 +513,77 @@ export interface AppSettings {
    */
   tmdbCredential: string
 
+  /* ---------------------------------------------------------------- *
+   * Subtitles
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Which service to look for subtitles on, by provider id.
+   *
+   * One of them at the moment; an id rather than a boolean so that the second
+   * one does not need a settings migration.
+   */
+  subtitleProvider: string
+  /**
+   * An OpenSubtitles API key of your own, for the same reason TMDB needs one:
+   * they give one away for the asking and ask that it not be passed around,
+   * which rules out shipping one inside a binary anybody can open.
+   */
+  openSubtitlesKey: string
+  /**
+   * The account a download is counted against.
+   *
+   * Searching needs only the key. Downloading spends one of a daily allowance
+   * that belongs to an account, so it needs the account.
+   *
+   * The password is kept in `settings.json` in the clear, like every other
+   * credential here. That is worth knowing before typing one in: this app has
+   * no keychain integration, and a file in the application support directory
+   * is readable by anything running as you. It is an account for downloading
+   * subtitles, which is about the lowest-value password there is, and it is
+   * still a password — if that is not a trade worth making, leave it empty and
+   * the rest of the subtitle features work without it.
+   */
+  openSubtitlesUsername: string
+  openSubtitlesPassword: string
+  /**
+   * Which languages to look for, over and above the preferred subtitle
+   * language. Empty means just that one.
+   */
+  subtitleSearchLanguages: string[]
+  /** Leave a subtitle alone if it is already within this many milliseconds. */
+  subtitleSyncToleranceMs: number
+
+  /** Where a transcription is done. */
+  transcriptionEngine: 'whisper-local' | 'groq' | 'openai'
+  /** The `whisper-cli` binary, for a transcription done on this machine. */
+  whisperPath: string
+  /** The model file it loads — a `ggml-*.bin`. */
+  whisperModelPath: string
+  /** Threads for a local run; 0 lets Whisper decide. */
+  whisperThreads: number
+  /**
+   * The speech endpoint, when the transcription is not local.
+   *
+   * Read by the native side to decide what it may fetch, so an address typed
+   * here is an address this app will talk to. Blank uses whatever the chosen
+   * service's own default is.
+   */
+  subtitleTranscriptionEndpoint: string
+  subtitleTranscriptionCredential: string
+  subtitleTranscriptionModel: string
+  /** How much audio goes in one upload, in minutes. */
+  transcriptionChunkMinutes: number
+
+  /** Which shape of model endpoint a translation talks to. */
+  translationEngine: 'ollama' | 'openai' | 'anthropic'
+  /** Same as above: named here, and therefore fetchable. */
+  subtitleTranslationEndpoint: string
+  subtitleTranslationCredential: string
+  subtitleTranslationModel: string
+  /** How many lines go to the model at once. */
+  translationBatchSize: number
+
   /** Extensions treated as media when walking folders. */
   mediaExtensions: string[]
   /** Recurse into subfolders when a folder is scanned. */

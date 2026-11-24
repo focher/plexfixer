@@ -19,6 +19,7 @@ export type SettingsSectionId =
   | 'compatibility'
   | 'modules'
   | 'metadata'
+  | 'subtitles'
   | 'output'
   | 'transcoding'
   | 'remote'
@@ -38,6 +39,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'compatibility', label: 'Compatibility', hint: 'What counts as good enough to direct play' },
   { id: 'modules', label: 'Checks & repairs', hint: 'Every rule, what it does, and whether it runs' },
   { id: 'metadata', label: 'Metadata', hint: 'Looking titles up on themoviedb.org' },
+  { id: 'subtitles', label: 'Subtitles', hint: 'Finding them, timing them, writing them from the audio' },
   { id: 'output', label: 'Output', hint: 'Where repaired files go, and backups' },
   { id: 'transcoding', label: 'Transcoding', hint: 'Encoder and quality, when a re-encode is needed' },
   { id: 'remote', label: 'Remote host', hint: 'Run the work where the files are' },

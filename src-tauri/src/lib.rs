@@ -15,6 +15,7 @@ mod environment;
 mod host;
 mod locate;
 mod menu;
+mod net;
 mod process;
 mod settings;
 mod tmdb;
@@ -248,6 +249,8 @@ pub fn run() {
             overrides_get,
             overrides_set,
             tmdb::tmdb_get,
+            net::net_fetch,
+            net::net_upload,
             environment_resolve,
             about,
             launch_args,
