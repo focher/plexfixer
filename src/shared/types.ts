@@ -382,6 +382,21 @@ export type OutputPlacement =
   /** Write into a user-chosen output directory, mirroring the input tree. */
   | 'output-dir'
 
+/**
+ * Where one run's repaired files go, when that is not what Settings says.
+ *
+ * Settings holds the standing answer; this is the answer for the repair about
+ * to be queued and nothing else. A re-encode is the slow, lossy, hard-to-undo
+ * repair, and "write it somewhere else this once" — a scratch disk with room,
+ * a folder to check the result in before it goes near the library — is a
+ * decision made at the moment of starting it, not months earlier in Settings.
+ */
+export interface OutputOverride {
+  placement: OutputPlacement
+  /** Required by `output-dir`, and ignored by the other two. */
+  directory?: string
+}
+
 export interface AppSettings {
   /** Mode for files with no override of their own, and no overridden folder above them. */
   defaultMode: RepairMode

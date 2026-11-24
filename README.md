@@ -402,6 +402,26 @@ repairing `Movie.mkv` beside an unrelated `Movie.mp4` — that file is left alon
 and the repaired one is written as `Movie (2).mp4`. A subtitle sidecar that
 already exists is kept, not overwritten.
 
+### Where the repaired file goes
+
+Settings holds the standing answer — beside the original with a suffix, over the
+original, or into a separate folder with the library's folder structure
+mirrored inside it. Any repair that will re-encode video asks before it starts,
+a single file included, and the question it asks is *where*: as Settings says,
+beside each original, replacing each original, or into a folder chosen right
+then. The choice applies to that run and nothing else; Settings is not touched.
+
+This is asked at the start of a re-encode and not of a remux because a re-encode
+is the repair where the standing answer is most often the wrong one. It takes
+hours, it is not lossless, and "put this one on the scratch disk" or "write it
+somewhere I can watch it before it goes near the library" is a decision made
+when starting it, not months earlier in Settings.
+
+The folder is created before ffmpeg is pointed at it. ffmpeg does not create the
+folder it is told to write into: it opens the output file and stops with *No
+such file or directory*, which is how a 27 GB transcode into a fresh output
+folder used to fail in under a second.
+
 ### Transcoding
 
 Force transcode uses hardware encoding where it is genuinely available —
@@ -817,6 +837,7 @@ src/
     plex/probe.ts   ffprobe output, normalised
     plex/command.ts The ffmpeg arguments a plan becomes
     plex/metadata.ts What a person may change by hand
+    plex/destination.ts Where one run writes, as against where Settings says
     tmdb.ts         Addresses and answers for themoviedb.org
     subtitles/      Finding, timing, transcribing and translating subtitles
       cues.ts         The cue list every subtitle becomes, whatever it arrived as

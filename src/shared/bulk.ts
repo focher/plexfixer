@@ -5,7 +5,8 @@
  * re-encode where the plan needs one, and every other file gets the same
  * lossless repair it would have had anyway. A confirmation that just said
  * "Force transcode 12 files?" read as if all twelve were about to be
- * re-encoded, so this counts each outcome instead.
+ * re-encoded, so this counts each outcome instead, and `RepairDialog` says
+ * the counts back before anything is queued.
  *
  * The order of the checks mirrors `RepairRunner.enqueue` in
  * src/main/jobs/runner.ts — report-only, then nothing to do, then a needed
@@ -13,7 +14,7 @@
  */
 
 import type { AnalysisResult, ModeOverrides, RepairMode } from './types.js'
-import { MODE_LABEL, repairModeFor } from './mode.js'
+import { repairModeFor } from './mode.js'
 
 export interface RepairSummary {
   /** Files whose video will be re-encoded. */
@@ -50,26 +51,22 @@ export function summarizeRepair(
 const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`
 
 /**
- * The confirmation for a bulk repair, or undefined when none is needed.
+ * What a run will do to its files, one sentence per outcome.
  *
- * Only a batch that re-encodes asks: that is the slow, lossy part, and the one
- * a click should not start by accident. A single file (the row's own button)
- * never asks.
+ * Shared by the dialog that asks before a re-encode and by the plain-text
+ * confirmation: two wordings of the same count is how a prompt comes to
+ * disagree with the Jobs tab.
  */
-export function repairConfirmation(
+export function repairOutcomes(
   summary: RepairSummary,
-  total: number,
-  mode?: RepairMode,
   /**
    * Whether a naming pattern is set. A file with nothing wrong with it is not
    * skipped outright then: if its name does not match the pattern it is
    * renamed, which is a move and nothing more.
    */
   mayRename = false
-): string | undefined {
-  if (total <= 1 || summary.reencode === 0) return undefined
-  const action = mode ? MODE_LABEL[mode] : 'Repair'
-  const lines = [
+): string[] {
+  return [
     summary.reencode > 0 &&
       `${plural(summary.reencode, 'file', 'files')} will have ${summary.reencode === 1 ? 'its' : 'their'} video re-encoded. This is slow, and it is not lossless.`,
     summary.lossless > 0 &&
@@ -82,6 +79,5 @@ export function repairConfirmation(
         : `${plural(summary.nothingToDo, 'file has', 'files have')} nothing to do and will be skipped.`),
     summary.reportOnly > 0 &&
       `${plural(summary.reportOnly, 'file is', 'files are')} set to Report only and will be skipped.`
-  ].filter(Boolean)
-  return `${action} ${plural(total, 'file', 'files')}?\n\n${lines.join('\n')}`
+  ].filter((line): line is string => typeof line === 'string')
 }

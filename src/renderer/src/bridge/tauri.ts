@@ -28,6 +28,7 @@ import { loadLibrary } from '../library.js'
 import { RepairRunner } from '@shared/plex/runner.js'
 import { createBackupRegistry, findBackups } from '@shared/plex/backups-store.js'
 import { repairModeFor } from '@shared/mode.js'
+import { withOutput } from '@shared/plex/destination.js'
 import type { BackupRecord } from '@shared/backups.js'
 import type {
   AboutInfo,
@@ -37,6 +38,7 @@ import type {
   HostKeyFingerprint,
   Job,
   ModeOverrides,
+  OutputOverride,
   RemoteCheck,
   RemoteListing,
   RepairMode,
@@ -718,7 +720,12 @@ function buildApi() {
       }
     },
     jobs: {
-      enqueue: async (requests: RepairRequest[], mode?: RepairMode): Promise<Job[]> => {
+      enqueue: async (
+        requests: RepairRequest[],
+        mode?: RepairMode,
+        /** Where this run writes, when that is not what Settings says. */
+        output?: OutputOverride
+      ): Promise<Job[]> => {
         const active = await ensureRunner()
         // Opened before the first slow step, so that cancelling during the
         // setup counts too and not only once files start arriving.
@@ -728,6 +735,10 @@ function buildApi() {
           const ready = await toolchain()
           if ('problem' in ready) throw new Error(ready.problem)
           const environment = await environmentFor(ready.settings, false)
+          // One copy, made once: every file in this batch goes to the same
+          // place, and re-deriving it per file would let a settings change
+          // land halfway through a batch.
+          const settings = withOutput(ready.settings, output)
 
           const jobs: Job[] = []
           for (const request of requests) {
@@ -745,9 +756,9 @@ function buildApi() {
               active.enqueue({
                 // `edits` is set when this came from the metadata screen: the
                 // plan then includes what was asked for by hand.
-                result: analyzeFile(probed, ready.settings, request.edits),
-                settings: ready.settings,
-                mode: repairModeFor(probed.path, overrides, ready.settings.defaultMode, mode),
+                result: analyzeFile(probed, settings, request.edits),
+                settings,
+                mode: repairModeFor(probed.path, overrides, settings.defaultMode, mode),
                 caps: environment.capabilities,
                 scanRoot: request.scanRoot
               })

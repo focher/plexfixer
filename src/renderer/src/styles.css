@@ -2870,3 +2870,50 @@ select.bulk-metadata-found {
 .subtitle-busy progress {
   width: 160px;
 }
+
+/* ---------- starting a repair ---------- */
+
+/* The outcome lines are sentences, not a scanned table, so they read at the
+   dialog's ordinary width. The destination picker below them is the part that
+   is actually answered. */
+.repair-outcomes {
+  margin: 14px 0 18px;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.repair-destination {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.repair-destination label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.repair-destination input[type='radio'] {
+  margin: 0;
+  flex: none;
+}
+
+.repair-destination code {
+  font-size: 12px;
+}
+
+/* Indented under the radio it belongs to, and always visible: a folder chosen
+   before the radio is picked selects the radio, so hiding it would hide the
+   only way to pick it. */
+.repair-folder {
+  margin: 2px 0 0 24px;
+}
+
+.repair-folder input {
+  min-width: 0;
+}

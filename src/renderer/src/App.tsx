@@ -7,7 +7,9 @@ import type {
   Job,
   MetadataEdit,
   ModeOverrides,
+  OutputOverride,
   RepairMode,
+  RepairRequest,
   ScanError
 } from '@shared/types.js'
 import { resolveMode } from '@shared/mode.js'
@@ -16,7 +18,8 @@ import ResultsTable from './components/ResultsTable.js'
 import FilterBar from './components/FilterBar.js'
 import MenuButton from './components/MenuButton.js'
 import BulkMetadataDialog from './components/BulkMetadataDialog.js'
-import { repairConfirmation, summarizeRepair } from '@shared/bulk.js'
+import RepairDialog from './components/RepairDialog.js'
+import { summarizeRepair, type RepairSummary } from '@shared/bulk.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
 import AboutDialog from './components/AboutDialog.js'
@@ -130,6 +133,19 @@ export default function App(): React.JSX.Element {
   const [removingBackups, setRemovingBackups] = useState(false)
   // Leftover repair temporaries the last scan removed, for a line of feedback.
   const [cleaned, setCleaned] = useState<{ path: string; bytes: number }[]>([])
+  /**
+   * The repair waiting to be confirmed, with everything needed to start it.
+   *
+   * Held rather than recomputed when the dialog answers: the files were probed
+   * and counted as they are now, and re-deriving them on Start would let the
+   * table change underneath the question that was answered.
+   */
+  const [confirming, setConfirming] = useState<{
+    requests: RepairRequest[]
+    summary: RepairSummary
+    mode?: RepairMode
+    mayRename: boolean
+  }>()
 
   const scanIdRef = useRef<string | undefined>(undefined)
   // Read by the scan-complete listener, registered once.
@@ -548,13 +564,32 @@ export default function App(): React.JSX.Element {
       const settings = settingsRef.current
       const mayRename =
         (settings?.movieTemplate.trim() ?? '') !== '' || (settings?.episodeTemplate.trim() ?? '') !== ''
-      const question = repairConfirmation(summary, requests.length, mode, mayRename)
-      if (question && !window.confirm(question)) return
+      // Anything that re-encodes asks first — one file included, which used to
+      // start hours of work from a single click — and the question it asks is
+      // where the result goes, not only whether to go ahead.
+      if (summary.reencode > 0) {
+        setConfirming({ requests, summary, mode, mayRename })
+        return
+      }
+      await startRepair(requests, mode)
+    },
+    []
+  )
+
+  /**
+   * Queue a repair that has been asked about, or needed no asking.
+   *
+   * `output` is this run's destination when it is not the standing one; it is
+   * handed straight to the bridge, which puts it in the settings those jobs
+   * are queued with and nowhere else.
+   */
+  const startRepair = useCallback(
+    async (requests: RepairRequest[], mode?: RepairMode, output?: OutputOverride) => {
       // Switched before the files are queued, not after. Each one is re-probed
       // on its way in, so a large batch takes a while to arrive — and watching
       // it arrive, with Cancel all in reach, beats staring at the library.
       setTab('jobs')
-      await window.plexfixer.jobs.enqueue(requests, mode)
+      await window.plexfixer.jobs.enqueue(requests, mode, output)
     },
     []
   )
@@ -1262,6 +1297,22 @@ export default function App(): React.JSX.Element {
 
       {whatsNew.length > 0 ? (
         <WhatsNewDialog notes={whatsNew} onClose={() => setWhatsNew([])} />
+      ) : null}
+
+      {confirming && settings ? (
+        <RepairDialog
+          summary={confirming.summary}
+          total={confirming.requests.length}
+          mode={confirming.mode}
+          settings={settings}
+          mayRename={confirming.mayRename}
+          onClose={() => setConfirming(undefined)}
+          onConfirm={(output) => {
+            const started = confirming
+            setConfirming(undefined)
+            void startRepair(started.requests, started.mode, output)
+          }}
+        />
       ) : null}
 
       {lookingUp && settings ? (
