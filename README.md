@@ -238,6 +238,110 @@ would widen it for everything else the page could ever be made to do; a command
 with the host written into it cannot be pointed anywhere else. PlexFixer is not
 endorsed by or affiliated with TMDB.
 
+### Subtitles
+
+**Subtitles**, on any row, is a workshop for one film. It is deliberately not
+four screens for the four things it does, because a person opening it has one
+subtitle in mind and everything they might want is the same sentence: get a
+subtitle from somewhere, see whether it fits, change it, save it.
+
+Nothing it does writes to the film. Every result is a sidecar `.srt` beside it,
+named the way Plex looks for one — `<film>.<language>[.forced].srt` — and a name
+already taken gets a number rather than being overwritten, because a file
+already there is somebody's. A sidecar is what you want anyway: every client
+renders text without the server doing any work, which is the whole reason this
+app prefers one to a track muxed into the file.
+
+**Where a subtitle comes from.** Any text track already in the file, any sidecar
+already beside it, a search on OpenSubtitles, or the audio itself. Picture
+subtitles (PGS, VobSub) are listed and cannot be used — there is no text in them
+to compare, translate or write out.
+
+**Finding one.** Settings → Subtitles takes an OpenSubtitles API key, which is
+yours rather than one shipped with PlexFixer for the same reason as the TMDB
+one. Searching needs only the key; *downloading* spends one of a daily
+allowance that belongs to an account, so that needs a username and password
+too. Both go into `settings.json` in the clear, like every other credential
+here — PlexFixer has no keychain integration, and that is worth knowing before
+you type a password in. Leave it empty and everything else here still works.
+
+The search sends the film's **hash** as well as its title. The hash is its size
+plus its first and last 64 KB, which identifies this exact encode: a result
+marked *matches this file* was uploaded for this encode and its timing is
+usually right to the frame, where a result matched by name is a subtitle for a
+film of that title and its timing is anybody's guess.
+
+**Checking the timing.** This is the part with real work in it. There is no
+metadata anywhere that says whether a subtitle matches a film, but there are
+two timelines — when somebody is speaking, and when a line is on screen — and if
+the subtitle belongs to this cut they line up.
+
+PlexFixer finds the first by running ffmpeg's `silencedetect` over the
+original-language audio track and inverting what it reports: the gaps between
+the silences are, near enough, the dialogue. Then it correlates the two and
+reports one of four things — in step, out by a constant amount, drifting, or not
+this film at all. Drifting is the one a person notices last and which no shift
+can fix: a subtitle timed against a 25 fps broadcast transfer laid over a 23.976
+fps source is nearly five minutes out by the end of a feature while the first
+ten minutes look fine. Each of the frame rate conversions that actually happen
+is tried, and the one that lines up is named. **Move the lines to match**
+applies what it found; nothing is on disk until you save.
+
+The report carries a confidence, and the percentage beside it is reported next
+to the share of the film that has sound in it, because without that baseline it
+is not a measurement: on a talkative film a subtitle picked at random begins on
+speech about three quarters of the time.
+
+The check runs ffmpeg where the film is, so it works with a remote host
+switched on.
+
+**Writing one from the audio.** This is Whisper's job and not a language
+model's. Chat endpoints take text; Ollama serves text and vision models and has
+no speech-to-text endpoint of any kind, so there is nowhere to send the
+request. "Local" here therefore means a `whisper.cpp` build and a `ggml` model
+file on your own disk, which Settings points at; the hosted alternative is a
+*speech* endpoint — Groq or OpenAI — which is a different address from the chat
+endpoint below, even at the same vendor.
+
+A hosted endpoint takes 25 MB at a time, so a film goes up in pieces. The cuts
+land in a silence rather than on the clock, because a cut through the middle of
+a word gives both halves a fragment the model guesses at and the guesses arrive
+in the subtitle as invented sentences. Whisper also pads silence with the most
+common line in its training data — subtitle credits, in whatever language — and
+those are dropped rather than written out.
+
+Sending audio needs the audio on this machine, so a hosted transcription does
+not work with a remote host switched on. A local Whisper does.
+
+**Translating one.** This is where a language model belongs, and three shapes
+are supported: the OpenAI chat shape that half the industry copied (so Groq,
+Together, LM Studio and llama.cpp's own server all answer), Anthropic's
+messages, and **Ollama**, which is the one that matters for a model on your own
+machine — no key, no bill, nothing leaving the house. Ollama gets a model
+picker rather than a text box, because a local install has whichever models
+somebody pulled under names only that machine knows.
+
+Lines go to the model forty at a time with a few already-translated lines in
+front as context. That is not an optimisation, it is what makes the translation
+correct: Russian drops pronouns and marks gender on the verb, `Вы` and `ты` are
+both "you" but only one is polite, and a two-word line is routinely the second
+half of the sentence before it. A model shown a scene gets those right and a
+model shown one line cannot.
+
+Every batch goes out numbered and is counted back. A model asked for forty
+lines occasionally returns thirty-nine, having merged two short ones, and a
+subtitle whose lines have shifted by one is far worse than one that failed —
+nothing about it looks wrong until you watch it. A batch that does not
+reconcile is asked again for the lines that are missing and then split; only
+after that does a line give up and keep its original wording, which is a
+visible imperfection rather than a quiet one.
+
+Whisper can also translate to English by itself, in the same pass as the
+transcription, with no language model involved at all. That is a genuinely
+different route to an English subtitle from Russian audio — one model's guess at
+what was said in English, against two models' guesses at what was said and then
+what it means — so both are offered and which is better depends on the film.
+
 ### When a file is blocked
 
 **Blocked** means no automatic repair applies. Opening the row says why, which
@@ -685,6 +789,17 @@ media with ffmpeg, run the generated repair commands and re-probe the output to
 confirm the problems are actually gone — those are skipped automatically when
 ffmpeg is not installed.
 
+The subtitle code is tested the same way, in two halves. The arithmetic — cue
+parsing, the correlation, the chunking, the batching — is checked against
+timelines and payloads built by hand, including a saved reply from each service
+so that a wire format is never learned from production. What that cannot check
+is the one place the code meets text it did not write, so a second file
+synthesises audio with silence in known places, runs ffmpeg's real
+`silencedetect` over it, and confirms the silence comes back where it actually
+was. A regex against a remembered log format is a guess, and a wrong guess here
+produces a film with no silence in it anywhere and a timing check that
+confidently reports that nothing matches.
+
 ## Layout
 
 ```
@@ -703,6 +818,17 @@ src/
     plex/command.ts The ffmpeg arguments a plan becomes
     plex/metadata.ts What a person may change by hand
     tmdb.ts         Addresses and answers for themoviedb.org
+    subtitles/      Finding, timing, transcribing and translating subtitles
+      cues.ts         The cue list every subtitle becomes, whatever it arrived as
+      hash.ts         The file hash that identifies this exact encode
+      silence.ts      Where the talking is, from where the silence is not
+      sync.ts         Whether a subtitle follows the audio, and by how much it does not
+      providers/      One file per subtitle service, pure request and reply
+      asr.ts          Whisper, local and hosted — not a language model's job
+      llm.ts          Chat endpoints: OpenAI-shaped, Anthropic, Ollama
+      translate.ts    Batching lines out and counting them back
+      audio.ts        The one part that runs ffmpeg
+      service.ts      The one part that knows a host exists
     release-notes.ts What changed, and which versions a run is shown
     plex/runner.ts  Running repairs: queue, progress, promotion, backups
     plex/ssh.ts     The ssh transport, and the host that speaks it
@@ -714,6 +840,7 @@ src-tauri/          The native side, in Rust
   src/process.rs    Long-running ffmpeg, streamed and stoppable
   src/settings.rs   The settings file
   src/environment.rs What this machine's ffmpeg can actually do
+  src/net.rs        The one door out: allowed hosts, and the ones Settings names
 ```
 
 **Rust does only what a native process must** — spawn ffmpeg, walk a
