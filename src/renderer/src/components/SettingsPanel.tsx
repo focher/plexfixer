@@ -15,6 +15,7 @@ import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/mo
 import { readCredential } from '@shared/tmdb.js'
 import { LLM_ENGINES, llmEngine } from '@shared/subtitles/llm.js'
 import { ASR_SERVICES, asrService } from '@shared/subtitles/asr.js'
+import WhisperModels from './WhisperModels.js'
 import {
   SUGGESTED_EPISODE_TEMPLATES,
   SUGGESTED_MOVIE_TEMPLATES,
@@ -623,11 +624,17 @@ function SubtitlesSection(props: SettingsPanelProps): React.JSX.Element {
             />
             <button onClick={() => props.onPickBinary('whisper')}>Choose…</button>
           </Field>
-          <Field label="Model file" hint="A ggml-*.bin. The large models are markedly better at accents and at names, and markedly slower.">
+          <Field label="Model" hint="Nothing installs one of these, so PlexFixer will fetch it. The large models are markedly better at accents and at names, and markedly slower.">
+            <WhisperModels
+              modelPath={settings.whisperModelPath}
+              onChoose={(path) => set({ whisperModelPath: path })}
+            />
+          </Field>
+          <Field label="Model file" hint="Where the chosen model is. Fill this in by hand if you keep your models somewhere of your own.">
             <input
               type="text"
               value={settings.whisperModelPath}
-              placeholder="ggml-large-v3.bin"
+              placeholder="ggml-large-v3-turbo-q5_0.bin"
               spellCheck={false}
               onChange={(event) => set({ whisperModelPath: event.target.value })}
             />

@@ -15,6 +15,7 @@ mod environment;
 mod host;
 mod locate;
 mod menu;
+mod models;
 mod net;
 mod process;
 mod settings;
@@ -233,6 +234,7 @@ pub fn run() {
             app.manage(EnvironmentCache::default());
             app.manage(process::Processes::default());
             app.manage(menu::ContextPath::default());
+            app.manage(models::Downloads::default());
             menu::install(&app.handle().clone())?;
 
             // Shown only once the webview has something to draw, so the window
@@ -251,6 +253,11 @@ pub fn run() {
             tmdb::tmdb_get,
             net::net_fetch,
             net::net_upload,
+            models::model_directory,
+            models::models_installed,
+            models::model_download,
+            models::model_cancel,
+            models::model_remove,
             environment_resolve,
             about,
             launch_args,

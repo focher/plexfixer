@@ -121,7 +121,7 @@ pub struct Reply {
 /// See `tmdb.rs` for why this is not left to whoever got there first: reqwest
 /// panics rather than failing when no provider is installed, and a release
 /// build of this app aborts on a panic, so the window simply disappears.
-fn install_crypto_provider() {
+pub(crate) fn install_crypto_provider() {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
@@ -140,7 +140,7 @@ fn origin(url: &url_lite::Parsed) -> String {
 /// `dl.opensubtitles.com` is under `opensubtitles.com`; so is
 /// `opensubtitles.com` itself. `notopensubtitles.com` is not, which is the
 /// case a plain `ends_with` gets wrong.
-fn under_host(host: &str, suffix: &str) -> bool {
+pub(crate) fn under_host(host: &str, suffix: &str) -> bool {
     host == suffix || host.ends_with(&format!(".{suffix}"))
 }
 
@@ -397,7 +397,7 @@ fn describe(url: &str, error: &reqwest::Error) -> String {
 /// than guessed at, because the answer feeds a security decision and a parser
 /// that disagrees with the one reqwest uses is how an allowed prefix comes to
 /// address a different host.
-mod url_lite {
+pub(crate) mod url_lite {
     pub struct Parsed {
         pub scheme: String,
         pub host: String,

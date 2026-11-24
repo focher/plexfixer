@@ -72,6 +72,12 @@ import type { Cue } from '@shared/subtitles/cues.js'
 import type { SpeechInterval } from '@shared/subtitles/silence.js'
 import type { HttpReply, HttpRequest, SubtitleCandidate } from '@shared/subtitles/providers/types.js'
 import type { UploadRequest } from '@shared/subtitles/asr.js'
+import {
+  whisperModel,
+  WHISPER_MODELS,
+  type InstalledModel,
+  type ModelProgress
+} from '@shared/subtitles/models.js'
 
 type Unsubscribe = () => void
 
@@ -266,6 +272,17 @@ async function workshop(): Promise<Workshop | { problem: string }> {
     ffmpegPath: resolved.ffmpegPath
   }
 }
+
+/**
+ * How far a model download has got.
+ *
+ * Rust emits this, so unlike the subtitle progress above it really does cross
+ * a boundary: the download is a native stream to a file, and the page only
+ * ever hears about it. Subscribed once here rather than per download, because
+ * a listener registered when a button is pressed misses the first event.
+ */
+const modelProgress = emitter<ModelProgress>()
+subscribe<ModelProgress>('plexfixer://model-progress', (progress) => modelProgress.emit(progress))
 
 /** Cancellation, one controller per operation id. */
 const subtitleRuns = new Map<string, AbortController>()
@@ -485,7 +502,55 @@ function buildApi() {
       ) => subtitleRun(opId, (shop) => writeSidecar(shop, mediaPath, cues, language, options)),
 
       /** What the chosen translation endpoint has, for the model picker. */
-      models: (opId: string) => subtitleRun(opId, (shop) => listTranslationModels(shop))
+      models: (opId: string) => subtitleRun(opId, (shop) => listTranslationModels(shop)),
+
+      /**
+       * The Whisper models: what there is, what is here, and fetching one.
+       *
+       * The catalogue is static data rather than a call — it is compiled in —
+       * and the download is the one thing here that is genuinely native: it
+       * streams to a file, hashes as it goes, and reports progress through the
+       * emitter above.
+       */
+      whisper: {
+        catalogue: WHISPER_MODELS,
+
+        /** Where fetched models are kept, created if it is not there yet. */
+        directory: (): Promise<string> => invoke('model_directory'),
+
+        /** Which models are already on this machine. */
+        installed: (): Promise<InstalledModel[]> => invoke('models_installed'),
+
+        onProgress: modelProgress.on,
+
+        /**
+         * Fetch one, by file name.
+         *
+         * The size and the hash come from the catalogue here rather than from
+         * the caller: a download is only worth having if it is checked, and
+         * the only thing that knows what to check it against is the entry.
+         * `undefined` back means it was cancelled.
+         */
+        download: async (file: string): Promise<{ path: string } | { cancelled: true } | { problem: string }> => {
+          const model = whisperModel(file)
+          if (!model) return { problem: `${file} is not one of the models PlexFixer knows.` }
+          try {
+            const path = await invoke<string | null>('model_download', {
+              file: model.file,
+              sha256: model.sha256,
+              sizeBytes: model.sizeBytes
+            })
+            return path ? { path } : { cancelled: true }
+          } catch (error) {
+            return { problem: error instanceof Error ? error.message : String(error) }
+          }
+        },
+
+        /** Stop a download. Takes effect within one chunk. */
+        cancel: (file: string): Promise<void> => invoke('model_cancel', { file }),
+
+        remove: (file: string): Promise<void> => invoke('model_remove', { file })
+      }
     },
 
     overrides: {

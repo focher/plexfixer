@@ -313,6 +313,24 @@ those are dropped rather than written out.
 Sending audio needs the audio on this machine, so a hosted transcription does
 not work with a remote host switched on. A local Whisper does.
 
+The binary is yours to install — `brew install whisper.cpp`, or one of the
+builds whisper.cpp publishes (the assets hang off its rolling `b####` tags, not
+the `v1.x` ones, and the CUDA zip is the one worth having on a machine with an
+NVIDIA card). The **model** PlexFixer will fetch for you. Nothing installs one,
+the file names say nothing about what is in them, and the obvious choice is a
+three-gigabyte download that transcribes a film slower than watching it, so
+Settings → Subtitles lists six of them with what each is for and downloads the
+chosen one into the app's own folder. Each is pinned to the size and the
+SHA-256 published for it, hashed as it arrives, and thrown away if it does not
+match — the same discipline the bundled ffmpeg downloads are held to, and for
+the same reason: a model file is read by a binary this app then runs. The
+address is not something the page can name. It asks for a *file*, whose shape
+is checked, and the URL is built on the native side from a prefix compiled into
+the binary; a redirect is followed only to Hugging Face's own hosts.
+
+If you keep models somewhere of your own, the path field underneath still takes
+one directly.
+
 **Translating one.** This is where a language model belongs, and three shapes
 are supported: the OpenAI chat shape that half the industry copied (so Groq,
 Together, LM Studio and llama.cpp's own server all answer), Anthropic's
@@ -846,6 +864,7 @@ src/
       sync.ts         Whether a subtitle follows the audio, and by how much it does not
       providers/      One file per subtitle service, pure request and reply
       asr.ts          Whisper, local and hosted — not a language model's job
+      models.ts       The ggml models: what there is, and fetching one
       llm.ts          Chat endpoints: OpenAI-shaped, Anthropic, Ollama
       translate.ts    Batching lines out and counting them back
       audio.ts        The one part that runs ffmpeg
@@ -862,6 +881,7 @@ src-tauri/          The native side, in Rust
   src/settings.rs   The settings file
   src/environment.rs What this machine's ffmpeg can actually do
   src/net.rs        The one door out: allowed hosts, and the ones Settings names
+  src/models.rs     Fetching a Whisper model: streamed, hashed, and only from one place
 ```
 
 **Rust does only what a native process must** — spawn ffmpeg, walk a

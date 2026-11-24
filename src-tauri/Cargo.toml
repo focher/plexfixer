@@ -33,6 +33,10 @@ reqwest = { version = "0.13", default-features = false, features = ["charset", "
 # not supply. Same version and same one feature the updater already asks
 # for, so this adds a line and no crates. See src/tmdb.rs.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# Also already compiled in, underneath that rustls feature, which is why it is
+# a line and not a crate: the model downloader hashes a gigabyte of file as it
+# writes it, and this is the SHA-256 that is already in the build.
+ring = "0.17"
 tokio = { version = "1", features = ["process", "fs", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
