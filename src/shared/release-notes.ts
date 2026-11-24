@@ -34,6 +34,45 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.2.11',
+    headline: 'Subtitles: found, timed against the audio, written from the audio, translated \u2014 and a re-encode now asks where it should go.',
+    changes: [
+      {
+        title: 'Subtitles, four ways',
+        body:
+          'Search OpenSubtitles by the file\u2019s own hash, so a match was uploaded for this exact encode and its ' +
+          'timing is usually right to the frame. Check a subtitle against the audio and see whether it is in ' +
+          'step, out by a constant amount, drifting, or for another film entirely \u2014 then correct it. Write a ' +
+          'subtitle from the audio with Whisper, locally or hosted. Translate one with any chat model, ' +
+          'including local models through Ollama, which lists what you have pulled.'
+      },
+      {
+        title: 'Transcribing is Whisper\u2019s job, not a chat model\u2019s',
+        body:
+          'Ollama serves text and vision models and has no speech-to-text endpoint, so there is nowhere to ' +
+          'send audio. Transcription is therefore Whisper \u2014 a local whisper.cpp build you point Settings at, ' +
+          'or a hosted speech endpoint \u2014 and the chat models do the translating, which is the part they are ' +
+          'genuinely good at.'
+      },
+      {
+        title: 'A transcode into a new output folder no longer fails instantly',
+        body:
+          'With an output folder set, PlexFixer mirrors your library inside it \u2014 a folder per film \u2014 so the ' +
+          'first repair of a film wrote into a folder that did not exist yet. ffmpeg does not create the folder ' +
+          'it is told to write into; it stops with \u201cNo such file or directory\u201d before reading a frame. ' +
+          'The folder is now made first.'
+      },
+      {
+        title: 'A re-encode asks where the result goes',
+        body:
+          'Settings holds the standing answer, and for a remux that is right. A re-encode takes hours and is ' +
+          'not lossless, so it now asks when you start it \u2014 one file included \u2014 and offers the folder ' +
+          'Settings names, beside each original, replacing each original, or a folder chosen right then. ' +
+          'The choice applies to that run; Settings is not touched.'
+      }
+    ]
+  },
+  {
     version: '0.2.10',
     headline: 'A file that only needs a new name is renamed, not rewritten \u2014 and season and episode numbers are written one way everywhere.',
     changes: [
