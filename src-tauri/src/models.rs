@@ -40,6 +40,9 @@ use tokio::io::AsyncWriteExt;
 
 use crate::net::{under_host, url_lite};
 
+/// The event a model download reports progress on.
+const MODEL_PROGRESS: &str = "plexfixer://model-progress";
+
 /// Where the models come from. A prefix, ending at the file name.
 const REPOSITORY: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 
@@ -49,7 +52,15 @@ const REPOSITORY: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/m
 /// `us.aws.cdn.hf.co` today, and it has been other names before. Pinning the
 /// CDN's name would break this the next time they move it, so the rule is the
 /// two domains the service uses and nothing else.
-const DOWNLOAD_HOSTS: &[&str] = &["huggingface.co", "hf.co"];
+const DOWNLOAD_HOSTS: &[&str] = &[
+    "huggingface.co",
+    "hf.co",
+    // The whisper.cpp builds come from GitHub's releases, which answer with a
+    // redirect to their asset host. `whisper.rs` fetches those through the
+    // same door, so its hosts are in the same list.
+    "github.com",
+    "githubusercontent.com",
+];
 
 /// How many redirects to follow before deciding something is wrong.
 const MAX_REDIRECTS: usize = 5;
@@ -89,26 +100,26 @@ struct Inner {
 
 impl Downloads {
     /// Claim this file, or say who already has it.
-    fn start(&self, file: &str) -> bool {
+    pub(crate) fn start(&self, file: &str) -> bool {
         let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         state.cancelled.remove(file);
         state.running.insert(file.to_string())
     }
 
-    fn finish(&self, file: &str) {
+    pub(crate) fn finish(&self, file: &str) {
         let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         state.running.remove(file);
         state.cancelled.remove(file);
     }
 
-    fn cancel(&self, file: &str) {
+    pub(crate) fn cancel(&self, file: &str) {
         let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if state.running.contains(file) {
             state.cancelled.insert(file.to_string());
         }
     }
 
-    fn is_cancelled(&self, file: &str) -> bool {
+    pub(crate) fn is_cancelled(&self, file: &str) -> bool {
         let state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         state.cancelled.contains(file)
     }
@@ -116,7 +127,7 @@ impl Downloads {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct Progress {
+pub(crate) struct Progress {
     file: String,
     received_bytes: u64,
     total_bytes: u64,
@@ -155,12 +166,12 @@ fn is_model_file(name: &str) -> bool {
 }
 
 /// Whether `hash` is a SHA-256 written the way this expects it.
-fn is_sha256(hash: &str) -> bool {
+pub(crate) fn is_sha256(hash: &str) -> bool {
     hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 /// Whether a redirect may be followed.
-fn redirect_allowed(url: &str) -> bool {
+pub(crate) fn redirect_allowed(url: &str) -> bool {
     let Some(parsed) = url_lite::parse(url) else {
         return false;
     };
@@ -305,35 +316,18 @@ async fn fetch(app: &AppHandle, file: &str, sha256: &str, size_bytes: u64) -> Re
     let partial = dir.join(format!("{file}.part"));
     let _ = tokio::fs::remove_file(&partial).await;
 
-    let client = client()?;
-    let url = format!("{REPOSITORY}{file}");
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|error| describe(&error))?;
-
-    if !response.status().is_success() {
-        return Err(match response.status().as_u16() {
-            404 => format!("Hugging Face does not have {file}."),
-            status => format!("Hugging Face answered {status}."),
-        });
-    }
-
-    // The size it says it will send, where it says. Checked before a byte is
-    // written so a wrong file is refused rather than downloaded and then
-    // thrown away.
-    if let Some(stated) = response.content_length() {
-        if stated != size_bytes {
-            return Err(format!(
-                "that file is {} MB, and this expected {} MB — the catalogue is out of date.",
-                stated / (1024 * 1024),
-                size_bytes / (1024 * 1024)
-            ));
-        }
-    }
-
-    let written = write_out(app, response, &partial, file, sha256, size_bytes).await;
+    let response = start_get(&format!("{REPOSITORY}{file}"), "Hugging Face", size_bytes).await?;
+    let written = stream_to_file(
+        app,
+        response,
+        &partial,
+        file,
+        MODEL_PROGRESS,
+        file,
+        sha256,
+        size_bytes,
+    )
+    .await;
     match written {
         Ok(true) => {
             tokio::fs::rename(&partial, &target)
@@ -352,12 +346,54 @@ async fn fetch(app: &AppHandle, file: &str, sha256: &str, size_bytes: u64) -> Re
     }
 }
 
+/// Begin a download, with the two things worth refusing before any bytes.
+///
+/// `what` is the service's name, for a message that says who answered rather
+/// than what library was used. The size is checked against what the reply says
+/// it will send, so a file that is not the file the catalogue describes is
+/// refused now rather than downloaded and then thrown away.
+pub(crate) async fn start_get(url: &str, what: &str, size_bytes: u64) -> Result<reqwest::Response, String> {
+    let response = client()?
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| describe(&error))?;
+
+    if !response.status().is_success() {
+        return Err(match response.status().as_u16() {
+            404 => format!("{what} does not have that file."),
+            status => format!("{what} answered {status}."),
+        });
+    }
+
+    if let Some(stated) = response.content_length() {
+        if stated != size_bytes {
+            return Err(format!(
+                "that file is {} MB, and this expected {} MB — the catalogue is out of date.",
+                stated / (1024 * 1024),
+                size_bytes / (1024 * 1024)
+            ));
+        }
+    }
+
+    Ok(response)
+}
+
 /// Stream the body to `partial`, hashing as it goes. `false` means cancelled.
-async fn write_out(
+///
+/// Shared with `whisper.rs`, which fetches an archive rather than a model: the
+/// streaming, the hashing, the ceiling and the cancel check are the same job
+/// whatever is on the far end, and this is the security-critical half of it.
+/// `label` is what progress is reported under and `cancel_key` is what a stop
+/// request names, which for a model are both the file name.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn stream_to_file(
     app: &AppHandle,
     mut response: reqwest::Response,
     partial: &Path,
-    file: &str,
+    label: &str,
+    event: &'static str,
+    cancel_key: &str,
     sha256: &str,
     size_bytes: u64,
 ) -> Result<bool, String> {
@@ -370,12 +406,12 @@ async fn write_out(
     let mut announced: u64 = 0;
     let mut announced_at = Instant::now();
     let _ = app.emit(
-        "plexfixer://model-progress",
-        Progress { file: file.to_string(), received_bytes: 0, total_bytes: size_bytes },
+        event,
+        Progress { file: label.to_string(), received_bytes: 0, total_bytes: size_bytes },
     );
 
     loop {
-        if app.state::<Downloads>().is_cancelled(file) {
+        if app.state::<Downloads>().is_cancelled(cancel_key) {
             return Ok(false);
         }
         let chunk = match response.chunk().await {
@@ -385,7 +421,7 @@ async fn write_out(
         };
         received += chunk.len() as u64;
         if received > size_bytes {
-            return Err(format!("{file} is longer than it said it would be"));
+            return Err(format!("{label} is longer than it said it would be"));
         }
         digest.update(&chunk);
         handle
@@ -397,8 +433,8 @@ async fn write_out(
             announced = received;
             announced_at = Instant::now();
             let _ = app.emit(
-                "plexfixer://model-progress",
-                Progress { file: file.to_string(), received_bytes: received, total_bytes: size_bytes },
+                event,
+                Progress { file: label.to_string(), received_bytes: received, total_bytes: size_bytes },
             );
         }
     }
@@ -419,19 +455,19 @@ async fn write_out(
     let got = hex(digest.finish().as_ref());
     if got != sha256 {
         return Err(format!(
-            "{file} downloaded, but it is not the file the catalogue describes — it has been thrown away."
+            "{label} downloaded, but it is not the file the catalogue describes — it has been thrown away."
         ));
     }
 
     let _ = app.emit(
-        "plexfixer://model-progress",
-        Progress { file: file.to_string(), received_bytes: size_bytes, total_bytes: size_bytes },
+        event,
+        Progress { file: label.to_string(), received_bytes: size_bytes, total_bytes: size_bytes },
     );
     Ok(true)
 }
 
 /// The SHA-256 of a file already on disk, or `None` if it cannot be read.
-async fn hash_of(path: &Path) -> Option<String> {
+pub(crate) async fn hash_of(path: &Path) -> Option<String> {
     use tokio::io::AsyncReadExt;
     let mut handle = tokio::fs::File::open(path).await.ok()?;
     let mut digest = ring::digest::Context::new(&ring::digest::SHA256);
@@ -448,7 +484,7 @@ async fn hash_of(path: &Path) -> Option<String> {
     Some(hex(digest.finish().as_ref()))
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         out.push_str(&format!("{byte:02x}"));
@@ -457,7 +493,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// A client that follows Hugging Face's redirects and nobody else's.
-fn client() -> Result<reqwest::Client, String> {
+pub(crate) fn client() -> Result<reqwest::Client, String> {
     crate::net::install_crypto_provider();
     reqwest::Client::builder()
         // No overall timeout: a three-gigabyte model on a slow line takes as
@@ -478,7 +514,7 @@ fn client() -> Result<reqwest::Client, String> {
         .map_err(|error| error.to_string())
 }
 
-fn describe(error: &reqwest::Error) -> String {
+pub(crate) fn describe(error: &reqwest::Error) -> String {
     if error.is_timeout() {
         return "huggingface.co stopped answering".to_string();
     }

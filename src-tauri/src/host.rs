@@ -114,6 +114,17 @@ pub async fn allowed_binary(app: &AppHandle, command: &str) -> bool {
     if let Some(qt) = ffmpeg.and_then(|ffmpeg| locate_qt_faststart(app, &ffmpeg)) {
         located.push(qt);
     }
+    // A whisper.cpp build this app installed into its own folder, and one
+    // already on PATH — a Homebrew install, say, on the platform upstream
+    // publishes no binary for. Both are resolved here rather than named by the
+    // caller, so neither widens anything the caller controls. Without them the
+    // app would install a program and then refuse to run it.
+    located.extend(crate::whisper::installed_binaries(app));
+    located.extend(
+        ["whisper-cli", "whisper", "main"]
+            .iter()
+            .filter_map(|name| locate(app, name, None).map(|found| found.path)),
+    );
 
     is_allowed(
         command,

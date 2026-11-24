@@ -20,6 +20,7 @@ mod net;
 mod process;
 mod settings;
 mod tmdb;
+mod whisper;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -258,6 +259,11 @@ pub fn run() {
             models::model_download,
             models::model_cancel,
             models::model_remove,
+            whisper::whisper_install,
+            whisper::whisper_installed,
+            whisper::whisper_resolve,
+            whisper::whisper_remove,
+            whisper::whisper_cancel,
             environment_resolve,
             about,
             launch_args,

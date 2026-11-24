@@ -74,6 +74,15 @@ export interface Workshop {
   net: SubtitleNet
   settings: AppSettings
   ffmpegPath: string
+  /**
+   * A `whisper-cli` the native side found, when Settings does not name one.
+   *
+   * Settings still wins — a path somebody typed is a decision — but a build the
+   * app installed itself, or one already on PATH from Homebrew, should not have
+   * to be typed in to be used. Absent in tests and in any build that cannot
+   * resolve one, which is the same thing as not having Whisper.
+   */
+  whisperPath?: string
 }
 
 /** What is going on, for a progress line that says something. */
@@ -471,12 +480,17 @@ async function transcribeLocally(
   written: string[],
   report: Report
 ): Promise<Transcription | ProviderProblem> {
-  const binary = shop.settings.whisperPath.trim()
+  // Settings first, then whatever the native side resolved: a build this app
+  // installed is as real as one somebody typed the path of, and asking for it
+  // to be typed in anyway was the whole reason nobody got this far.
+  const binary = shop.settings.whisperPath.trim() || shop.whisperPath?.trim() || ''
   const model = shop.settings.whisperModelPath.trim()
   if (!binary || !model) {
     return {
       problem: 'Local transcription needs a Whisper build and a model file.',
-      hint: `Point Settings → Subtitles at ${WHISPER_BINARY_NAMES[0]} and a ggml model, or choose a hosted endpoint instead.`
+      hint: !binary
+        ? `Settings → Subtitles can install a build and fetch a model, or point it at a ${WHISPER_BINARY_NAMES[0]} of your own.`
+        : 'Settings → Subtitles can fetch a model, or point it at a ggml file of your own.'
     }
   }
 

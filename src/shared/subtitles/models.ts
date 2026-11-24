@@ -170,3 +170,120 @@ export function modelOfPath(path: string): WhisperModel | undefined {
   const name = path.split(/[\\/]/).pop() ?? ''
   return whisperModel(name)
 }
+
+/* ------------------------------------------------------------------ *
+ * The program that reads them
+ * ------------------------------------------------------------------ */
+
+/**
+ * A whisper.cpp build the app can install by itself.
+ *
+ * The model above is half of what local transcription needs; this is the other
+ * half. Finding it by hand means knowing that whisper.cpp's *version* tags
+ * (`v1.9.6`) carry no assets at all and the builds hang off rolling `b####`
+ * tags, and then picking between eleven archives of which exactly one is the
+ * right answer for a machine with an NVIDIA card. Nobody should have to know
+ * that, so the two that matter are listed here.
+ *
+ * Pinned to one tag rather than tracking the newest: a `b` tag is a build of
+ * whatever was on master that hour, and pinning is what lets the download be
+ * held to a SHA-256. Moving to a newer one means changing the tag, the sizes
+ * and the hashes together — GitHub publishes a `digest` for every release
+ * asset, so they are a single API call away.
+ */
+export interface WhisperBuild {
+  id: string
+  label: string
+  /**
+   * Which machine it is for, spelled the way Node spells it — the same
+   * `<platform>-<arch>` the bundled binaries are filed under.
+   */
+  platform: 'win32-x64'
+  /** The rolling build tag the asset hangs off. */
+  tag: string
+  asset: string
+  sizeBytes: number
+  sha256: string
+  /** Roughly what the unpacked folder takes up, which is the larger number. */
+  installedBytes: number
+  accelerator: 'cpu' | 'cuda'
+  summary: string
+}
+
+/**
+ * Windows only, because that is where a build exists to download.
+ *
+ * whisper.cpp publishes binaries for Windows and Linux. For macOS it publishes
+ * an xcframework for embedding and no command-line build at all, so there is
+ * nothing for the app to fetch there and `MAC_INSTRUCTION` is what it says
+ * instead. Linux is left out because PlexFixer has no Linux installer either,
+ * and a catalogue entry nobody can reach is a catalogue entry nobody tests.
+ */
+export const WHISPER_BUILDS: readonly WhisperBuild[] = [
+  {
+    id: 'win-cuda',
+    label: 'Windows, NVIDIA (CUDA 12)',
+    platform: 'win32-x64',
+    tag: 'b5907',
+    asset: 'whisper-bin-win-cuda-12.4.0-x64.zip',
+    sizeBytes: 735_571_214,
+    sha256: '34f872ce724ca1ff0a4afca481853e5ee74250f8cb22153e499f953562846039',
+    installedBytes: 1_394_000_000,
+    accelerator: 'cuda',
+    summary:
+      'Runs on the graphics card, which is the difference between minutes and an afternoon on a feature film. Large because it carries the CUDA runtime with it — nothing else to install, just a current NVIDIA driver.'
+  },
+  {
+    id: 'win-cpu',
+    label: 'Windows, processor only',
+    platform: 'win32-x64',
+    tag: 'b5907',
+    asset: 'whisper-bin-x64.zip',
+    sizeBytes: 9_168_428,
+    sha256: 'ecca07b277d943e9b9f4712856a144b857271a6b333104e511e1988e80db582b',
+    installedBytes: 25_000_000,
+    accelerator: 'cpu',
+    summary: 'Small, and works on any machine. Slow on a feature film — worth it only if there is no NVIDIA card.'
+  }
+]
+
+/** What to do on the platform upstream publishes no binary for. */
+export const MAC_INSTRUCTION = 'brew install whisper.cpp'
+
+export function whisperBuild(id: string): WhisperBuild | undefined {
+  return WHISPER_BUILDS.find((build) => build.id === id)
+}
+
+/** The builds that will run on this machine, best first. */
+export function buildsFor(platform: string): WhisperBuild[] {
+  return WHISPER_BUILDS.filter((build) => build.platform === platform)
+}
+
+/** A build already unpacked into the app's own folder. */
+export interface InstalledBuild {
+  /** The archive's name without its suffix, which is also the folder's. */
+  name: string
+  /** The `whisper-cli` inside it. */
+  path: string
+  sizeBytes: number
+}
+
+/** Where the `whisper-cli` in use came from. */
+export interface ResolvedWhisper {
+  path?: string
+  source: 'settings' | 'installed' | 'path' | 'none'
+}
+
+/** One line about a resolved binary, for the panel. */
+export function describeWhisper(resolved: ResolvedWhisper): string {
+  switch (resolved.source) {
+    case 'settings':
+      return 'Using the binary named below.'
+    case 'installed':
+      return 'Using the build PlexFixer installed.'
+    case 'path':
+      return 'Found one already installed on this machine.'
+    default:
+      return 'No whisper-cli yet. Transcribing on this machine needs one.'
+  }
+}

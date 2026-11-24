@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildsFor,
   describeModelSize,
+  describeWhisper,
   isModelFileName,
   modelOfPath,
   RECOMMENDED_MODEL,
+  whisperBuild,
   whisperModel,
+  WHISPER_BUILDS,
   WHISPER_MODELS
 } from '@shared/subtitles/models.js'
 
@@ -75,5 +79,45 @@ describe('sizes', () => {
     expect(describeModelSize(574_041_195)).toBe('574 MB')
     expect(describeModelSize(1_624_555_275)).toBe('1.6 GB')
     expect(describeModelSize(3_095_033_483)).toBe('3.1 GB')
+  })
+})
+
+describe('the whisper.cpp build catalogue', () => {
+  it('pins a tag, a size and a hash for every build', () => {
+    for (const build of WHISPER_BUILDS) {
+      // A version tag carries no assets at all, which is the trap; the rolling
+      // build tags are what the archives hang off.
+      expect(build.tag, build.id).toMatch(/^b\d+$/)
+      expect(build.sha256, build.id).toMatch(/^[0-9a-f]{64}$/)
+      expect(build.asset, build.id).toMatch(/^whisper-[A-Za-z0-9._-]+\.(zip|tar\.gz)$/)
+      expect(build.sizeBytes, build.id).toBeGreaterThan(1_000_000)
+      // Unpacked is always larger than the archive; saying otherwise on screen
+      // would be a plain lie about what the install costs.
+      expect(build.installedBytes, build.id).toBeGreaterThan(build.sizeBytes)
+    }
+  })
+
+  it('offers the graphics-card build first on Windows, and nothing on a Mac', () => {
+    const windows = buildsFor('win32-x64')
+    expect(windows.length).toBe(2)
+    expect(windows[0].accelerator).toBe('cuda')
+    // Upstream publishes an xcframework and no command-line build for macOS,
+    // so there is nothing to download and the panel says so instead.
+    expect(buildsFor('darwin-arm64')).toEqual([])
+    expect(buildsFor('darwin-x64')).toEqual([])
+  })
+
+  it('finds a build by id and nothing by a made-up one', () => {
+    expect(whisperBuild('win-cuda')?.asset).toBe('whisper-bin-win-cuda-12.4.0-x64.zip')
+    expect(whisperBuild('nonsense')).toBeUndefined()
+  })
+})
+
+describe('what the panel says about the binary in use', () => {
+  it('distinguishes a typed path from one that was found', () => {
+    expect(describeWhisper({ source: 'settings', path: '/x/whisper-cli' })).toContain('named below')
+    expect(describeWhisper({ source: 'installed', path: '/x/whisper-cli' })).toContain('PlexFixer installed')
+    expect(describeWhisper({ source: 'path', path: '/opt/homebrew/bin/whisper-cli' })).toContain('already installed')
+    expect(describeWhisper({ source: 'none' })).toContain('needs one')
   })
 })

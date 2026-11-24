@@ -15,6 +15,7 @@ import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/mo
 import { readCredential } from '@shared/tmdb.js'
 import { LLM_ENGINES, llmEngine } from '@shared/subtitles/llm.js'
 import { ASR_SERVICES, asrService } from '@shared/subtitles/asr.js'
+import WhisperBuild from './WhisperBuild.js'
 import WhisperModels from './WhisperModels.js'
 import {
   SUGGESTED_EPISODE_TEMPLATES,
@@ -610,11 +611,17 @@ function SubtitlesSection(props: SettingsPanelProps): React.JSX.Element {
           ))}
         </select>
       </Field>
-      <p className="section-hint">{local ? 'Nothing leaves this machine, and there is nothing to pay for. It wants a binary and a model file, and is slow in proportion to how good a model you give it.' : speech?.summary}</p>
+      <p className="section-hint">{local ? 'Nothing leaves this machine, and there is nothing to pay for. It wants two files — whisper.cpp itself and a model — and PlexFixer will fetch both. It is slow in proportion to how good a model you give it, and much faster on a graphics card.' : speech?.summary}</p>
 
       {local ? (
         <>
-          <Field label="Whisper binary" hint="whisper-cli from a whisper.cpp build. Older builds call it main.">
+          <Field label="Build" hint="whisper.cpp itself. PlexFixer will download and unpack one into its own folder — nothing is installed system-wide.">
+            <WhisperBuild
+              binaryPath={settings.whisperPath}
+              onChoose={(path) => set({ whisperPath: path })}
+            />
+          </Field>
+          <Field label="Whisper binary" hint="Where the chosen build is. Fill this in by hand to use a whisper-cli of your own; empty means whichever one PlexFixer found.">
             <input
               type="text"
               value={settings.whisperPath}

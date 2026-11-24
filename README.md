@@ -313,10 +313,25 @@ those are dropped rather than written out.
 Sending audio needs the audio on this machine, so a hosted transcription does
 not work with a remote host switched on. A local Whisper does.
 
-The binary is yours to install — `brew install whisper.cpp`, or one of the
-builds whisper.cpp publishes (the assets hang off its rolling `b####` tags, not
-the `v1.x` ones, and the CUDA zip is the one worth having on a machine with an
-NVIDIA card). The **model** PlexFixer will fetch for you. Nothing installs one,
+**Both files PlexFixer will fetch.** On Windows, Settings → Subtitles offers
+the two whisper.cpp builds that matter — the CUDA one, which runs on the
+graphics card and is the difference between minutes and an afternoon on a
+feature film, and the processor-only one — downloads it, checks it against the
+SHA-256 GitHub publishes for the asset, unpacks it into the app's own folder
+and points itself at the `whisper-cli` inside. Nothing is installed
+system-wide; removing it is deleting one folder. The CUDA archive carries the
+CUDA runtime with it, so there is no toolkit to install — only a current NVIDIA
+driver. It is 736 MB and unpacks to about 1.4 GB, which the panel says before
+you press anything.
+
+On macOS there is nothing to download: whisper.cpp publishes an xcframework for
+embedding and no command-line build. `brew install whisper.cpp` is the answer
+there, and PlexFixer finds that one on PATH without anything being typed in.
+The same resolution order applies everywhere — a path named in Settings, then a
+build PlexFixer installed, then whatever is on PATH — so a binary you installed
+yourself is used as readily as one fetched here.
+
+The **model** PlexFixer will fetch too. Nothing installs one,
 the file names say nothing about what is in them, and the obvious choice is a
 three-gigabyte download that transcribes a film slower than watching it, so
 Settings → Subtitles lists six of them with what each is for and downloads the
@@ -882,6 +897,7 @@ src-tauri/          The native side, in Rust
   src/environment.rs What this machine's ffmpeg can actually do
   src/net.rs        The one door out: allowed hosts, and the ones Settings names
   src/models.rs     Fetching a Whisper model: streamed, hashed, and only from one place
+  src/whisper.rs    Installing whisper.cpp itself: the same, plus unpacking it
 ```
 
 **Rust does only what a native process must** — spawn ffmpeg, walk a

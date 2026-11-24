@@ -73,10 +73,14 @@ import type { SpeechInterval } from '@shared/subtitles/silence.js'
 import type { HttpReply, HttpRequest, SubtitleCandidate } from '@shared/subtitles/providers/types.js'
 import type { UploadRequest } from '@shared/subtitles/asr.js'
 import {
+  buildsFor,
+  whisperBuild,
   whisperModel,
   WHISPER_MODELS,
+  type InstalledBuild,
   type InstalledModel,
-  type ModelProgress
+  type ModelProgress,
+  type ResolvedWhisper
 } from '@shared/subtitles/models.js'
 
 type Unsubscribe = () => void
@@ -269,7 +273,11 @@ async function workshop(): Promise<Workshop | { problem: string }> {
     settings,
     host: target ? remoteHost(target, local) : local,
     net: subtitleNet,
-    ffmpegPath: resolved.ffmpegPath
+    ffmpegPath: resolved.ffmpegPath,
+    // Resolved for every operation rather than cached: it is a short directory
+    // read and a few stats, and a build installed a minute ago should be usable
+    // without the window being reopened.
+    whisperPath: (await invoke<ResolvedWhisper>('whisper_resolve')).path
   }
 }
 
@@ -283,6 +291,24 @@ async function workshop(): Promise<Workshop | { problem: string }> {
  */
 const modelProgress = emitter<ModelProgress>()
 subscribe<ModelProgress>('plexfixer://model-progress', (progress) => modelProgress.emit(progress))
+
+/**
+ * The same, for installing a whisper.cpp build.
+ *
+ * A separate event rather than a field on the one above: the two can be
+ * running at once — fetching a model while a build unpacks is the obvious
+ * thing to do on a new machine — and one bar reading the other's bytes would
+ * be worse than no bar.
+ */
+const buildProgress = emitter<ModelProgress>()
+subscribe<ModelProgress>('plexfixer://whisper-progress', (progress) => buildProgress.emit(progress))
+
+/** Which part of an install is happening: downloading, extracting, or done. */
+const buildStage = emitter<{ asset: string; stage: 'downloading' | 'extracting' | 'done' }>()
+subscribe<{ asset: string; stage: 'downloading' | 'extracting' | 'done' }>(
+  'plexfixer://whisper-stage',
+  (update) => buildStage.emit(update)
+)
 
 /** Cancellation, one controller per operation id. */
 const subtitleRuns = new Map<string, AbortController>()
@@ -549,7 +575,52 @@ function buildApi() {
         /** Stop a download. Takes effect within one chunk. */
         cancel: (file: string): Promise<void> => invoke('model_cancel', { file }),
 
-        remove: (file: string): Promise<void> => invoke('model_remove', { file })
+        remove: (file: string): Promise<void> => invoke('model_remove', { file }),
+
+        /* ---------- the program that reads them ---------- */
+
+        /** The builds that will run on this machine, best first. */
+        builds: async (): Promise<ReturnType<typeof buildsFor>> => buildsFor(await localPlatform()),
+
+        /** Which `whisper-cli` this machine will run, and where it came from. */
+        resolve: (): Promise<ResolvedWhisper> => invoke('whisper_resolve'),
+
+        /** Builds already unpacked into the app's own folder. */
+        builtins: (): Promise<InstalledBuild[]> => invoke('whisper_installed'),
+
+        onInstallProgress: buildProgress.on,
+        onInstallStage: buildStage.on,
+
+        /**
+         * Download and unpack one build, by id.
+         *
+         * The tag, the asset, the size and the hash come from the catalogue
+         * here rather than from the caller, for the same reason the model's do.
+         * What comes back is the path of the `whisper-cli` inside it.
+         */
+        install: async (id: string): Promise<{ path: string } | { cancelled: true } | { problem: string }> => {
+          const build = whisperBuild(id)
+          if (!build) return { problem: `${id} is not one of the builds PlexFixer knows.` }
+          try {
+            const path = await invoke<string | null>('whisper_install', {
+              tag: build.tag,
+              asset: build.asset,
+              sha256: build.sha256,
+              sizeBytes: build.sizeBytes
+            })
+            return path ? { path } : { cancelled: true }
+          } catch (error) {
+            return { problem: error instanceof Error ? error.message : String(error) }
+          }
+        },
+
+        /** Stop an install that is still downloading. */
+        cancelInstall: (id: string): Promise<void> => {
+          const build = whisperBuild(id)
+          return build ? invoke('whisper_cancel', { asset: build.asset }) : Promise.resolve()
+        },
+
+        removeBuild: (name: string): Promise<void> => invoke('whisper_remove', { name })
       }
     },
 
