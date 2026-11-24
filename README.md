@@ -558,6 +558,26 @@ unless `APPLE_CERTIFICATE` (a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD` and
 `APPLE_SIGNING_IDENTITY` are set; without them the runner produces an unsigned
 build, which is worth knowing before publishing one.
 
+Exporting that `.p12` is a Keychain Access job: select the certificate *and*
+the private key beneath it, Export 2 items, and give the file a password.
+Keychain asks for two passwords in a row — first the one protecting the file,
+then your login password to release the key from the keychain — and typing the
+login password at the first prompt is the usual way this goes wrong.
+
+Checking that password afterwards needs care, because the obvious tool lies.
+Keychain writes the file with RC2-40 and 3DES, which OpenSSL 3 moved into its
+legacy provider, so a Homebrew `openssl` answers `Mac verify error: invalid
+password?` for a password that is perfectly correct. Use the LibreSSL macOS
+ships, which reads the file as written:
+
+    /usr/bin/openssl pkcs12 -in developer-id.p12 -noout -nokeys
+
+`MAC verified OK` means the password is right. Note that an unsupported-cipher
+failure is not a wrong password: the MAC is checked first, so a complaint about
+`RC2-40-CBC` means the password was already accepted. CI never goes near
+OpenSSL — the runner imports the file with `security import`, which has no such
+trouble.
+
 ### Publishing a build
 
 A version bump is not finished until its notes are written. The screen the app
