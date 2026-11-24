@@ -6,6 +6,7 @@ import { MODE_LABEL, findOverrideKey, resolveMode, type ResolvedMode } from '@sh
 import { blockedReasons } from '@shared/plex/blocked.js'
 import StreamTable from './StreamTable.js'
 import MetadataDialog from './MetadataDialog.js'
+import SubtitleDialog from './SubtitleDialog.js'
 import type { MetadataEdit } from '@shared/types.js'
 import { formatBitrate, formatBytes, formatDuration, parentDirectory, shortenPath } from '../format.js'
 
@@ -70,7 +71,8 @@ export default function FileDetail({
   settings,
   environment,
   appVersion,
-  onApplyMetadata
+  onApplyMetadata,
+  onSubtitleWritten
 }: {
   result: AnalysisResult
   job?: Job
@@ -86,10 +88,13 @@ export default function FileDetail({
   appVersion?: string
   /** Queue a repair that writes what was set on the metadata screen. */
   onApplyMetadata?: (path: string, edit: MetadataEdit) => void
+  /** A subtitle landed beside the film, so the row's sidecar list is stale. */
+  onSubtitleWritten?: (path: string) => void
 }): React.JSX.Element {
   const { file, plan, findings } = result
   const [copied, setCopied] = useState(false)
   const [editingMetadata, setEditingMetadata] = useState(false)
+  const [workingOnSubtitles, setWorkingOnSubtitles] = useState(false)
 
   const copyReport = useCallback(async () => {
     const text = buildFileReport({
@@ -146,8 +151,26 @@ export default function FileDetail({
           >
             Edit metadata
           </button>
+        ) : null}{' '}
+        {settings ? (
+          <button
+            className="ghost"
+            onClick={() => setWorkingOnSubtitles(true)}
+            title="Find a subtitle, check whether its timing matches the audio, write one from the audio, or translate one"
+          >
+            Subtitles
+          </button>
         ) : null}
       </div>
+
+      {workingOnSubtitles && settings ? (
+        <SubtitleDialog
+          result={result}
+          settings={settings}
+          onClose={() => setWorkingOnSubtitles(false)}
+          onWrote={onSubtitleWritten ?? (() => undefined)}
+        />
+      ) : null}
 
       {editingMetadata && settings && onApplyMetadata ? (
         <MetadataDialog

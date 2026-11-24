@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { AppSettings, EnvironmentInfo, ModeOverrides, RemoteCheck, RepairMode } from '@shared/types.js'
-import { languageOptions } from '@shared/languages.js'
+import { languageName, languageOptions } from '@shared/languages.js'
 import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { RETENTION_CHOICES } from '@shared/backups.js'
 import {
@@ -13,6 +13,8 @@ import { CHECK_MODULES, REPAIR_MODULES } from '@shared/plex/modules/registry.js'
 import { isModuleEnabled, withModuleEnabled, type ModuleDescription, type ModuleSwitch } from '@shared/plex/modules/framework.js'
 import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
 import { readCredential } from '@shared/tmdb.js'
+import { LLM_ENGINES, llmEngine } from '@shared/subtitles/llm.js'
+import { ASR_SERVICES, asrService } from '@shared/subtitles/asr.js'
 import {
   SUGGESTED_EPISODE_TEMPLATES,
   SUGGESTED_MOVIE_TEMPLATES,
@@ -41,6 +43,55 @@ function Field({ label, hint, children, inline }: FieldProps): React.JSX.Element
         {hint ? <span className="hint">{hint}</span> : null}
       </label>
       <div className={`control${inline ? ' inline' : ''}`}>{children}</div>
+    </div>
+  )
+}
+
+/**
+ * Several languages, added and removed one at a time.
+ *
+ * Nothing here needed one of these before — the fallback audio language is a
+ * list in the settings and a single picker on screen, which is a loose end of
+ * its own. A subtitle search genuinely wants more than one: somebody watching
+ * a Russian film will take English or Russian subtitles and would rather see
+ * both offered than search twice.
+ */
+function LanguageList({
+  value,
+  onChange
+}: {
+  value: readonly string[]
+  onChange: (languages: string[]) => void
+}): React.JSX.Element {
+  const unused = languageOptions().filter((option) => !value.includes(option.value))
+
+  return (
+    <div className="language-list">
+      {value.map((language) => (
+        <span className="chip" key={language}>
+          {languageName(language)}
+          <button
+            className="ghost"
+            aria-label={`Stop looking for ${languageName(language)} subtitles`}
+            onClick={() => onChange(value.filter((entry) => entry !== language))}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      <select
+        value=""
+        onChange={(event) => {
+          if (event.target.value) onChange([...value, event.target.value])
+        }}
+      >
+        <option value="">Add a language…</option>
+        {unused.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </div>
   )
 }
@@ -74,7 +125,7 @@ export interface SettingsPanelProps {
   onChange: (patch: Partial<AppSettings>) => void
   onReset: () => void
   onPickDirectory: () => void
-  onPickBinary: (name: 'ffmpeg' | 'ffprobe') => void
+  onPickBinary: (name: 'ffmpeg' | 'ffprobe' | 'whisper' | 'whisper-model') => void
   onRefreshEnvironment: () => void
   /** Find every backup under the library, confirm, and remove them. */
   onRemoveAllBackups: () => void
@@ -132,6 +183,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         {section === 'compatibility' ? <CompatibilitySection {...props} /> : null}
         {section === 'modules' ? <ModulesSection {...props} /> : null}
         {section === 'metadata' ? <MetadataSection {...props} /> : null}
+        {section === 'subtitles' ? <SubtitlesSection {...props} /> : null}
         {section === 'output' ? <OutputSection {...props} /> : null}
         {section === 'transcoding' ? <TranscodingSection {...props} /> : null}
         {section === 'remote' ? (
@@ -446,6 +498,266 @@ function MetadataSection(props: SettingsPanelProps): React.JSX.Element {
         <strong> API Key</strong> and <strong>API Read Access Token</strong>. Either works; you do not need both.
         PlexFixer is not endorsed by or affiliated with TMDB.
       </p>
+    </section>
+  )
+}
+
+/**
+ * Subtitles: finding them, timing them, and writing one from the audio.
+ *
+ * Four capabilities on one screen, and the screen's job is to make clear which
+ * of them each field belongs to — because two of them want an API token and
+ * they are not the same token, and the obvious assumption that one "AI
+ * settings" block covers everything is exactly wrong. A speech endpoint and a
+ * chat endpoint are different addresses at the same vendor, and the local
+ * answers to the two are different programs.
+ */
+function SubtitlesSection(props: SettingsPanelProps): React.JSX.Element {
+  const { settings } = props
+  const set = props.onChange
+  const engine = llmEngine(settings.translationEngine)
+  const local = settings.transcriptionEngine === 'whisper-local'
+  const speech = asrService(settings.transcriptionEngine)
+
+  return (
+    <section>
+      <h3>Subtitles</h3>
+      <p className="section-hint">
+        Everything here is done per file, from <strong>Subtitles</strong> on any row. This is where the services it
+        talks to are set up.
+      </p>
+
+      <h4>Finding them</h4>
+      <Field
+        label="OpenSubtitles API key"
+        hint="Your own, like the TMDB one and for the same reason: they give these away for the asking and ask that they not be passed around, which rules out shipping one inside a program anybody can open."
+      >
+        <input
+          type="password"
+          value={settings.openSubtitlesKey}
+          placeholder="Api-Key from your consumer settings"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => set({ openSubtitlesKey: event.target.value })}
+        />
+      </Field>
+      <Field label="Username" hint="Searching needs only the key. Downloading spends one of a daily allowance that belongs to an account, so it needs the account.">
+        <input
+          type="text"
+          value={settings.openSubtitlesUsername}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => set({ openSubtitlesUsername: event.target.value })}
+        />
+      </Field>
+      <Field label="Password">
+        <input
+          type="password"
+          value={settings.openSubtitlesPassword}
+          autoComplete="off"
+          onChange={(event) => set({ openSubtitlesPassword: event.target.value })}
+        />
+      </Field>
+      <p className="section-hint">
+        Worth knowing before you type it: this goes into <code>settings.json</code> in the clear, like every other
+        credential here, because PlexFixer has no keychain integration. It is an account for downloading subtitles,
+        which is about the lowest-value password there is — and it is still a password. Leave it empty and
+        everything else on this screen still works; only downloading needs it.
+      </p>
+      <Field label="Also look for" hint="Over and above your preferred subtitle language, which is always included.">
+        <LanguageList
+          value={settings.subtitleSearchLanguages}
+          onChange={(languages) => set({ subtitleSearchLanguages: languages })}
+        />
+      </Field>
+
+      <h4>Timing</h4>
+      <Field
+        label="Close enough, in milliseconds"
+        hint="A subtitle inside this much of the speech is left alone. Past about a quarter of a second a person starts to notice; inside it, rewriting the file is churn."
+      >
+        <input
+          type="number"
+          min={0}
+          max={2000}
+          step={50}
+          value={settings.subtitleSyncToleranceMs}
+          onChange={(event) =>
+            set({ subtitleSyncToleranceMs: Math.max(0, Math.min(2000, Number(event.target.value) || 250)) })
+          }
+        />
+      </Field>
+
+      <h4>Writing one from the audio</h4>
+      <p className="section-hint">
+        This is Whisper’s job, not a language model’s. Chat endpoints take text, and Ollama has no speech-to-text
+        endpoint at all — so “local” here means a Whisper build on your own disk, and the hosted option is a speech
+        endpoint, which is a different address from the chat endpoint below even at the same vendor.
+      </p>
+      <Field label="Transcribe with">
+        <select
+          value={settings.transcriptionEngine}
+          onChange={(event) =>
+            set({ transcriptionEngine: event.target.value as AppSettings['transcriptionEngine'] })
+          }
+        >
+          <option value="whisper-local">Whisper, on this machine</option>
+          {ASR_SERVICES.map((service) => (
+            <option key={service.id} value={service.id}>
+              {service.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p className="section-hint">{local ? 'Nothing leaves this machine, and there is nothing to pay for. It wants a binary and a model file, and is slow in proportion to how good a model you give it.' : speech?.summary}</p>
+
+      {local ? (
+        <>
+          <Field label="Whisper binary" hint="whisper-cli from a whisper.cpp build. Older builds call it main.">
+            <input
+              type="text"
+              value={settings.whisperPath}
+              placeholder="/usr/local/bin/whisper-cli"
+              spellCheck={false}
+              onChange={(event) => set({ whisperPath: event.target.value })}
+            />
+            <button onClick={() => props.onPickBinary('whisper')}>Choose…</button>
+          </Field>
+          <Field label="Model file" hint="A ggml-*.bin. The large models are markedly better at accents and at names, and markedly slower.">
+            <input
+              type="text"
+              value={settings.whisperModelPath}
+              placeholder="ggml-large-v3.bin"
+              spellCheck={false}
+              onChange={(event) => set({ whisperModelPath: event.target.value })}
+            />
+            <button onClick={() => props.onPickBinary('whisper-model')}>Choose…</button>
+          </Field>
+          <Field label="Threads" hint="0 lets Whisper decide, which is usually right.">
+            <input
+              type="number"
+              min={0}
+              max={64}
+              value={settings.whisperThreads}
+              onChange={(event) => set({ whisperThreads: Math.max(0, Math.min(64, Number(event.target.value) || 0)) })}
+            />
+          </Field>
+        </>
+      ) : (
+        <>
+          <Field label="API token">
+            <input
+              type="password"
+              value={settings.subtitleTranscriptionCredential}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => set({ subtitleTranscriptionCredential: event.target.value })}
+            />
+          </Field>
+          <Field label="Endpoint" hint={`Blank uses ${speech?.defaultEndpoint ?? 'the service’s own address'}. Whatever is here is an address PlexFixer will talk to, and the only way to add one.`}>
+            <input
+              type="text"
+              value={settings.subtitleTranscriptionEndpoint}
+              placeholder={speech?.defaultEndpoint}
+              spellCheck={false}
+              onChange={(event) => set({ subtitleTranscriptionEndpoint: event.target.value })}
+            />
+          </Field>
+          <Field label="Model" hint={`Blank uses ${speech?.defaultModel ?? 'the service’s default'}.`}>
+            <input
+              type="text"
+              value={settings.subtitleTranscriptionModel}
+              placeholder={speech?.defaultModel}
+              spellCheck={false}
+              onChange={(event) => set({ subtitleTranscriptionModel: event.target.value })}
+            />
+          </Field>
+          <Field
+            label="Audio per upload, in minutes"
+            hint="A film goes up in pieces, cut at a silence rather than on the clock. Ten minutes fits inside the 25 MB these endpoints accept with room to spare."
+          >
+            <input
+              type="number"
+              min={1}
+              max={13}
+              value={settings.transcriptionChunkMinutes}
+              onChange={(event) =>
+                set({ transcriptionChunkMinutes: Math.max(1, Math.min(13, Number(event.target.value) || 10)) })
+              }
+            />
+          </Field>
+          <p className="section-hint">
+            A hosted endpoint has to be sent the audio, so this needs the film on this machine. With a remote host
+            switched on, use a local Whisper instead.
+          </p>
+        </>
+      )}
+
+      <h4>Translating one</h4>
+      <p className="section-hint">
+        This is where a language model belongs, and it is genuinely good at it. Whisper can also translate to English
+        by itself in one pass, without any of this — that choice is on the subtitle screen, per file, because the two
+        produce different results and which is better depends on the film.
+      </p>
+      <Field label="Translate with">
+        <select
+          value={settings.translationEngine}
+          onChange={(event) => set({ translationEngine: event.target.value as AppSettings['translationEngine'] })}
+        >
+          {LLM_ENGINES.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p className="section-hint">{engine?.summary}</p>
+      {engine?.needsKey ? (
+        <Field label="API token">
+          <input
+            type="password"
+            value={settings.subtitleTranslationCredential}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => set({ subtitleTranslationCredential: event.target.value })}
+          />
+        </Field>
+      ) : null}
+      <Field
+        label="Endpoint"
+        hint={`Blank uses ${engine?.defaultEndpoint ?? ''}. Whatever is here is an address PlexFixer will talk to, and the only way to add one.`}
+      >
+        <input
+          type="text"
+          value={settings.subtitleTranslationEndpoint}
+          placeholder={engine?.defaultEndpoint}
+          spellCheck={false}
+          onChange={(event) => set({ subtitleTranslationEndpoint: event.target.value })}
+        />
+      </Field>
+      <Field label="Model" hint={settings.translationEngine === 'ollama' ? 'The subtitle screen lists what this Ollama has.' : `Blank uses ${engine?.defaultModel ?? ''}.`}>
+        <input
+          type="text"
+          value={settings.subtitleTranslationModel}
+          placeholder={engine?.defaultModel}
+          spellCheck={false}
+          onChange={(event) => set({ subtitleTranslationModel: event.target.value })}
+        />
+      </Field>
+      <Field
+        label="Lines per request"
+        hint="Forty is about two minutes of film — long enough that a scene holds together in one request, which is what makes pronouns and register come out right, and short enough that a request to redo is cheap."
+      >
+        <input
+          type="number"
+          min={5}
+          max={200}
+          value={settings.translationBatchSize}
+          onChange={(event) =>
+            set({ translationBatchSize: Math.max(5, Math.min(200, Number(event.target.value) || 40)) })
+          }
+        />
+      </Field>
     </section>
   )
 }

@@ -88,6 +88,11 @@ fn is_allowed(command: &str, chosen: &[Option<String>], located: &[PathBuf]) -> 
 /// as an argument beside the command it was vouching for, which made the check
 /// one the caller could pass by naming the same path twice.
 ///
+/// `whisperPath` joins them for the same reason and on the same terms: a
+/// transcription runs a Whisper build that this app does not ship and cannot
+/// locate, so the only thing that can name it is a person typing it into
+/// Settings. Nothing the caller says widens that either.
+///
 /// `qt-faststart` is resolved the same way the environment resolves it: beside
 /// the ffmpeg in use (which is itself one of these), or bundled, or on PATH.
 /// Nothing the caller says can widen that.
@@ -110,7 +115,11 @@ pub async fn allowed_binary(app: &AppHandle, command: &str) -> bool {
         located.push(qt);
     }
 
-    is_allowed(command, &[chosen("ffmpegPath"), chosen("ffprobePath")], &located)
+    is_allowed(
+        command,
+        &[chosen("ffmpegPath"), chosen("ffprobePath"), chosen("whisperPath")],
+        &located,
+    )
 }
 
 /* ------------------------------------------------------------------ *

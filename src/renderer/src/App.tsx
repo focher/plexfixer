@@ -1110,6 +1110,14 @@ export default function App(): React.JSX.Element {
                     onSetMode={(path, mode) => void setMode(path, mode)}
                     onRepair={(paths, mode) => void repair(paths, mode)}
                     onApplyMetadata={(path, edits) => void applyMetadata(path, edits)}
+                    onSubtitleWritten={(path) => {
+                      // The sidecar list is part of the probe, so the row is
+                      // re-read rather than patched: the new file is beside the
+                      // film and the row should say so.
+                      const film = path.replace(/\.[^.]*\.srt$/, '')
+                      const row = results.find((entry) => entry.file.path.startsWith(film))
+                      if (row) void refreshFile(row.file.path)
+                    }}
                     onReveal={(path) => void window.plexfixer.shell.reveal(path)}
                     onContextMenu={(path) => void window.plexfixer.shell.fileMenu(path)}
                     onRefresh={(path) => void refreshFile(path)}
@@ -1217,7 +1225,14 @@ export default function App(): React.JSX.Element {
             onPickBinary={(name) => {
               void (async () => {
                 const path = await window.plexfixer.dialog.pickBinary(name)
-                if (path) await updateSettings(name === 'ffmpeg' ? { ffmpegPath: path } : { ffprobePath: path })
+                if (!path) return
+                const field = {
+                  ffmpeg: 'ffmpegPath',
+                  ffprobe: 'ffprobePath',
+                  whisper: 'whisperPath',
+                  'whisper-model': 'whisperModelPath'
+                } as const
+                await updateSettings({ [field[name]]: path })
               })()
             }}
             onRefreshEnvironment={() => {

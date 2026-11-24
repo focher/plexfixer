@@ -2748,3 +2748,125 @@ button.browser-row:hover:not(:disabled) {
 select.bulk-metadata-found {
   width: 100%;
 }
+
+/* ------------------------------------------------------------------ *
+ * Subtitles
+ * ------------------------------------------------------------------ */
+
+/*
+ * Wider than the other dialogs, and for a reason: a list of candidate
+ * subtitles is release names, and a release name is sixty characters of
+ * full stops. Wrapped over three lines each, a dozen of them cannot be
+ * compared, which is the only thing that list is for.
+ */
+.subtitle-dialog {
+  max-width: 760px;
+}
+
+/* Several languages at once, each removable. */
+.language-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.language-list .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.language-list .chip button {
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.subtitle-sources,
+.subtitle-actions,
+.subtitle-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+/* Capped and scrolled: a popular film has forty subtitles and the dialog
+   must not become the length of the screen. */
+.subtitle-candidates {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.subtitle-candidate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subtitle-candidate:last-child {
+  border-bottom: none;
+}
+
+.subtitle-candidate .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.subtitle-candidate .title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-weight: 500;
+}
+
+.subtitle-candidate .detail-text {
+  /* The release name, which is what tells two candidates apart. */
+  overflow-wrap: anywhere;
+}
+
+.subtitle-timing {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+
+.subtitle-timing .title {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.subtitle-timing button {
+  margin-top: 8px;
+}
+
+.subtitle-busy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.subtitle-busy .detail-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.subtitle-busy progress {
+  width: 160px;
+}

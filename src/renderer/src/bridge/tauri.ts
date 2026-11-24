@@ -31,6 +31,7 @@ import { repairModeFor } from '@shared/mode.js'
 import type { BackupRecord } from '@shared/backups.js'
 import type {
   AboutInfo,
+  AnalysisResult,
   AppSettings,
   EnvironmentInfo,
   HostKeyFingerprint,
@@ -50,6 +51,25 @@ import { checkRemote } from '@shared/plex/remote-check.js'
 import { trustHost } from '@shared/plex/hostkey.js'
 import { detectEncoders } from '@shared/plex/encoders.js'
 import { startDirectory } from '@shared/remote-browse.js'
+import {
+  checkTiming,
+  fetchSubtitle,
+  findSubtitles,
+  listTranslationModels,
+  readEmbedded,
+  readSidecar,
+  transcribe,
+  translate,
+  writeSidecar,
+  type Progress,
+  type SubtitleNet,
+  type Workshop
+} from '@shared/subtitles/service.js'
+import { applySync, type SyncReport } from '@shared/subtitles/sync.js'
+import type { Cue } from '@shared/subtitles/cues.js'
+import type { SpeechInterval } from '@shared/subtitles/silence.js'
+import type { HttpReply, HttpRequest, SubtitleCandidate } from '@shared/subtitles/providers/types.js'
+import type { UploadRequest } from '@shared/subtitles/asr.js'
 
 type Unsubscribe = () => void
 
@@ -200,6 +220,93 @@ async function toolchain(): Promise<
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Subtitles
+ * ------------------------------------------------------------------ */
+
+/**
+ * Progress from a subtitle operation.
+ *
+ * An emitter rather than a callback for the same reason the scan uses one: the
+ * work runs in this page, so there is no boundary to cross, and the UI wants to
+ * subscribe once rather than thread a function through every call.
+ */
+const subtitleProgress = emitter<Progress & { opId: string }>()
+
+/**
+ * The one door to the outside for everything subtitle-related.
+ *
+ * `following` is passed straight through: it tells the native side that this is
+ * the second step of a download, which is the only time a link to a service's
+ * own download host is followed. Nothing here decides that — the provider does,
+ * by answering with a link to follow.
+ */
+const subtitleNet: SubtitleNet = {
+  fetch: (request: HttpRequest, following = false): Promise<HttpReply> =>
+    invoke<HttpReply>('net_fetch', { request, following }),
+  upload: (request: UploadRequest, filePath: string): Promise<HttpReply> =>
+    invoke<HttpReply>('net_upload', { request, path: filePath })
+}
+
+/** Everything a subtitle operation needs, or a reason it cannot have it. */
+async function workshop(): Promise<Workshop | { problem: string }> {
+  const settings = await settingsFrom(invoke('settings_get'))
+  const resolved = await environmentFor(settings, false)
+  if (!resolved.ready || !resolved.ffmpegPath) {
+    return { problem: resolved.problem ?? 'FFmpeg is not available.' }
+  }
+  const local = tauriHost(await localPlatform())
+  const target = remoteTargetFor(settings)
+  return {
+    settings,
+    host: target ? remoteHost(target, local) : local,
+    net: subtitleNet,
+    ffmpegPath: resolved.ffmpegPath
+  }
+}
+
+/** Cancellation, one controller per operation id. */
+const subtitleRuns = new Map<string, AbortController>()
+
+/**
+ * Run one operation, reporting under its id and cleaning up after itself.
+ *
+ * Every subtitle call goes through this so that the three things every one of
+ * them needs — a workshop, a progress channel and a way to be cancelled — are
+ * written once rather than eight times.
+ */
+async function subtitleRun<T>(
+  opId: string,
+  work: (shop: Workshop, report: (progress: Progress) => void, signal: AbortSignal) => Promise<T>
+): Promise<T | { problem: string }> {
+  const shop = await workshop()
+  if ('problem' in shop) return shop
+
+  const controller = new AbortController()
+  subtitleRuns.set(opId, controller)
+  try {
+    return await work(shop, (progress) => subtitleProgress.emit({ ...progress, opId }), controller.signal)
+  } catch (error) {
+    return { problem: error instanceof Error ? error.message : String(error) }
+  } finally {
+    subtitleRuns.delete(opId)
+  }
+}
+
+/**
+ * The speech timeline, kept per file for as long as the window is open.
+ *
+ * Listening to a film is the expensive half of a timing check and the answer
+ * does not change, so checking a second subtitle for the same film — which is
+ * exactly what somebody comparing two downloads does — costs nothing. Keyed by
+ * path and size together so an edited file is listened to again.
+ */
+const speechCache = new Map<string, SpeechInterval[]>()
+
+function speechKey(path: string, sizeBytes: number): string {
+  return `${path}\u0000${sizeBytes}`
+}
+
 async function environment(force: boolean): Promise<EnvironmentInfo> {
   return environmentFor(await settingsFrom(invoke('settings_get')), force)
 }
@@ -319,6 +426,66 @@ function buildApi() {
       get: (url: string, bearer?: string): Promise<string> => invoke('tmdb_get', { url, bearer })
     },
 
+    subtitles: {
+      /** Progress for every operation, tagged with the id it was started under. */
+      onProgress: subtitleProgress.on,
+
+      /** Stop one, by the id it was started under. */
+      cancel: (opId: string): void => subtitleRuns.get(opId)?.abort(),
+
+      search: (opId: string, result: AnalysisResult) =>
+        subtitleRun(opId, (shop, report) => findSubtitles(shop, result, report)),
+
+      fetch: (opId: string, candidate: SubtitleCandidate) =>
+        subtitleRun(opId, (shop, report) => fetchSubtitle(shop, candidate, report)),
+
+      readSidecar: (opId: string, path: string) => subtitleRun(opId, (shop) => readSidecar(shop, path)),
+
+      readTrack: (opId: string, mediaPath: string, streamIndex: number) =>
+        subtitleRun(opId, (shop, _report, signal) => readEmbedded(shop, mediaPath, streamIndex, signal)),
+
+      check: (opId: string, result: AnalysisResult, cues: Cue[]) =>
+        subtitleRun(opId, async (shop, report, signal) => {
+          const key = speechKey(result.file.path, result.file.sizeBytes)
+          const checked = await checkTiming(shop, result, cues, {
+            speech: speechCache.get(key),
+            signal,
+            report
+          })
+          if (!('problem' in checked)) speechCache.set(key, checked.speech)
+          return checked
+        }),
+
+      transcribe: (opId: string, result: AnalysisResult, options: { translateToEnglish?: boolean } = {}) =>
+        subtitleRun(opId, (shop, report, signal) =>
+          transcribe(shop, result, {
+            ...options,
+            speech: speechCache.get(speechKey(result.file.path, result.file.sizeBytes)),
+            signal,
+            report
+          })
+        ),
+
+      translate: (opId: string, cues: Cue[], fromLanguage: string, toLanguage: string) =>
+        subtitleRun(opId, (shop, report, signal) =>
+          translate(shop, cues, fromLanguage, toLanguage, { signal, report })
+        ),
+
+      /** Apply a timing report to a cue list; arithmetic, so no round trip. */
+      retime: (cues: Cue[], report: SyncReport): Cue[] => applySync(cues, report),
+
+      write: (
+        opId: string,
+        mediaPath: string,
+        cues: Cue[],
+        language: string,
+        options: { forced?: boolean; suffix?: string } = {}
+      ) => subtitleRun(opId, (shop) => writeSidecar(shop, mediaPath, cues, language, options)),
+
+      /** What the chosen translation endpoint has, for the model picker. */
+      models: (opId: string) => subtitleRun(opId, (shop) => listTranslationModels(shop))
+    },
+
     overrides: {
       get: (): Promise<ModeOverrides> => invoke('overrides_get'),
       set: (path: string, mode: RepairMode | null): Promise<ModeOverrides> =>
@@ -434,8 +601,12 @@ function buildApi() {
         const picked = await openDialog({ directory: true, multiple: false })
         return picked ?? undefined
       },
-      pickBinary: async (name: 'ffmpeg' | 'ffprobe'): Promise<string | undefined> => {
-        const picked = await openDialog({ title: `Choose ${name}`, multiple: false, directory: false })
+      pickBinary: async (name: 'ffmpeg' | 'ffprobe' | 'whisper' | 'whisper-model'): Promise<string | undefined> => {
+        const picked = await openDialog({
+          title: name === 'whisper-model' ? 'Choose a Whisper model file' : `Choose ${name}`,
+          multiple: false,
+          directory: false
+        })
         return picked ?? undefined
       }
     },

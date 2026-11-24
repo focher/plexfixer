@@ -60,6 +60,8 @@ export interface ResultsTableProps {
   onRepair: (paths: string[], mode?: RepairMode) => void
   /** Queue a repair that writes metadata somebody set by hand. */
   onApplyMetadata?: (path: string, edit: MetadataEdit) => void
+  /** A subtitle landed beside a film, so that row needs re-reading. */
+  onSubtitleWritten?: (path: string) => void
   /** Per-file and per-folder mode overrides, and the fallback they resolve against. */
   overrides: ModeOverrides
   defaultMode: RepairMode
@@ -347,6 +349,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 environment={props.environment}
                 appVersion={props.appVersion}
                 onApplyMetadata={props.onApplyMetadata}
+                onSubtitleWritten={props.onSubtitleWritten}
               />
             ) : null}
           </div>
