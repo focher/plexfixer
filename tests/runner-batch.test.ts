@@ -50,7 +50,9 @@ async function slowFfmpeg(): Promise<string> {
 function fileNeedingRepair(name: string) {
   return analyzeFile(
     mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'spa' })], {
-      path: `/library/Movies/${name}/${name}.mkv`,
+      // Under the test's own directory: the runner creates the folder the
+      // repaired file goes in before ffmpeg is pointed at it.
+      path: join(dir, 'Movies', name, `${name}.mkv`),
       fileName: `${name}.mkv`
     }),
     DEFAULT_SETTINGS

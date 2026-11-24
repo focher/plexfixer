@@ -831,7 +831,6 @@ export class RepairRunner {
 
     this.addPhase(id, 'in-place-check', checkMs, { note: 'no in-place edit was possible, so the file is rewritten' })
     this.mergeMetrics(id, { sourceBytes: result.file.sizeBytes, durationSeconds: result.file.durationSeconds })
-    await this.recordVolumes(id, result.file.path, outputPath)
 
     // Timestamps rather than wrapped calls: each stage is one await in a
     // sequence, and bracketing them individually would bury the sequence.
@@ -842,6 +841,17 @@ export class RepairRunner {
     let promotedTo: string | undefined
 
     try {
+      // ffmpeg writes the temporary file beside the destination, and it will
+      // not create the folder to put it in. An output directory that mirrors
+      // the library has a folder per film, so the first repair into a new one
+      // asked ffmpeg to open a file in a directory that did not exist yet and
+      // it stopped with "No such file or directory" before reading a frame.
+      // `promoteOutput` makes the folder too, but that is long after this.
+      await this.host.mkdirp(this.host.paths.dirname(temporaryPath))
+      // After the folder exists, so the output volume is a real answer rather
+      // than "unknown" on the very repair that creates it.
+      await this.recordVolumes(id, result.file.path, outputPath)
+
       let probed: MediaFile | undefined
       let outputBytes: number | undefined
       if (qtCommand) {

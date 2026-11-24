@@ -15,13 +15,22 @@ import { join } from 'node:path'
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.js'
 import { analyzeFile } from '../src/shared/plex/analyze.js'
 import { RepairRunner } from '@shared/plex/runner.js'
-import type { Job } from '../src/shared/types.js'
+import type { AnalysisResult, Job } from '../src/shared/types.js'
 import { mainAudio, mkv, video } from './fixtures.js'
 
 let dir: string
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'plexfixer-clear-'))
+  // Somewhere this test can actually write: the runner creates the folder
+  // the repaired file goes in before ffmpeg is pointed at it, so a made-up
+  // `/library/...` destination now fails the job before ffmpeg is reached.
+  result = analyzeFile(
+    mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'spa' })], {
+      path: join(dir, 'Movies', 'Example (2020)', 'Example (2020).mkv')
+    }),
+    DEFAULT_SETTINGS
+  )
 })
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
@@ -35,11 +44,9 @@ async function slowFfmpeg(): Promise<string> {
   return path
 }
 
-/** A file that needs a remux, so a job actually reaches ffmpeg. */
-const result = analyzeFile(
-  mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'spa' })]),
-  DEFAULT_SETTINGS
-)
+/** A file that needs a remux, so a job actually reaches ffmpeg. Built per
+ * test, because its path has to be under that test's own directory. */
+let result: AnalysisResult
 
 /** One at a time, so the second repair enqueued is reliably still waiting. */
 async function runner(concurrency = 1): Promise<{ instance: RepairRunner; updates: Job[] }> {

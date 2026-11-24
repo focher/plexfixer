@@ -16,13 +16,22 @@ import { analyzeFile } from '../src/shared/plex/analyze.js'
 import { RepairRunner } from '@shared/plex/runner.js'
 import { localHost } from './node-host.js'
 import type { Host } from './node-host.js'
-import type { Job } from '../src/shared/types.js'
+import type { AnalysisResult, Job } from '../src/shared/types.js'
 import { mainAudio, mkv, video } from './fixtures.js'
 
 let dir: string
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'plexfixer-stage-'))
+  // Somewhere this test can actually write: the runner creates the folder
+  // the repaired file goes in before ffmpeg is pointed at it, so a made-up
+  // `/library/...` destination now fails the job before ffmpeg is reached.
+  result = analyzeFile(
+    mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'spa' })], {
+      path: join(dir, 'Movies', 'Example (2020)', 'Example (2020).mkv')
+    }),
+    DEFAULT_SETTINGS
+  )
 })
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
@@ -38,10 +47,8 @@ async function slowFfmpeg(): Promise<string> {
   return path
 }
 
-const result = analyzeFile(
-  mkv([video({ language: 'eng' }), mainAudio({ index: 1, language: 'spa' })]),
-  DEFAULT_SETTINGS
-)
+/** Built per test, because its path has to be under that test's own directory. */
+let result: AnalysisResult
 
 /** A host that claims to be somewhere else, without needing anywhere else. */
 function pretendRemote(): Host {
