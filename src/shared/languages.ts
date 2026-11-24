@@ -134,6 +134,18 @@ export function languageName(tag: string | undefined): string {
   return BY_ANY.get(normalized)?.name ?? normalized.toUpperCase()
 }
 
+/**
+ * The two-letter code for a tag, when there is one.
+ *
+ * Subtitle services speak ISO 639-1: OpenSubtitles wants `ru`, not `rus`.
+ * Undefined for a language with no two-letter code and for anything this app
+ * does not recognise, because guessing one — taking the first two letters —
+ * produces real codes for the wrong languages.
+ */
+export function languageAlpha2(tag: string | undefined): string | undefined {
+  return BY_ANY.get(normalizeLanguage(tag))?.alpha2
+}
+
 /** True when the tag is a three-letter code this app knows about. */
 export function isKnownLanguage(tag: string | undefined): boolean {
   return BY_ANY.has(normalizeLanguage(tag))
