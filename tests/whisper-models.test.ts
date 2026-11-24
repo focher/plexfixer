@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildAdvice,
   buildsFor,
   describeModelSize,
   describeWhisper,
   isModelFileName,
+  MAC_INSTRUCTION,
   modelOfPath,
   RECOMMENDED_MODEL,
   whisperBuild,
@@ -98,13 +100,32 @@ describe('the whisper.cpp build catalogue', () => {
   })
 
   it('offers the graphics-card build first on Windows, and nothing on a Mac', () => {
-    const windows = buildsFor('win32-x64')
+    // The two halves arrive the way `about` reports them — `process.platform`
+    // and `process.arch` — not pre-joined. 0.2.12 shipped with the catalogue
+    // filing builds under `win32-x64` and the caller passing `win32`, so every
+    // Windows machine was told whisper.cpp published nothing for it.
+    const windows = buildsFor('win32', 'x64')
     expect(windows.length).toBe(2)
     expect(windows[0].accelerator).toBe('cuda')
     // Upstream publishes an xcframework and no command-line build for macOS,
     // so there is nothing to download and the panel says so instead.
-    expect(buildsFor('darwin-arm64')).toEqual([])
-    expect(buildsFor('darwin-x64')).toEqual([])
+    expect(buildsFor('darwin', 'arm64')).toEqual([])
+    expect(buildsFor('darwin', 'x64')).toEqual([])
+  })
+
+  it('does not match a joined name handed in as the platform', () => {
+    // The shape of the old bug, from the other side: nobody should be able to
+    // make it pass again by loosening the comparison.
+    expect(buildsFor('win32-x64', 'x64')).toEqual([])
+    expect(buildsFor('win32', '')).toEqual([])
+  })
+
+  it('names Homebrew only on the platform Homebrew is the answer for', () => {
+    expect(buildAdvice('darwin')).toContain(MAC_INSTRUCTION)
+    for (const platform of ['win32', 'linux']) {
+      expect(buildAdvice(platform), platform).not.toContain('brew')
+      expect(buildAdvice(platform), platform).toContain('whisper-cli')
+    }
   })
 
   it('finds a build by id and nothing by a made-up one', () => {

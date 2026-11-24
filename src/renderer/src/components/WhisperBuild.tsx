@@ -3,7 +3,6 @@ import React, { useCallback, useEffect, useState } from 'react'
 import {
   describeModelSize,
   describeWhisper,
-  MAC_INSTRUCTION,
   type InstalledBuild,
   type ResolvedWhisper,
   type WhisperBuild as Build
@@ -22,7 +21,9 @@ import {
  *
  * On macOS there is nothing to offer: upstream publishes an xcframework and no
  * command-line build. So this says so, gives the Homebrew line, and relies on
- * the resolver having already found one if it is there.
+ * the resolver having already found one if it is there. That sentence belongs
+ * to macOS alone, which is why the empty case asks for the wording rather than
+ * assuming it — a Windows machine seeing the Homebrew line is a bug report.
  */
 export interface WhisperBuildProps {
   /** `whisperPath` as Settings has it; empty means "whatever was found". */
@@ -33,6 +34,7 @@ export interface WhisperBuildProps {
 export default function WhisperBuild({ binaryPath, onChoose }: WhisperBuildProps): React.JSX.Element {
   const api = window.plexfixer.subtitles.whisper
   const [builds, setBuilds] = useState<Build[]>([])
+  const [advice, setAdvice] = useState('')
   const [chosen, setChosen] = useState<string>()
   const [installed, setInstalled] = useState<InstalledBuild[]>([])
   const [resolved, setResolved] = useState<ResolvedWhisper>({ source: 'none' })
@@ -51,6 +53,7 @@ export default function WhisperBuild({ binaryPath, onChoose }: WhisperBuildProps
       setBuilds([...found])
       setChosen((current) => current ?? found[0]?.id)
     })
+    void api.advice().then(setAdvice)
   }, [api])
 
   // `binaryPath` is in the deps because clearing it by hand should make the
@@ -98,10 +101,7 @@ export default function WhisperBuild({ binaryPath, onChoose }: WhisperBuildProps
       </p>
 
       {builds.length === 0 ? (
-        <p className="whisper-models-note">
-          whisper.cpp publishes no command-line build for this machine, so there is nothing to download. Homebrew has
-          one — <code>{MAC_INSTRUCTION}</code> — and PlexFixer will find it without anything being typed in here.
-        </p>
+        <p className="whisper-models-note">{advice}</p>
       ) : (
         <>
           <div className="whisper-models-row">

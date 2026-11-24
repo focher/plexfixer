@@ -197,8 +197,13 @@ export interface WhisperBuild {
   /**
    * Which machine it is for, spelled the way Node spells it — the same
    * `<platform>-<arch>` the bundled binaries are filed under.
+   *
+   * It is `target` rather than `platform` because it is both halves. Calling
+   * it `platform` once cost a release: the field held `win32-x64` and the
+   * caller handed it `process.platform`, which is `win32`, so every Windows
+   * machine was told no build existed for it.
    */
-  platform: 'win32-x64'
+  target: 'win32-x64'
   /** The rolling build tag the asset hangs off. */
   tag: string
   asset: string
@@ -223,7 +228,7 @@ export const WHISPER_BUILDS: readonly WhisperBuild[] = [
   {
     id: 'win-cuda',
     label: 'Windows, NVIDIA (CUDA 12)',
-    platform: 'win32-x64',
+    target: 'win32-x64',
     tag: 'b5907',
     asset: 'whisper-bin-win-cuda-12.4.0-x64.zip',
     sizeBytes: 735_571_214,
@@ -236,7 +241,7 @@ export const WHISPER_BUILDS: readonly WhisperBuild[] = [
   {
     id: 'win-cpu',
     label: 'Windows, processor only',
-    platform: 'win32-x64',
+    target: 'win32-x64',
     tag: 'b5907',
     asset: 'whisper-bin-x64.zip',
     sizeBytes: 9_168_428,
@@ -254,9 +259,28 @@ export function whisperBuild(id: string): WhisperBuild | undefined {
   return WHISPER_BUILDS.find((build) => build.id === id)
 }
 
-/** The builds that will run on this machine, best first. */
-export function buildsFor(platform: string): WhisperBuild[] {
-  return WHISPER_BUILDS.filter((build) => build.platform === platform)
+/**
+ * The builds that will run on this machine, best first.
+ *
+ * Both halves are asked for, because a build is for an architecture as much as
+ * for an operating system and `win32` alone does not say which.
+ */
+export function buildsFor(platform: string, arch: string): WhisperBuild[] {
+  const target = `${platform}-${arch}`
+  return WHISPER_BUILDS.filter((build) => build.target === target)
+}
+
+/**
+ * What to say when there is no build to offer, which depends on where you are.
+ *
+ * macOS is the case upstream genuinely does not cover, and Homebrew is the
+ * answer there. Anywhere else the honest answer is shorter: find one yourself.
+ */
+export function buildAdvice(platform: string): string {
+  if (platform === 'darwin') {
+    return `whisper.cpp publishes no command-line build for macOS — an xcframework for embedding is all there is — so there is nothing here to download. Homebrew has one: ${MAC_INSTRUCTION}. PlexFixer will find it afterwards without anything being typed in here.`
+  }
+  return 'whisper.cpp publishes no build PlexFixer can install on this machine. Install or compile whisper-cli yourself and name it below.'
 }
 
 /** A build already unpacked into the app's own folder. */

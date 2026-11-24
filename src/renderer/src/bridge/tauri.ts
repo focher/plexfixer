@@ -73,6 +73,7 @@ import type { SpeechInterval } from '@shared/subtitles/silence.js'
 import type { HttpReply, HttpRequest, SubtitleCandidate } from '@shared/subtitles/providers/types.js'
 import type { UploadRequest } from '@shared/subtitles/asr.js'
 import {
+  buildAdvice,
   buildsFor,
   whisperBuild,
   whisperModel,
@@ -410,11 +411,15 @@ async function remoteEnvironment(
   }
 }
 
-/** This machine's platform, as Node names it; asked once and kept. */
-let platform: string | undefined
+/** This machine, as Node names it; asked once and kept. */
+let machine: Promise<NativeAbout> | undefined
+function localMachine(): Promise<NativeAbout> {
+  machine ??= invoke<NativeAbout>('about')
+  return machine
+}
+
 async function localPlatform(): Promise<string> {
-  platform ??= (await invoke<NativeAbout>('about')).platform
-  return platform
+  return (await localMachine()).platform
 }
 
 interface NativeAbout {
@@ -579,8 +584,19 @@ function buildApi() {
 
         /* ---------- the program that reads them ---------- */
 
-        /** The builds that will run on this machine, best first. */
-        builds: async (): Promise<ReturnType<typeof buildsFor>> => buildsFor(await localPlatform()),
+        /**
+         * The builds that will run on this machine, best first.
+         *
+         * Both halves of the machine's name go in: the catalogue files builds
+         * under `<platform>-<arch>`, and `win32` on its own matches nothing.
+         */
+        builds: async (): Promise<ReturnType<typeof buildsFor>> => {
+          const about = await localMachine()
+          return buildsFor(about.platform, about.arch)
+        },
+
+        /** What to say instead, on a machine with no build to offer. */
+        advice: async (): Promise<string> => buildAdvice((await localMachine()).platform),
 
         /** Which `whisper-cli` this machine will run, and where it came from. */
         resolve: (): Promise<ResolvedWhisper> => invoke('whisper_resolve'),
