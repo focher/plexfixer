@@ -34,6 +34,28 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.2.13',
+    headline: 'The whisper.cpp builds 0.2.12 added are now actually offered on Windows, where they are the ones that exist.',
+    changes: [
+      {
+        title: 'Windows is offered the Windows builds',
+        body:
+          'Both builds were in 0.2.12 and neither could be reached: they are filed by platform and ' +
+          'architecture together, and the panel was matching that against the platform alone, so nothing ' +
+          'ever matched. Every Windows machine was told whisper.cpp publishes no build for it — and then ' +
+          'pointed at Homebrew, which is not on Windows. Settings → Subtitles now shows the NVIDIA and ' +
+          'processor-only builds, with the NVIDIA one first.'
+      },
+      {
+        title: 'And when there really is no build, it says something true',
+        body:
+          'The Homebrew line is now said only on macOS, which is the one platform whisper.cpp genuinely ' +
+          'publishes no command-line build for. Anywhere else the panel says plainly that there is nothing ' +
+          'to install and that a binary can be named by hand.'
+      }
+    ]
+  },
+  {
     version: '0.2.12',
     headline: 'Transcribing on your own machine now takes two buttons: PlexFixer installs whisper.cpp and fetches the model itself.',
     changes: [
