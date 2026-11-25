@@ -34,6 +34,29 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.3.2',
+    headline: 'Changing a title no longer rewrites the film.',
+    changes: [
+      {
+        title: 'Tag edits are instant',
+        body:
+          'Changing a title, a series or an episode number used to rewrite the whole file \u2014 reading and writing ' +
+          'every byte of a 30 GB film to change two words \u2014 because that is the only way ffmpeg can do it. ' +
+          'PlexFixer now writes tags the way Subler does, through mp4v2, which keeps free space beside the ' +
+          'header and moves nothing else. It takes about as long on a 40 GB file as on a 40 MB one. This is ' +
+          'for MP4 and M4V; Matroska still goes the long way round.'
+      },
+      {
+        title: 'Ollama tells you what it has',
+        body:
+          'Choosing a local model meant typing its name from memory, and getting it wrong failed later, at ' +
+          'translation time. Settings \u2192 Subtitles has a Detect button beside the Model field: it asks the ' +
+          'endpoint you have configured and turns the box into a list of what is actually pulled, with each ' +
+          'model\u2019s parameters, quantisation and size. The box comes back if you would rather type one.'
+      }
+    ]
+  },
+  {
     version: '0.3.1',
     headline: 'Typing works again: the dialogs were taking focus back from under you.',
     changes: [
