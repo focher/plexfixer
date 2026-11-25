@@ -83,9 +83,14 @@ export default function ModuleEditor({
       if (event.key === 'Escape') onCancel()
     }
     window.addEventListener('keydown', onKey)
-    area.current?.focus()
     return () => window.removeEventListener('keydown', onKey)
   }, [onCancel])
+
+  // On mount only: keyed on `onCancel` this pulled the caret back to the top
+  // of the script on every render of the parent, mid-edit.
+  useEffect(() => {
+    area.current?.focus()
+  }, [])
 
   const read = useMemo(() => parseScript(script), [script])
   const prose = read.script ? describeScript(read.script) : undefined

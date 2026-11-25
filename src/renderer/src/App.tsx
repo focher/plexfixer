@@ -721,10 +721,30 @@ export default function App(): React.JSX.Element {
     resultsByPathRef.current = resultsByPath
   }, [resultsByPath])
 
-  // The row the panel is showing. Read from the map rather than held in state,
-  // so a re-scan of that file updates the panel instead of leaving it showing
-  // what the file used to be.
-  const openResult = openPath ? resultsByPath.get(openPath) : undefined
+  /*
+   * The row the panel is showing.
+   *
+   * Read from the map rather than held in state, so a re-scan of that file
+   * updates the panel instead of leaving it showing what the file used to be.
+   *
+   * It is also *sticky*: while a path is open, a render where the map has no
+   * entry for it keeps showing the last one. A re-scan rebuilds the map, and
+   * for the render where the entry is briefly absent the panel would otherwise
+   * unmount — taking with it any dialog open inside it, and everything typed
+   * into it. Losing a half-finished edit to a background refresh is not a
+   * trade worth making for a panel that empties a few milliseconds sooner.
+   */
+  const lastOpen = useRef<AnalysisResult>(undefined)
+  const openResult = useMemo(() => {
+    if (!openPath) {
+      lastOpen.current = undefined
+      return undefined
+    }
+    const found = resultsByPath.get(openPath)
+    if (found) lastOpen.current = found
+    else if (lastOpen.current?.file.path !== openPath) lastOpen.current = undefined
+    return found ?? lastOpen.current
+  }, [openPath, resultsByPath])
 
   // The search narrows first, so the chips count what the search left.
   const searched = useMemo(

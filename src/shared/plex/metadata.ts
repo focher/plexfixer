@@ -131,3 +131,52 @@ export function changesAnything(edit: MetadataEdit | undefined, file: MediaFile)
 
   return false
 }
+
+/* ------------------------------------------------------------------ *
+ * What to show in the editor before anybody types
+ * ------------------------------------------------------------------ */
+
+export interface EpisodeFields {
+  /** True when this should be edited as an episode rather than a film. */
+  isEpisode: boolean
+  /** The series name to search for. */
+  show: string
+  season: string
+  episode: string
+  year: string
+}
+
+/**
+ * The season and episode to start the editor with.
+ *
+ * **What the file states beats what its name suggests.** A tag is evidence —
+ * something wrote it deliberately — while a name is an inference drawn from a
+ * pattern, and the two disagree often: a file tagged `episode_id=6` may be
+ * named by a scheme the pattern reads differently, or not name its episode at
+ * all.
+ *
+ * It matters because the editor's fields are not only shown, they are written
+ * back: picking a series looks up *the season and episode in these boxes* and
+ * writes the result into the file. Seeding them from the name alone meant a
+ * lookup could overwrite a correct tag with a guess, which is the opposite of
+ * what an edit is for.
+ */
+export function episodeFieldsFor(
+  tags: Record<string, string>,
+  guessed: { show: string; season: number; episode: number; year?: string } | undefined,
+  fallbackTitle: string,
+  fallbackYear: string | undefined
+): EpisodeFields {
+  const stated = (key: string): string => (tags[key] ?? '').trim()
+  const season = stated('season_number') || (guessed ? String(guessed.season) : '')
+  const episode = stated('episode_id') || (guessed ? String(guessed.episode) : '')
+  const show = stated('show')
+
+  return {
+    isEpisode: Boolean(show || season || episode || guessed),
+    show: show || guessed?.show || fallbackTitle,
+    season,
+    episode,
+    year: /^(\d{4})/.exec(stated('date'))?.[1] ?? guessed?.year ?? fallbackYear ?? ''
+  }
+}

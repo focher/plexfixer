@@ -27,12 +27,18 @@ export default function AboutDialog({
 
   // Escape closes, as every other dialog on both platforms does. Bound to the
   // window rather than the panel so it works wherever focus happens to be.
+  // Focus on mount only: see the note in MetadataDialog. Keyed on `onClose`,
+  // which parents pass as an inline arrow, this stole focus back on every
+  // render of the parent.
+  useEffect(() => {
+    closeButton.current?.focus()
+  }, [])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
-    closeButton.current?.focus()
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 

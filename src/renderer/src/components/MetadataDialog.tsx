@@ -15,7 +15,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { AnalysisResult, AppSettings, MetadataEdit, TrackEdit } from '@shared/types.js'
-import { EDITABLE_TAGS, changesAnything, isEmptyEdit, tagsOf } from '@shared/plex/metadata.js'
+import { EDITABLE_TAGS, changesAnything, episodeFieldsFor, isEmptyEdit, tagsOf } from '@shared/plex/metadata.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { languageOptions } from '@shared/languages.js'
 import {
@@ -57,12 +57,25 @@ export default function MetadataDialog({
 
   const [tags, setTags] = useState<Record<string, string>>(() => ({ ...existing }))
   const [tracks, setTracks] = useState<Record<number, TrackEdit>>({})
-  // An episode file is treated as one from the start: its name said so.
-  const [kind, setKind] = useState<TmdbKind>(guessedEpisode ? 'tv' : 'movie')
-  const [query, setQuery] = useState(guessedEpisode?.show ?? guess.title)
-  const [year, setYear] = useState(guessedEpisode?.year ?? guess.year ?? '')
-  const [season, setSeason] = useState(guessedEpisode ? String(guessedEpisode.season) : '')
-  const [episodeNumber, setEpisodeNumber] = useState(guessedEpisode ? String(guessedEpisode.episode) : '')
+  /*
+   * What the file says comes before what its name suggests.
+   *
+   * These fields used to be seeded from the name alone. A file carrying
+   * `episode_id=6` in its tags, whose name a pattern read differently, showed
+   * the name's number — and since the lookup writes back whatever is in the
+   * field, picking a series then overwrote the file's own correct tag with the
+   * guess. The file stating something is evidence; its name is an inference,
+   * and an inference must not quietly replace a statement.
+   */
+  const seed = useMemo(
+    () => episodeFieldsFor(existing, guessedEpisode, guess.title, guess.year),
+    [existing, guessedEpisode, guess]
+  )
+  const [kind, setKind] = useState<TmdbKind>(seed.isEpisode ? 'tv' : 'movie')
+  const [query, setQuery] = useState(seed.show)
+  const [year, setYear] = useState(seed.year)
+  const [season, setSeason] = useState(seed.season)
+  const [episodeNumber, setEpisodeNumber] = useState(seed.episode)
   const [lookup, setLookup] = useState<Lookup>({ state: 'idle' })
   // Folded away for a film, which is most files, and open from the start for
   // anything that already looks like an episode.
@@ -71,12 +84,28 @@ export default function MetadataDialog({
   )
   const closeButton = useRef<HTMLButtonElement>(null)
 
+  /*
+   * Focus once, when this opens — and never again.
+   *
+   * This used to be one effect with the key listener, keyed on the callback
+   * prop. Parents pass that as an inline arrow, so it is a new function on
+   * every render of the parent, so the effect re-ran on every render of the
+   * parent — and each run moved focus back here. Click into a field, the
+   * parent renders for any reason at all, and the caret is gone: exactly the
+   * "it switches to edit mode and immediately switches out" this caused.
+   *
+   * The listener still needs the current callback. The focus does not, so the
+   * two are separate effects now and the focus runs on mount alone.
+   */
+  useEffect(() => {
+    closeButton.current?.focus({ preventScroll: true })
+  }, [])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
-    closeButton.current?.focus({ preventScroll: true })
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 

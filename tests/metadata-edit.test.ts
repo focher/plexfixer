@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { analyzeFile } from '@shared/plex/analyze.js'
+import { episodeFieldsFor } from '@shared/plex/metadata.js'
 import { inPlaceVerdict } from '@shared/plex/inplace.js'
 import { buildRepairCommand } from '@shared/plex/command.js'
 import { DEFAULT_SETTINGS } from '../src/shared/defaults.js'
@@ -219,5 +220,48 @@ describe('season and episode numbers', () => {
     expect(changesAnything({ tags: { season_number: '01', episode_id: '03' } }, file)).toBe(false)
     // A real change is still a change.
     expect(changesAnything({ tags: { season_number: '2' } }, file)).toBe(true)
+  })
+})
+
+describe('what the editor starts with', () => {
+  const guessed = { show: 'The Expanse', season: 2, episode: 6, year: '2017' }
+
+  it('prefers what the file states over what its name suggests', () => {
+    // The bug: the fields were seeded from the name alone, and a lookup writes
+    // back whatever is in them — so picking a series could overwrite a correct
+    // `episode_id` with a number read out of the file name. A tag is evidence;
+    // a name is an inference, and an inference must not replace a statement.
+    const fields = episodeFieldsFor(
+      { show: 'The Expanse', season_number: '2', episode_id: '6' },
+      { ...guessed, season: 20, episode: 206 },
+      'The Expanse',
+      undefined
+    )
+
+    expect(fields.season).toBe('2')
+    expect(fields.episode).toBe('6')
+  })
+
+  it('falls back to the name when the file says nothing', () => {
+    const fields = episodeFieldsFor({}, guessed, 'Whatever', undefined)
+    expect(fields).toMatchObject({ isEpisode: true, show: 'The Expanse', season: '2', episode: '6', year: '2017' })
+  })
+
+  it('treats a file with episode tags as an episode even when the name is silent', () => {
+    // A file named `ep6.mkv` tells a pattern nothing, but a file carrying a
+    // season and an episode has said what it is.
+    const fields = episodeFieldsFor({ season_number: '1', episode_id: '3' }, undefined, 'ep6', undefined)
+    expect(fields.isEpisode).toBe(true)
+    expect(fields.season).toBe('1')
+  })
+
+  it('is a film when neither the tags nor the name say otherwise', () => {
+    const fields = episodeFieldsFor({}, undefined, 'Arrival', '2016')
+    expect(fields).toMatchObject({ isEpisode: false, show: 'Arrival', season: '', episode: '', year: '2016' })
+  })
+
+  it('takes the year from the date the file carries', () => {
+    const fields = episodeFieldsFor({ date: '2017-02-01' }, guessed, 'The Expanse', undefined)
+    expect(fields.year).toBe('2017')
   })
 })
