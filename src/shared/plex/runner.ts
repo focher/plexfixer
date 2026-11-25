@@ -241,6 +241,57 @@ export class RepairRunner {
     return removed
   }
 
+  /**
+   * Change where a waiting repair sits in the queue.
+   *
+   * `-1` runs it sooner, `1` later. Returns the id of the repair it changed
+   * places with, so the window can make the same swap in the list it draws,
+   * or `undefined` when nothing moved.
+   *
+   * Only a queued repair can be moved, and only past another queued repair.
+   * What is running is already writing a file, and what has finished is a
+   * record of something that happened; neither has a place in an order that
+   * is about what happens next.
+   */
+  moveQueued(id: string, offset: -1 | 1): string | undefined {
+    const job = this.jobs.get(id)
+    if (!job || job.state !== 'queued') return undefined
+
+    const swappedWith = this.queue.move(id, offset)
+    if (!swappedWith) return undefined
+
+    // The list the window draws is this map's order, so the two have to move
+    // together: a repair that changed places in the queue and stayed put on
+    // screen would look like a button that does nothing.
+    this.swapJobOrder(id, swappedWith)
+    return swappedWith
+  }
+
+  /** The queued repairs, in the order they will be started. */
+  queuedOrder(): string[] {
+    return this.queue.pendingIds()
+  }
+
+  /**
+   * Exchange two jobs' places in the list.
+   *
+   * A `Map` keeps what is put into it in order and offers no way to reorder
+   * it, so it is rebuilt. The queue is tens of rows, not thousands.
+   */
+  private swapJobOrder(a: string, b: string): void {
+    const entries = [...this.jobs.entries()]
+    const first = entries.findIndex(([id]) => id === a)
+    const second = entries.findIndex(([id]) => id === b)
+    if (first < 0 || second < 0) return
+
+    const held = entries[first]
+    entries[first] = entries[second]
+    entries[second] = held
+
+    this.jobs.clear()
+    for (const [id, job] of entries) this.jobs.set(id, job)
+  }
+
   private update(job: Job): void {
     // A job removed from the list stays removed. A task that was already
     // off the queue when it was dropped still reports its abort, and this

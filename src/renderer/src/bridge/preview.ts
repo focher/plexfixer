@@ -202,6 +202,9 @@ function library(settings: AppSettings): AnalysisResult[] {
  * telling them apart: a running job with a bar, one waiting, one finished, one
  * that failed with a reason, and one skipped because nothing needed doing.
  */
+/** The waiting repairs' order, which the harness's own reordering mutates. */
+const waitingOrder: string[] = ['preview-queued', 'preview-queued-2', 'preview-queued-3']
+
 function queue(): Job[] {
   const now = Date.now()
   const root = '/library/Movies'
@@ -225,6 +228,28 @@ function queue(): Job[] {
       outputPath: `${root}/Casablanca (1942)/Casablanca (1942).mp4`,
       strategy: 'transcode-video',
       mode: 'force-transcode',
+      state: 'queued',
+      progress: { fraction: 0 },
+      log: []
+    },
+    {
+      id: 'preview-queued-2',
+      sourcePath: `${root}/Seven Samurai (1954)/Seven Samurai (1954).mkv`,
+      outputPath: `${root}/Seven Samurai (1954)/Seven Samurai (1954).mp4`,
+      strategy: 'remux',
+      mode: 'safe-remux',
+      state: 'queued',
+      progress: { fraction: 0 },
+      log: []
+    },
+    {
+      // Three waiting, not one: with a single queued row both arrows are at an
+      // end of the queue and disabled, which shows nothing of what they do.
+      id: 'preview-queued-3',
+      sourcePath: `${root}/La Haine (1995)/La Haine (1995).mkv`,
+      outputPath: `${root}/La Haine (1995)/La Haine (1995).mp4`,
+      strategy: 'remux',
+      mode: 'safe-remux',
       state: 'queued',
       progress: { fraction: 0 },
       log: []
@@ -420,7 +445,22 @@ export function installPreviewBridge(): void {
       cancel: async (): Promise<void> => undefined,
       cancelAll: async (): Promise<string[]> => [],
       clearFinished: async (): Promise<void> => undefined,
-      clearQueued: async (): Promise<void> => undefined
+      clearQueued: async (): Promise<void> => undefined,
+      /**
+       * The same answer the real queue gives: the id this one changed places
+       * with. The harness keeps its own copy of the waiting order so the
+       * arrows go on working past the first click, which is the only way to
+       * see whether they read correctly at the ends of a queue.
+       */
+      move: async (id: string, offset: -1 | 1): Promise<string | undefined> => {
+        const from = waitingOrder.indexOf(id)
+        const to = from + offset
+        if (from < 0 || to < 0 || to >= waitingOrder.length) return undefined
+        const other = waitingOrder[to]
+        waitingOrder[to] = waitingOrder[from]
+        waitingOrder[from] = other
+        return other
+      }
     },
     backups: {
       summary: async (): Promise<{ count: number; bytes: number }> => ({ count: 3, bytes: 24_000_000_000 }),

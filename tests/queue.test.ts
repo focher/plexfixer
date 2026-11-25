@@ -162,3 +162,87 @@ describe('changing how many run at once', () => {
     expect(started).toEqual(['a', 'b', 'c'])
   })
 })
+
+/**
+ * Choosing what runs next.
+ *
+ * A queue of fifty films starts in whatever order the library was walked in,
+ * and the one you actually want tonight is somewhere in the middle of it. The
+ * order of what has not started is the only part of a queue that is still
+ * anyone's to decide.
+ */
+describe('reordering what is waiting', () => {
+  it('starts the one moved to the front first', async () => {
+    const queue = new TaskQueue(1)
+    const { started, add, finish } = tasks()
+    for (const id of ['a', 'b', 'c', 'd']) add(queue, id)
+
+    // 'a' is running; 'b', 'c', 'd' are waiting.
+    expect(started).toEqual(['a'])
+    expect(queue.pendingIds()).toEqual(['b', 'c', 'd'])
+
+    expect(queue.move('d', -1)).toBe('c')
+    expect(queue.move('d', -1)).toBe('b')
+    expect(queue.pendingIds()).toEqual(['d', 'b', 'c'])
+
+    await finish('a')
+    expect(started).toEqual(['a', 'd'])
+  })
+
+  it('says which task changed places, so a caller can follow', () => {
+    const queue = new TaskQueue(1)
+    const { add } = tasks()
+    for (const id of ['a', 'b', 'c']) add(queue, id)
+
+    expect(queue.move('c', -1)).toBe('b')
+    expect(queue.pendingIds()).toEqual(['c', 'b'])
+    expect(queue.move('c', 1)).toBe('b')
+    expect(queue.pendingIds()).toEqual(['b', 'c'])
+  })
+
+  it('does nothing at either end of the queue', () => {
+    const queue = new TaskQueue(1)
+    const { add } = tasks()
+    for (const id of ['a', 'b', 'c']) add(queue, id)
+
+    expect(queue.move('b', -1)).toBeUndefined()
+    expect(queue.move('c', 1)).toBeUndefined()
+    expect(queue.pendingIds()).toEqual(['b', 'c'])
+  })
+
+  /**
+   * A running repair has a file open and a temporary half written. "Sooner"
+   * cannot mean anything to it, and the task it would change places with has
+   * not started — moving it would reorder the queue around a task that is not
+   * in the queue.
+   */
+  it('will not move what is already running', () => {
+    const queue = new TaskQueue(1)
+    const { started, add } = tasks()
+    for (const id of ['a', 'b']) add(queue, id)
+
+    expect(started).toEqual(['a'])
+    expect(queue.move('a', 1)).toBeUndefined()
+    expect(queue.pendingIds()).toEqual(['b'])
+  })
+
+  it('does nothing for a task it has never heard of', () => {
+    const queue = new TaskQueue(1)
+    const { add } = tasks()
+    add(queue, 'a')
+    expect(queue.move('nobody', -1)).toBeUndefined()
+  })
+
+  it('never starts anything by itself', async () => {
+    const queue = new TaskQueue(1)
+    const { started, add } = tasks()
+    for (const id of ['a', 'b', 'c']) add(queue, id)
+
+    queue.move('c', -1)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // Still one running and two waiting: the order changed, not the limit.
+    expect(started).toEqual(['a'])
+    expect(queue.activeCount).toBe(1)
+    expect(queue.pendingCount).toBe(2)
+  })
+})

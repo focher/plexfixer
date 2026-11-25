@@ -4,7 +4,7 @@ import { buildDiagnosticsReport, buildJobReport } from '@shared/report.js'
 import { PHASE_LABEL, diagnoseMetrics, formatMs, phase, rankedPhases, summarizeMetrics } from '@shared/metrics.js'
 import { STAGE_DETAIL, describeProgress, stalledSeconds, stepsFor } from '@shared/stages.js'
 import { countCompleted, visibleJobs } from '@shared/jobs.js'
-import { CopyIcon, FolderIcon, StopIcon } from './icons.js'
+import { ArrowDownIcon, ArrowUpIcon, CopyIcon, FolderIcon, StopIcon } from './icons.js'
 import { mediaTitle } from '@shared/plex/title.js'
 import { readPref, writePref } from '../prefs.js'
 import MenuButton from './MenuButton.js'
@@ -166,6 +166,7 @@ export default function JobsPanel({
   onCancelAll,
   onClear,
   onClearQueue,
+  onMove,
   onReveal,
   onSave
 }: {
@@ -184,6 +185,8 @@ export default function JobsPanel({
   onClear: () => void
   /** Drop the repairs that have not started yet. */
   onClearQueue: () => void
+  /** Run a waiting repair sooner (`-1`) or later (`1`). */
+  onMove: (id: string, offset: -1 | 1) => void
   onReveal: (path: string) => void
   /** Write a report to a file the user picks; resolves to the path, or undefined. */
   onSave: (suggestedName: string, contents: string) => Promise<string | undefined>
@@ -264,6 +267,13 @@ export default function JobsPanel({
 
   const finished = jobs.filter((job) => job.state !== 'queued' && job.state !== 'running')
   const queued = jobs.filter((job) => job.state === 'queued')
+  /*
+    Where each waiting repair sits among the others, which is what decides
+    whether it can move and which one is up next. Taken from the list's own
+    order: the runner keeps that in step with the order it will start them in,
+    so the row at the top of the waiting ones is the next one out.
+  */
+  const queuedIndex = new Map(queued.map((job, index) => [job.id, index]))
   const completed = countCompleted(jobs)
   const visible = visibleJobs(jobs, hideCompleted)
 
@@ -405,10 +415,19 @@ export default function JobsPanel({
         {visible.map((job) => {
           const open = expanded.has(job.id)
           const summary = summarizeMetrics(job.metrics)
+          const place = queuedIndex.get(job.id)
+          const waiting = place != null
           return (
             <div key={job.id}>
               <div className="job">
-                <span className={`badge ${TONE[job.state]}`}>{job.state}</span>
+                {/*
+                  "queued" on every waiting row says nothing about which of
+                  them is about to start, which is the only thing the order is
+                  for. The first one says so.
+                */}
+                <span className={`badge ${place === 0 ? 'info' : TONE[job.state]}`}>
+                  {place === 0 ? 'next' : job.state}
+                </span>
                 <span>
                   {/*
                     The title, as the library shows it. The queue used to show
@@ -459,6 +478,28 @@ export default function JobsPanel({
                         : ''))}
                 </span>
                 <span className="job-row-actions">
+                  {waiting ? (
+                    <>
+                      <button
+                        className="icon-button"
+                        onClick={() => onMove(job.id, -1)}
+                        disabled={place === 0}
+                        aria-label="Repair this one sooner"
+                        data-label={place === 0 ? 'Already next' : 'Move up'}
+                      >
+                        <ArrowUpIcon />
+                      </button>
+                      <button
+                        className="icon-button"
+                        onClick={() => onMove(job.id, 1)}
+                        disabled={place === queued.length - 1}
+                        aria-label="Repair this one later"
+                        data-label={place === queued.length - 1 ? 'Already last' : 'Move down'}
+                      >
+                        <ArrowDownIcon />
+                      </button>
+                    </>
+                  ) : null}
                   {job.state === 'queued' || job.state === 'running' ? (
                     <button
                       className="icon-button danger"

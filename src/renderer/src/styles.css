@@ -2369,8 +2369,9 @@ button.expander:hover:not(:disabled) {
 .job {
   display: grid;
   /* The third column carries "621ms · 1024 MB/s · 356x realtime", which is
-     wider than a bare duration ever was. */
-  grid-template-columns: 84px minmax(0, 1fr) 225px 44px;
+     wider than a bare duration ever was. The last holds up to three 28px
+     icons: a waiting repair can be moved up, moved down, or stopped. */
+  grid-template-columns: 84px minmax(0, 1fr) 225px 92px;
   gap: 12px;
   align-items: center;
   padding: 6px 12px;
@@ -2389,6 +2390,7 @@ button.expander:hover:not(:disabled) {
 .job-row-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 2px;
 }
 
 /* The same hover label the detail panel's icons use, so one action looks the
@@ -3117,7 +3119,7 @@ button.expander:hover:not(:disabled) {
 
 @media (max-width: 1120px) {
   .job {
-    grid-template-columns: 84px 1fr 170px 78px;
+    grid-template-columns: 84px 1fr 170px 92px;
   }
 }
 

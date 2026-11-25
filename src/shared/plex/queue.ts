@@ -103,6 +103,38 @@ export class TaskQueue {
     return false
   }
 
+  /**
+   * Move a waiting task one place towards the front (`-1`) or the back (`1`).
+   *
+   * Returns the id it changed places with, so a caller holding its own view of
+   * the order can make the same swap, or `undefined` when there was nothing to
+   * swap with: the task is already at that end of the queue, has already
+   * started, or has gone.
+   *
+   * Only what is waiting can be reordered. A running task has a file open and
+   * a temporary half written, and "run this one sooner" cannot mean anything
+   * to a repair that is already under way.
+   *
+   * Nothing is pumped afterwards. Reordering changes which task runs next, not
+   * how many may run, and a free slot would already have been filled.
+   */
+  move(id: string, offset: -1 | 1): string | undefined {
+    const from = this.pending.findIndex((task) => task.id === id)
+    if (from < 0) return undefined
+    const to = from + offset
+    if (to < 0 || to >= this.pending.length) return undefined
+
+    const other = this.pending[to]
+    this.pending[to] = this.pending[from]
+    this.pending[from] = other
+    return other.id
+  }
+
+  /** The ids still waiting, in the order they will be started. */
+  pendingIds(): string[] {
+    return this.pending.map((task) => task.id)
+  }
+
   cancelAll(): void {
     this.pending.length = 0
     for (const controller of this.controllers.values()) controller.abort()

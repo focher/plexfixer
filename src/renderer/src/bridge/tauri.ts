@@ -983,6 +983,13 @@ function buildApi() {
       cancelAll: async (): Promise<string[]> => runner?.cancelAll() ?? [],
       clearFinished: async (): Promise<void> => runner?.clearFinished(),
       clearQueued: async (): Promise<number> => runner?.clearQueued() ?? 0,
+      /**
+       * Run a waiting repair sooner (`-1`) or later (`1`).
+       *
+       * Resolves to the id it changed places with, which the window uses to
+       * make the same swap in the list it is drawing.
+       */
+      move: async (id: string, offset: -1 | 1): Promise<string | undefined> => runner?.moveQueued(id, offset),
       onUpdate: (listener: (job: Job) => void): Unsubscribe => jobUpdate.on(listener)
     },
     shell: {

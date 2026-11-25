@@ -169,3 +169,23 @@ export function StopIcon(props: IconProps): React.JSX.Element {
     </Svg>
   )
 }
+
+/** Run this waiting repair sooner. */
+export function ArrowUpIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M8 13V3" />
+      <path d="M3.5 7.5 8 3l4.5 4.5" />
+    </Svg>
+  )
+}
+
+/** Run this waiting repair later. */
+export function ArrowDownIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M8 3v10" />
+      <path d="M3.5 8.5 8 13l4.5-4.5" />
+    </Svg>
+  )
+}
