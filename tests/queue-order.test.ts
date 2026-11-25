@@ -58,6 +58,30 @@ async function runner(concurrency = 1): Promise<RepairRunner> {
 
 const settle = (ms = 50): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+function stateOf(instance: RepairRunner, id: string): string | undefined {
+  return instance.list().find((job) => job.id === id)?.state
+}
+
+/**
+ * Wait for a repair to reach a state, rather than sleeping and hoping.
+ *
+ * Three awaited steps run before a job is marked `running` — a tags-only
+ * attempt, an in-place attempt, and a look at the subtitles — and each of them
+ * touches the disk. A fixed pause that is generous on this machine is not
+ * generous on a loaded CI runner, which is exactly how this test first failed.
+ */
+async function reaches(instance: RepairRunner, id: string, want: string, timeoutMs = 20_000): Promise<void> {
+  const started = Date.now()
+  for (;;) {
+    const state = stateOf(instance, id)
+    if (state === want) return
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`waited ${timeoutMs}ms for ${id} to be ${want}; it is ${state ?? 'not in the list'}`)
+    }
+    await settle(20)
+  }
+}
+
 /** Queue several repairs at once, the way a scan does, and hold them there. */
 function queueAll(instance: RepairRunner, names: string[]): Map<string, string> {
   const batch = instance.beginBatch()
@@ -82,13 +106,12 @@ function waiting(instance: RepairRunner, ids: Map<string, string>): string[] {
 }
 
 describe('moving a waiting repair', () => {
-  it('changes which one the queue picks up next', async () => {
+  it('changes which one the queue picks up next', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
     const ids = queueAll(instance, ['A', 'B', 'C', 'D'])
-    await settle()
 
     // A is running on the single slot; the rest are waiting in order.
-    expect(instance.list().find((job) => job.id === ids.get('A'))?.state).toBe('running')
+    await reaches(instance, ids.get('A')!, 'running')
     expect(waiting(instance, ids)).toEqual(['B', 'C', 'D'])
 
     // Tonight's film is last. Move it to the front.
@@ -98,15 +121,15 @@ describe('moving a waiting repair', () => {
 
     // And it is the one that starts when the slot frees up.
     instance.cancel(ids.get('A')!)
-    await settle(150)
-    expect(instance.list().find((job) => job.id === ids.get('D'))?.state).toBe('running')
-    expect(instance.list().find((job) => job.id === ids.get('B'))?.state).toBe('queued')
+    await reaches(instance, ids.get('D')!, 'running')
+    expect(stateOf(instance, ids.get('B')!)).toBe('queued')
+    expect(stateOf(instance, ids.get('C')!)).toBe('queued')
   })
 
-  it('moves the row with it', async () => {
+  it('moves the row with it', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
     const ids = queueAll(instance, ['A', 'B', 'C', 'D'])
-    await settle()
+    await reaches(instance, ids.get('A')!, 'running')
     expect(rows(instance, ids)).toEqual(['A', 'B', 'C', 'D'])
 
     instance.moveQueued(ids.get('D')!, -1)
@@ -118,29 +141,29 @@ describe('moving a waiting repair', () => {
     expect(waiting(instance, ids)).toEqual(['D', 'B', 'C'])
   })
 
-  it('leaves the ends of the queue alone', async () => {
+  it('leaves the ends of the queue alone', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
     const ids = queueAll(instance, ['A', 'B', 'C'])
-    await settle()
+    await reaches(instance, ids.get('A')!, 'running')
 
     expect(instance.moveQueued(ids.get('B')!, -1)).toBeUndefined()
     expect(instance.moveQueued(ids.get('C')!, 1)).toBeUndefined()
     expect(rows(instance, ids)).toEqual(['A', 'B', 'C'])
   })
 
-  it('refuses to move a repair that is already running', async () => {
+  it('refuses to move a repair that is already running', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
     const ids = queueAll(instance, ['A', 'B'])
-    await settle()
+    await reaches(instance, ids.get('A')!, 'running')
 
     expect(instance.moveQueued(ids.get('A')!, 1)).toBeUndefined()
     expect(rows(instance, ids)).toEqual(['A', 'B'])
   })
 
-  it('refuses to move one that has finished, or one it has never heard of', async () => {
+  it('refuses to move one that has finished, or one it has never heard of', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
     const ids = queueAll(instance, ['A', 'B'])
-    await settle()
+    await reaches(instance, ids.get('A')!, 'running')
     instance.cancel(ids.get('B')!)
 
     expect(instance.moveQueued(ids.get('B')!, -1)).toBeUndefined()
@@ -151,10 +174,10 @@ describe('moving a waiting repair', () => {
    * The order is only about what has not started, so what has finished keeps
    * its place in the record regardless.
    */
-  it('reorders around rows that are no longer waiting', async () => {
+  it('reorders around rows that are no longer waiting', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
     const ids = queueAll(instance, ['A', 'B', 'C'])
-    await settle()
+    await reaches(instance, ids.get('A')!, 'running')
 
     instance.moveQueued(ids.get('C')!, -1)
     expect(rows(instance, ids)).toEqual(['A', 'C', 'B'])
