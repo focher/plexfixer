@@ -34,6 +34,39 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.3.5',
+    headline: 'The queue runs in the order you choose, and a finished repair is not thrown away over a question asked too early.',
+    changes: [
+      {
+        title: 'Decide what the queue picks up next',
+        body:
+          'A scan queues repairs in the order it walked the library, which is nobody\u2019s order of preference \u2014 and ' +
+          'the one film you want tonight ends up behind forty others, with clearing the queue and starting ' +
+          'again the only way to reach it. Every waiting repair now has an arrow up and an arrow down, and ' +
+          'the one at the front of the queue says \u201cnext\u201d rather than \u201cqueued\u201d. What is already running stays ' +
+          'where it is: it has a file open and a temporary half written.'
+      },
+      {
+        title: 'A repair is asked twice before it is given up on',
+        body:
+          'A 13 GB remux across a network share ran for thirteen minutes, ffmpeg finished cleanly, and the ' +
+          'result was discarded \u2014 because the share had not caught up with its own write. The index was ' +
+          'visible, the data behind it was not, and the check that followed a fraction of a second later read ' +
+          'a file that did not add up. The output is now measured against what ffmpeg says it wrote, and the ' +
+          'check is tried again a few seconds later. Something genuinely broken still fails every attempt.'
+      },
+      {
+        title: 'Failures say what actually went wrong',
+        body:
+          'ffmpeg and ffprobe narrate as they work: every decoder complains on the way past, and the sentence ' +
+          'naming the real fault is printed last, after all of it. PlexFixer kept the first line and dropped ' +
+          'the rest, so the repair above was reported as an AAC decoder warning while \u201cInvalid data found ' +
+          'when processing input\u201d sat on the line below it, discarded. A failed check now quotes the verdict ' +
+          'and keeps everything printed underneath it.'
+      }
+    ]
+  },
+  {
     version: '0.3.4',
     headline: 'Changing a title no longer rewrites the film.',
     changes: [
