@@ -140,7 +140,12 @@ export async function ensureMp4Tags({ platformKey, outputDir, workDir, force, do
     }
 
     await mkdir(source, { recursive: true })
-    await execFileAsync('tar', ['-xf', archive, '-C', source, '--strip-components=1'])
+    // Run from the work directory with relative names, because bsdtar on
+    // Windows reads `C:\\Users\\...` as a *remote host* — `host:path`, the way
+    // scp does — and fails with "Cannot connect to C: resolve failed". There is
+    // no flag for it on the bundled tar; keeping the colon out of the argument
+    // is the fix.
+    await execFileAsync('tar', ['-xf', 'mp4v2.tar.bz2', '-C', 'source', '--strip-components=1'], { cwd: workDir })
 
     const configure = [
       '-S',
@@ -152,6 +157,11 @@ export async function ensureMp4Tags({ platformKey, outputDir, workDir, force, do
       // is another file to sign, notarize and get wrong.
       '-DBUILD_SHARED=OFF',
       '-DBUILD_UTILS=ON',
+      // mp4v2 2.1.3 declares a `cmake_minimum_required` older than 3.5, and
+      // CMake 4 — which is what the CI runners have — removed compatibility
+      // with those outright. This is the escape hatch CMake 4 documents for
+      // exactly this case, and older CMake ignores it as an unused variable.
+      '-DCMAKE_POLICY_VERSION_MINIMUM=3.5',
     ]
     if (host === 'darwin') {
       configure.push(`-DCMAKE_OSX_ARCHITECTURES=${ARCHITECTURE[platformKey]}`)
@@ -174,7 +184,12 @@ export async function ensureMp4Tags({ platformKey, outputDir, workDir, force, do
     await rm(marker, { force: true })
     return { state: 'built', version: SOURCE.version }
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
+    // `execFile` puts the command in `message` and the actual complaint in
+    // `stderr`. Reporting only the message is how a build failure reads as
+    // "cmake failed" with no clue which line of it did.
+    const detail = typeof error === 'object' && error !== null && 'stderr' in error ? String(error.stderr).trim() : ''
+    const message = error instanceof Error ? error.message : String(error)
+    const reason = detail ? `${message.split('\n')[0]} — ${detail.split('\n').slice(0, 3).join(' ')}` : message
     await note(marker, reason)
     return { state: 'skipped', reason }
   } finally {
