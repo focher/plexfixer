@@ -128,7 +128,10 @@ export async function ensureMp4Tags({ platformKey, outputDir, workDir, force, do
   const build = join(workDir, 'build')
 
   try {
-    await download(SOURCE.url, archive)
+    // The hash goes to the downloader, which refuses to fetch anything it has
+    // not been given one for — and it is checked again here afterwards, so
+    // this module is honest on its own rather than relying on its caller.
+    await download(SOURCE.url, archive, { sha256: SOURCE.sha256 })
     const got = await sha256Of(archive)
     if (got !== SOURCE.sha256) {
       // Never built: a checksum that does not match is either the wrong file

@@ -34,7 +34,7 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
-    version: '0.3.2',
+    version: '0.3.3',
     headline: 'Changing a title no longer rewrites the film.',
     changes: [
       {
