@@ -16,8 +16,8 @@ export const subtitleMp4Storage: CheckModule = {
   howItWorks:
     'Raised only when the file is headed for MP4. Every subtitle track is checked against what MP4 can store, ' +
     'and whatever cannot is named so you know what the repair will leave behind. Tracks already being dropped ' +
-    'for another reason are not listed twice. Turning on "Extract text subtitles" under Compatibility writes ' +
-    'the text ones out as sidecar files first, so nothing is actually lost.',
+    'for another reason are not listed twice. In practice this is the picture subtitles: a text track is ' +
+    'rewritten as tx3g on the way in, so it travels rather than being left out.',
   ifDisabled:
     'Tracks MP4 cannot hold are still left out of an MP4 repair — the format has not changed — but you will ' +
     'not be told which ones before it happens.',
@@ -40,8 +40,8 @@ export const subtitleMp4Storage: CheckModule = {
           remedy: 'lossless',
           title: `${notAlreadyDropped.length} subtitle track${notAlreadyDropped.length === 1 ? '' : 's'} cannot be stored in MP4`,
           detail:
-            'MP4 only holds tx3g (mov_text) subtitles. These tracks will be dropped from the MP4; extract them ' +
-            'as sidecar files first if you want to keep them.',
+            'MP4 only holds tx3g (mov_text) subtitles, which is a text format. These tracks carry pictures of ' +
+            'text rather than text, so there is nothing to convert and they will be dropped from the MP4.',
           streamIndexes: notAlreadyDropped.map((s) => s.index)
         }
       ]

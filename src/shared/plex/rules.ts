@@ -242,9 +242,15 @@ export function isMp4NativeSubtitle(codec: string): boolean {
 
 /**
  * Subtitle codecs that can be converted to `mov_text` during a stream copy.
- * Image formats cannot: tx3g is a text format.
+ *
+ * Every text format, because tx3g is a text format and ffmpeg has a decoder
+ * for all of them: the words come out and go back in as tx3g. Image formats
+ * cannot make that journey — there is nothing to decode into text — and they
+ * are the only subtitles MP4 genuinely has to leave behind.
  */
-export const MP4_CONVERTIBLE_SUBTITLE_CODECS = new Set(['subrip', 'srt', 'text', 'webvtt', 'ass', 'ssa'])
+export const MP4_CONVERTIBLE_SUBTITLE_CODECS = new Set(
+  [...TEXT_SUBTITLE_CODECS].filter((codec) => codec !== 'mov_text')
+)
 
 export function canStreamCopyIntoMp4(kind: 'video' | 'audio' | 'subtitle', codec: string): boolean {
   const normalized = codec.toLowerCase()

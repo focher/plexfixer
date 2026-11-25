@@ -16,7 +16,7 @@ export const PHASE_LABEL: Record<JobPhase, string> = {
   finalise: 'Moved the index to the front',
   verify: 'Re-probed the output',
   promote: 'Moved into place',
-  subtitles: 'Wrote subtitle sidecars',
+  subtitles: 'Checked subtitle timing',
   total: 'Total'
 }
 

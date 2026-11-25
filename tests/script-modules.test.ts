@@ -298,16 +298,16 @@ describe('running a rule the user wrote', () => {
     expect(dropped[0].reason).toContain('No commentary')
   })
 
-  it('writes out a subtitle track it asked for, whatever the setting says', () => {
+  it('measures a subtitle track it asked for, whatever the setting says', () => {
     const file = mkv([
       video({ language: 'eng' }),
       mainAudio({ index: 1, language: 'eng' }),
       subtitle({ index: 2, codec: 'subrip', language: 'eng' })
     ])
-    const rule = 'name Keep subs\nwhen subtitle.codec is subrip\nfix extract-subtitles'
-    const settings = { ...withRules(rule), extractTextSubtitles: false }
+    const rule = 'name Time the subs\nwhen subtitle.codec is subrip\nfix resync-subtitles'
+    const settings = { ...withRules(rule), resyncSubtitlesOnRepair: false }
     const plan = analyzeFile(file, settings).plan
-    expect(plan.extractSubtitles.map((entry) => entry.streamIndex)).toEqual([2])
+    expect(plan.resyncSubtitles).toEqual([2])
   })
 
   it('rewrites a file it asks to have rewritten, and says who asked', () => {

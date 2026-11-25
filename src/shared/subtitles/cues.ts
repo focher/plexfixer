@@ -27,7 +27,7 @@ export interface Cue {
    * Plex renders it and throwing it away would flatten emphasis the author
    * meant. Everything else — ASS override blocks, positioning, karaoke timing —
    * is gone by this point: it describes where on screen the words go, which is
-   * exactly what a sidecar cannot promise.
+   * exactly what plain SRT cannot promise.
    */
   text: string
 }
@@ -198,11 +198,11 @@ const ASS_OVERRIDES = /\{[^}]*\}/g
 const UNRENDERED_TAGS = /<(?!\/?(?:i|b|u|font)\b)[^>]*>/gi
 
 /**
- * Reduce one cue's text to what a sidecar can honestly carry.
+ * Reduce one cue's text to what plain SRT can honestly carry.
  *
  * Positioning is the thing being dropped, and dropping it is the point: an ASS
  * subtitle places a sign translation in the top-right corner over the sign it
- * translates, and a sidecar SRT has no way to say that. Keeping the override
+ * translates, and plain SRT has no way to say that. Keeping the override
  * block would put `{\an8}` on screen as text. So the words survive and the
  * staging does not, which is the same trade the app already makes when it
  * writes a styled track out rather than burning it in.
@@ -348,7 +348,7 @@ export function parseCues(text: string): ParsedCues {
  *
  * SRT rather than anything richer because this is what goes beside the film:
  * every Plex client renders it without the server doing any work, which is the
- * entire reason the app prefers a sidecar to an embedded track in the first
+ * entire reason the app rewrites a styled track as plain text in the first
  * place.
  */
 export function formatSrt(cues: readonly Cue[]): string {

@@ -43,14 +43,14 @@ export const STAGE_DETAIL: Record<JobStage, string> = {
   finalising: 'Moving the MP4 index to the front — a second pass over the whole file',
   verifying: 'Re-probing the output to confirm it has the streams it should',
   promoting: 'Backing up the original and moving the repaired file into place',
-  subtitles: 'Writing subtitle sidecars',
+  subtitles: 'Checking subtitle timing',
   finished: 'Finished'
 }
 
 /**
  * The steps always worth drawing.
  *
- * Everything else — the index move, subtitle sidecars — only appears once a
+ * Everything else — the index move, the subtitle timing check — only appears once a
  * job has actually reached it, because whether it happens at all depends on
  * the file.
  */

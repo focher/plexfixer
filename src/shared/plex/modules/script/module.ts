@@ -87,11 +87,11 @@ export function moduleFromScript(id: string, script: ParsedScript): CheckModule 
           if (indexes.length > 0) requests.push({ module: script.name, kind: 'drop', streamIndexes: indexes })
           continue
         }
-        // Extraction joins the list the built-in repair already writes out,
-        // rather than opening a second route to the same sidecar file.
+        // Retiming joins the list the built-in repair already measures, rather
+        // than opening a second route to the same work.
         const wanted = new Set(match.byScope.subtitle)
         const streams = context.subtitles.filter((stream) => wanted.has(stream.index))
-        if (streams.length > 0) signals.extractSubtitles = streams
+        if (streams.length > 0) signals.resyncSubtitles = streams
       }
 
       if (requests.length > 0) signals.userRequests = requests

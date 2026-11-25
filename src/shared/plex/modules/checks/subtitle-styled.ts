@@ -14,11 +14,12 @@ export const subtitleStyled: CheckModule = {
     'karaoke timing on top of the words. Anime fansubs are full of them. Clients cannot reproduce any of that, ' +
     'so Plex paints them into the picture instead, which re-encodes the video.',
   howItWorks:
-    'Identifies tracks in the styled subtitle formats. The fix is not to delete them but to write a plain text ' +
-    'sidecar file beside the video with the same dialogue in it: clients render a sidecar as text, which costs ' +
-    'nothing, and the original styled track stays where it is.',
+    'Identifies tracks in the styled subtitle formats. The fix is not to delete them but to rewrite them as ' +
+    'plain SRT inside the file: the dialogue is identical, every client renders plain text without the server ' +
+    'doing any work, and the track stays where it is rather than becoming a second file to keep track of.',
   ifDisabled:
-    'Styled subtitle tracks are not mentioned and no plain-text sidecar is written for them.',
+    'Styled subtitle tracks are not mentioned and are left in the file as they are, so Plex goes on burning ' +
+    'them into the picture.',
   raises: ['subtitle-styled-ass'],
 
   run({ subtitles }) {
@@ -34,8 +35,8 @@ export const subtitleStyled: CheckModule = {
           title: `${styled.length} styled subtitle track${styled.length === 1 ? '' : 's'} (ASS/SSA)`,
           detail:
             'ASS/SSA carries positioning, fonts and karaoke effects that clients cannot reproduce, so Plex burns ' +
-            'these in rather than converting them. Extracting a plain .srt sidecar gives clients a track they can ' +
-            'render without transcoding.',
+            'these in rather than converting them. Rewriting the track as plain SRT keeps the dialogue and gives ' +
+            'clients something they can render without transcoding.',
           streamIndexes: styled.map((s) => s.index)
         }
       ]

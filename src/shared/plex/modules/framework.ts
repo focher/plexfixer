@@ -138,12 +138,12 @@ export interface ScanState {
   /** Streams that cannot travel into the target container and have to be left out. */
   dropStreams: number[]
   /**
-   * Subtitle streams someone has explicitly asked to have written out.
+   * Subtitle streams someone has explicitly asked to have retimed.
    *
    * Separate from the ones the app picks for itself: these were asked for, so
-   * they are written whether or not "Extract text subtitles" is on.
+   * they are measured whether or not the setting asking for it is on.
    */
-  extractSubtitles: SubtitleStream[]
+  resyncSubtitles: SubtitleStream[]
 
   /** What rules the user wrote have asked for. */
   userRequests: UserRequest[]
@@ -179,7 +179,7 @@ export interface ScanSignals {
   incompatibleAudio?: AudioStream[]
   needsCompatibilityAudio?: boolean
   dropStreams?: number[]
-  extractSubtitles?: SubtitleStream[]
+  resyncSubtitles?: SubtitleStream[]
   trackChanges?: TrackPlanChange[]
   userRequests?: UserRequest[]
   defaultAudioIndex?: number
@@ -267,7 +267,7 @@ export interface PlanFragment {
   metadataTags?: Record<string, string>
   videoTranscode?: VideoTranscodeSpec
   addCompatibilityAudio?: CompatibilityAudioSpec
-  extractSubtitles?: RepairPlan['extractSubtitles']
+  resyncSubtitles?: RepairPlan['resyncSubtitles']
   videoLevel?: number
 }
 
@@ -338,7 +338,7 @@ export function initialState(settings: AppSettings): ScanState {
     incompatibleAudio: [],
     needsCompatibilityAudio: false,
     dropStreams: [],
-    extractSubtitles: [],
+    resyncSubtitles: [],
     userRequests: [],
     trackChanges: []
   }
@@ -371,7 +371,7 @@ export function mergeSignals(state: ScanState, signals: ScanSignals | undefined)
 
   if (signals.incompatibleAudio?.length) next.incompatibleAudio = [...state.incompatibleAudio, ...signals.incompatibleAudio]
   if (signals.dropStreams?.length) next.dropStreams = [...state.dropStreams, ...signals.dropStreams]
-  if (signals.extractSubtitles?.length) next.extractSubtitles = [...state.extractSubtitles, ...signals.extractSubtitles]
+  if (signals.resyncSubtitles?.length) next.resyncSubtitles = [...state.resyncSubtitles, ...signals.resyncSubtitles]
   if (signals.trackChanges?.length) next.trackChanges = [...state.trackChanges, ...signals.trackChanges]
   if (signals.userRequests?.length) next.userRequests = [...state.userRequests, ...signals.userRequests]
 

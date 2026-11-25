@@ -4,9 +4,9 @@ import { analyzeFile } from '@shared/plex/analyze.js'
 import type { EncoderCapabilities } from '@shared/types.js'
 import {
   buildRepairCommand,
-  buildSubtitleExtractCommands,
-  chooseVideoEncoder,
-  sidecarLanguage
+  buildSubtitleMuxCommand,
+  buildSubtitleReadCommand,
+  chooseVideoEncoder
 } from '@shared/plex/command.js'
 import { audio, coverArt, flags, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
@@ -51,9 +51,13 @@ describe('buildRepairCommand — remux', () => {
   it('converts text subtitles to mov_text for MP4 and leaves them alone for MKV', () => {
     const streams = [video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' }), subtitle({ index: 2 })]
     const mp4Plan = analyzeFile(mkv(streams), DEFAULT_SETTINGS)
-    expect(valueAfter(buildRepairCommand({ result: mp4Plan, settings: DEFAULT_SETTINGS, outputPath: OUT }).args, '-c:s')).toBe(
-      'mov_text'
-    )
+    // Copy is the default and each track that has to change says so for
+    // itself, because `-c:s mov_text` across the board re-encodes tx3g that
+    // was already tx3g — which is how a stream copy came to fail on ffmpeg's
+    // own output.
+    const mp4Args = buildRepairCommand({ result: mp4Plan, settings: DEFAULT_SETTINGS, outputPath: OUT }).args
+    expect(valueAfter(mp4Args, '-c:s')).toBe('copy')
+    expect(valueAfter(mp4Args, '-c:s:0')).toBe('mov_text')
 
     const mkvSettings = { ...DEFAULT_SETTINGS, targetContainer: 'mkv' as const, remuxMkvToMp4: false }
     const mkvPlan = analyzeFile(mkv(streams), mkvSettings)
@@ -414,62 +418,102 @@ describe('chooseVideoEncoder', () => {
   })
 })
 
-describe('buildSubtitleExtractCommands', () => {
-  it('names sidecars so Plex picks them up', () => {
-    const result = analyzeFile(
-      mkv([
-        video({ language: 'eng' }),
-        mainAudio({ index: 1, language: 'eng' }),
-        subtitle({ index: 2, codec: 'ass', language: 'eng' }),
-        subtitle({ index: 3, codec: 'ass', language: 'eng', disposition: flags({ forced: true }) })
-      ]),
-      DEFAULT_SETTINGS
-    )
-    const commands = buildSubtitleExtractCommands(result, '/out/Example (2020)')
-
-    expect(commands.map((c) => c.outputPath)).toEqual([
-      '/out/Example (2020).eng.srt',
-      '/out/Example (2020).eng.forced.srt'
+describe('buildSubtitleReadCommand', () => {
+  it('reads every chosen track in one pass over the film', () => {
+    const args = buildSubtitleReadCommand('/films/Heat.mkv', [
+      { streamIndex: 2, outputPath: '/tmp/x/track-2.srt' },
+      { streamIndex: 3, outputPath: '/tmp/x/track-3.srt' }
     ])
-    expect(valueAfter(commands[0].args, '-c:s')).toBe('srt')
+
+    // One input, two outputs: ffmpeg reads the film once and demuxes it to as
+    // many files as it is given. A run per track reads a 4.6 GB film twice.
+    expect(args.filter((arg) => arg === '-i')).toHaveLength(1)
+    expect(maps(args)).toEqual(['0:2', '0:3'])
+    expect(args.filter((arg) => arg === '-c:s').length).toBe(2)
+    expect(args.at(-1)).toBe('/tmp/x/track-3.srt')
+  })
+})
+
+describe('buildSubtitleMuxCommand', () => {
+  const base = {
+    mediaPath: '/films/Heat.mkv',
+    outputPath: '/films/.Heat.working.mkv',
+    container: 'mkv' as const
+  }
+
+  it('replaces a track by leaving it out and bringing the new one in', () => {
+    const args = buildSubtitleMuxCommand({
+      ...base,
+      subtitleCount: 2,
+      tracks: [{ subtitlePath: '/tmp/retimed.srt', replaceStreamIndex: 3, language: 'eng' }]
+    })
+
+    // There is no "overwrite this stream" in ffmpeg — only everything, minus
+    // the one, plus the replacement.
+    expect(maps(args)).toEqual(['0', '-0:3', '1:0'])
+    expect(valueAfter(args, '-c')).toBe('copy')
+    // One subtitle survives, so the new one is the second: writing its
+    // language to `s:s:0` would retag the track that stayed.
+    expect(valueAfter(args, '-metadata:s:s:1')).toBe('language=eng')
   })
 
-  it('disambiguates two sidecars that would share a name', () => {
-    const result = analyzeFile(
-      mkv([
-        video({ language: 'eng' }),
-        mainAudio({ index: 1, language: 'eng' }),
-        subtitle({ index: 2, codec: 'ass', language: 'eng' }),
-        subtitle({ index: 3, codec: 'ass', language: 'eng', title: 'Alternate' })
-      ]),
-      DEFAULT_SETTINGS
-    )
-    const paths = buildSubtitleExtractCommands(result, '/out/Example').map((c) => c.outputPath)
-    expect(new Set(paths).size).toBe(paths.length)
-  })
-  it('does not let a language tag choose where the sidecar is written', () => {
-    // The tag is read out of the file, and a file can say anything. An unknown
-    // tag is kept as written elsewhere, which here put it straight into a
-    // path: this one named a file four folders up, in /tmp.
-    const result = analyzeFile(
-      mkv([
-        video({ language: 'eng' }),
-        mainAudio({ index: 1, language: 'eng' }),
-        subtitle({ index: 2, codec: 'ass', language: 'x/../../../../tmp/evil' })
-      ]),
-      DEFAULT_SETTINGS
-    )
-    const paths = buildSubtitleExtractCommands(result, '/media/Movie').map((c) => c.outputPath)
+  it('adds a track without dropping anything', () => {
+    const args = buildSubtitleMuxCommand({
+      ...base,
+      subtitleCount: 1,
+      tracks: [{ subtitlePath: '/tmp/new.srt', language: 'fre', forced: true, title: 'Forced' }]
+    })
 
-    expect(paths).toEqual(['/media/Movie.und.srt'])
+    expect(maps(args)).toEqual(['0', '1:0'])
+    expect(valueAfter(args, '-metadata:s:s:1')).toBe('language=fre')
+    expect(valueAfter(args, '-disposition:s:1')).toBe('forced')
   })
 
-  it.each(['..', 'a/b', 'a\\b', 'en.srt', '', 'e', 'abcdefghi', 'e n'])('writes %j as undetermined', (language) => {
-    expect(sidecarLanguage(language)).toBe('und')
+  it('writes several tracks in one rewrite of the film', () => {
+    const args = buildSubtitleMuxCommand({
+      ...base,
+      subtitleCount: 3,
+      tracks: [
+        { subtitlePath: '/tmp/a.srt', replaceStreamIndex: 2, language: 'eng' },
+        { subtitlePath: '/tmp/b.srt', replaceStreamIndex: 3, language: 'fre' }
+      ]
+    })
+
+    // Three inputs: the film and the two subtitles. Doing these one at a time
+    // would copy the whole film twice.
+    expect(args.filter((arg) => arg === '-i')).toHaveLength(3)
+    expect(maps(args)).toEqual(['0', '-0:2', '-0:3', '1:0', '2:0'])
+    // Three subtitles, two replaced: one survives, so the new pair are 1 and 2.
+    expect(valueAfter(args, '-metadata:s:s:1')).toBe('language=eng')
+    expect(valueAfter(args, '-metadata:s:s:2')).toBe('language=fre')
   })
 
-  it.each(['en', 'eng', 'fre', 'und', 'zxx'])('keeps the language code %s', (language) => {
-    expect(sidecarLanguage(language)).toBe(language)
+  it('reformats the incoming track only where the container demands it', () => {
+    const mkvArgs = buildSubtitleMuxCommand({
+      ...base,
+      subtitleCount: 0,
+      tracks: [{ subtitlePath: '/tmp/a.srt', language: 'eng' }]
+    })
+    expect(mkvArgs).not.toContain('-c:s')
+
+    const mp4Args = buildSubtitleMuxCommand({
+      ...base,
+      container: 'mp4',
+      subtitleCount: 0,
+      tracks: [{ subtitlePath: '/tmp/a.srt', language: 'eng' }]
+    })
+    expect(valueAfter(mp4Args, '-c:s')).toBe('mov_text')
+  })
+
+  it('never addresses a negative subtitle ordinal', () => {
+    // A film reporting no subtitles while a replacement names one is a
+    // contradiction, and the arithmetic must not turn it into `s:s:-1`.
+    const args = buildSubtitleMuxCommand({
+      ...base,
+      subtitleCount: 0,
+      tracks: [{ subtitlePath: '/tmp/a.srt', replaceStreamIndex: 2, language: 'eng' }]
+    })
+    expect(args.some((arg) => arg.includes(':-1'))).toBe(false)
   })
 })
 

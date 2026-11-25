@@ -122,8 +122,6 @@ export interface MediaFile {
   /** True when the MP4 `moov` atom precedes `mdat` (required for streaming). */
   faststart?: boolean
   streams: MediaStream[]
-  /** Sidecar subtitle files found next to the media file. */
-  sidecarSubtitles: string[]
   tags: Record<string, string>
 }
 
@@ -247,6 +245,25 @@ export interface TrackPlanChange {
   setForced?: boolean
   /** Stream is dropped from the output entirely. */
   drop?: boolean
+  /**
+   * Rewrite this subtitle track in another format on the way through.
+   *
+   * The one lossy thing a stream copy does, and deliberately narrow: `srt` for
+   * a styled track whose fonts and positioning no client can reproduce, and
+   * `mov_text` for a text track MP4 would otherwise have nowhere to put. The
+   * words survive; the styling does not. The point of it is that the track
+   * stays in the file rather than becoming a second file beside it.
+   */
+  convertSubtitleTo?: 'srt' | 'mov_text'
+  /**
+   * Retime this subtitle track against the audio while the file is open.
+   *
+   * Only ever set for a text subtitle, and only when the measurement found a
+   * constant offset or a drift worth correcting. The shift and stretch
+   * themselves are not here: they are measured during the run, because the
+   * speech has to be found first and that takes longer than planning does.
+   */
+  resync?: boolean
   /** Reason shown in the UI next to the change. */
   reason: string
 }
@@ -301,8 +318,14 @@ export interface RepairPlan {
   targetContainer: 'mp4' | 'mkv'
   actions: PlanAction[]
   trackChanges: TrackPlanChange[]
-  /** Subtitle streams to write out as sidecar .srt files. */
-  extractSubtitles: { streamIndex: number; language: string; forced: boolean }[]
+  /**
+   * Subtitle streams to measure against the audio and retime, in the same pass.
+   *
+   * Measuring is the expensive half — silence detection reads the whole audio
+   * track — so this is only ever populated when the setting asking for it is
+   * on, or when a rule asked for these tracks by name.
+   */
+  resyncSubtitles: number[]
   /** Set when a companion AAC track should be added. */
   addCompatibilityAudio?: CompatibilityAudioSpec
   /** Set when the video stream must be re-encoded. */
@@ -420,8 +443,16 @@ export interface AppSettings {
   targetContainer: 'mp4' | 'mkv'
   /** Convert MKV to MP4 where the streams allow it. */
   remuxMkvToMp4: boolean
-  /** Pull text subtitles out to sidecar .srt files. */
-  extractTextSubtitles: boolean
+  /**
+   * Measure every text subtitle against the audio during a repair and correct
+   * what is out of step.
+   *
+   * Off by default, because it is the one thing in a repair whose cost is not
+   * proportional to the file: silence detection reads the audio from end to
+   * end, which is twenty seconds to a minute on a feature film, whether or not
+   * anything turns out to be wrong.
+   */
+  resyncSubtitlesOnRepair: boolean
   /** Drop image-based (PGS/VobSub) subtitles when remuxing to MP4. */
   dropImageSubtitlesOnMp4: boolean
   /** Always add a stereo AAC track when none exists. */
@@ -690,7 +721,7 @@ export type JobPhase =
   | 'verify'
   /** Backing up the original and moving the output into place. */
   | 'promote'
-  /** Writing subtitle sidecars. */
+  /** Measuring subtitle timing against the audio and correcting it. */
   | 'subtitles'
   /** Queued to finished. */
   | 'total'
@@ -764,7 +795,7 @@ export type JobStage =
   | 'verifying'
   /** Backing up the original and moving the output into place. */
   | 'promoting'
-  /** Writing subtitle sidecars. */
+  /** Measuring subtitle timing against the audio and correcting it. */
   | 'subtitles'
   | 'finished'
 

@@ -282,7 +282,7 @@ function describePerformanceSettings(settings: AppSettings): string[] {
     }`,
     `keep backups      ${settings.keepBackups}`,
     `target container  ${settings.targetContainer} (remux MKV to MP4: ${settings.remuxMkvToMp4})`,
-    `extract subs      ${settings.extractTextSubtitles}`,
+    `resync subs       ${settings.resyncSubtitlesOnRepair}`,
     `hardware encoder  ${settings.hardwareEncoder}`,
     `transcode codec   ${settings.transcodeVideoCodec} @ quality ${settings.videoQuality}`
   ]

@@ -98,7 +98,6 @@ export function mkv(streams: MediaFile['streams'], overrides: Partial<MediaFile>
     durationSeconds: 7200,
     bitRate: 8_800_000,
     streams,
-    sidecarSubtitles: [],
     tags: {},
     ...overrides
   }

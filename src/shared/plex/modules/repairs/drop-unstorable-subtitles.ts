@@ -14,8 +14,8 @@ export const dropUnstorableSubtitles: RepairModule = {
     'place for, and the image-based ones when you have chosen not to carry those into an MP4.',
   howItWorks:
     'Acts on what the subtitle checks concluded. Each track being left behind is listed by name in the plan ' +
-    'before anything is written, so this is never a surprise. Turning on "Extract text subtitles" under ' +
-    'Compatibility writes the text ones out as sidecar files first, which means nothing is actually lost.',
+    'before anything is written, so this is never a surprise. Only picture subtitles reach this point: a text ' +
+    'track headed into an MP4 is rewritten as tx3g rather than dropped, because the words can make that journey.',
   ifDisabled:
     'The repair will try to carry every subtitle track into the output. Into an MP4 that simply will not ' +
     'work, and ffmpeg will refuse the track or the file.',

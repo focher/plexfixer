@@ -26,10 +26,12 @@ import { QtFaststartError, runQtFaststart } from './qt-faststart.js'
 import { indexMoveMismatch, isIndexMoveOnly } from './faststart.js'
 import {
   buildRepairCommand,
-  buildSubtitleExtractCommand,
-  buildSubtitleExtractCommands,
-  sidecarTargets
+  buildSubtitleReadCommand,
+  buildSubtitleReadCommands
 } from './command.js'
+import { listenForSpeech } from '../subtitles/audio.js'
+import { decodeSubtitleBytes, formatSrt, parseCues, type Cue } from '../subtitles/cues.js'
+import { analyseSync, applySync } from '../subtitles/sync.js'
 import {
   PromoteError,
   cloneToBackup,
@@ -695,7 +697,6 @@ export class RepairRunner {
     try {
       const probed = await probeFile(result.file.path, {
         ffprobePath: this.binaries.ffprobePath,
-        includeSidecars: false,
         host: this.host
       })
       const wrong = verdict.changes.filter((change) => {
@@ -795,7 +796,19 @@ export class RepairRunner {
     if (await this.tryInPlace(id, options, outputPath)) return
     const checkMs = performance.now() - checkStarted
 
-    const { args, encoderLabel } = buildRepairCommand({ result, settings, caps, outputPath })
+    // Before the repair, not after: the retimed tracks are inputs to it. The
+    // measurement reads the audio from end to end, which is why it is only
+    // done when the plan actually asked for it.
+    const retimedSubtitles = await this.retimeSubtitles(id, result, settings, signal)
+    if (signal.aborted) return
+
+    const { args, encoderLabel } = buildRepairCommand({
+      result,
+      settings,
+      caps,
+      outputPath,
+      retimedSubtitles
+    })
     const temporaryPath = temporaryPathFor(outputPath, this.host)
     const finalArgs = redirectOutput(args, outputPath, temporaryPath)
 
@@ -874,7 +887,6 @@ export class RepairRunner {
         const verifyStarted = performance.now()
         probed = await probeFile(temporaryPath, {
           ffprobePath: this.binaries.ffprobePath,
-          includeSidecars: false,
           host: this.host
         })
         this.addPhase(id, 'verify', performance.now() - verifyStarted)
@@ -926,22 +938,6 @@ export class RepairRunner {
         backupPath ? `now        ${finalPath}\noriginal   ${backupPath}` : `now        ${finalPath}`
       )
 
-      // Sidecar subtitles are written next to the finished file, named so Plex
-      // picks them up automatically.
-      if (result.plan.extractSubtitles.length > 0) this.setStage(id, 'subtitles')
-      const subtitlesStarted = performance.now()
-      // Sidecars are cut from the file the tracks are actually in. After an
-      // in-place repair the original has been moved into the backup folder and
-      // the repaired file has taken its place — and the repaired file is
-      // usually missing the very tracks being extracted, because needing to be
-      // dropped is why they are being extracted.
-      const extracted = await this.extractSubtitles(result, finalPath, backupPath ?? result.file.path, signal, id)
-      if (result.plan.extractSubtitles.length > 0) {
-        this.addPhase(id, 'subtitles', performance.now() - subtitlesStarted, {
-          note: `${extracted} of ${result.plan.extractSubtitles.length} written`
-        })
-      }
-
       const notes: string[] = []
       // Writing beside the original, or into an output folder, leaves the
       // source file untouched — so the row it was started from goes on
@@ -949,7 +945,9 @@ export class RepairRunner {
       // or "done" next to an unchanged status reads as a repair that failed.
       if (finalPath !== result.file.path) notes.push(`written to ${this.host.paths.basename(finalPath)}`)
       if (backupPath) notes.push(`original kept in ${this.host.paths.join(BACKUP_LABEL, this.host.paths.basename(backupPath))}`)
-      if (extracted > 0) notes.push(`${extracted} subtitle sidecar${extracted === 1 ? '' : 's'} written`)
+      if (retimedSubtitles.length > 0) {
+        notes.push(`${retimedSubtitles.length} subtitle track${retimedSubtitles.length === 1 ? '' : 's'} retimed`)
+      }
 
       const running = this.jobs.get(id)
       if (running) {
@@ -1212,7 +1210,6 @@ export class RepairRunner {
       try {
         probed = await probeFile(temporaryPath, {
           ffprobePath: this.binaries.ffprobePath,
-          includeSidecars: false,
           host: this.host
         })
         problem = indexMoveMismatch(result.file, probed)
@@ -1242,109 +1239,194 @@ export class RepairRunner {
     return probed
   }
 
-  /** Write the planned sidecar .srt files; failures are reported, not fatal. */
-  private async extractSubtitles(
+  /**
+   * Measure the planned subtitle tracks against the audio and retime them.
+   *
+   * Returns the tracks whose cues actually moved, as `.srt` files for the
+   * repair command to map in place of the originals. A track already in step
+   * is not in the list: the repair copies it across untouched, which is both
+   * faster and the only honest thing to do with a subtitle that was right.
+   *
+   * Nothing here is fatal. A measurement that cannot be made — no speech
+   * found, a track ffmpeg will not decode, a film too short to correlate —
+   * leaves the track exactly as it was and says so in the log. A repair is not
+   * worth failing over a subtitle.
+   */
+  private async retimeSubtitles(
+    jobId: string,
     result: AnalysisResult,
-    finalPath: string,
-    sourcePath: string,
-    signal: AbortSignal,
-    jobId: string
-  ): Promise<number> {
-    if (result.plan.extractSubtitles.length === 0) return 0
+    settings: AppSettings,
+    signal: AbortSignal
+  ): Promise<{ streamIndex: number; path: string }[]> {
+    const wanted = result.plan.resyncSubtitles
+    if (wanted.length === 0 || signal.aborted) return []
+
     const paths = this.host.paths
-    const stem = paths.join(paths.dirname(finalPath), paths.basename(finalPath, paths.extname(finalPath)))
-
-    const wanted: { streamIndex: number; outputPath: string }[] = []
-    for (const target of sidecarTargets(result, stem)) {
-      if (signal.aborted) return 0
-      // A sidecar already there is somebody's: downloaded, corrected by hand,
-      // or written by an earlier repair. ffmpeg is told to overwrite, so the
-      // check has to be here — and a track Plex can already read from a file
-      // beside the film does not need writing again.
-      if (await this.host.exists(target.outputPath).catch(() => false)) {
-        this.log(
-          jobId,
-          'info',
-          `Kept the existing sidecar ${paths.basename(target.outputPath)}`,
-          'A subtitle file with this name was already there, so it was not overwritten.'
-        )
-        continue
-      }
-      wanted.push(target)
-    }
-    if (wanted.length === 0 || signal.aborted) return 0
-
-    // One run over the film writes all of them. ffmpeg reads an input once and
-    // demuxes it to as many outputs as it is given; a run per track meant
-    // reading the whole film again for each one.
-    try {
-      await runFfmpeg({
-        ffmpegPath: this.binaries.ffmpegPath,
-        args: buildSubtitleExtractCommand(sourcePath, wanted),
-        signal,
-        spawn: (binary, binaryArgs) => this.host.spawnProcess(binary, binaryArgs)
-      })
-      for (const target of wanted) {
-        this.log(jobId, 'info', `Wrote sidecar ${paths.basename(target.outputPath)}`)
-      }
-      return wanted.length
-    } catch (error) {
-      if (signal.aborted) return 0
-      // One unconvertible track fails the whole run, and the run cannot say
-      // which. Trying them separately costs a read each, which is what this
-      // used to cost always — and now only happens when something is wrong.
+    const duration = result.file.durationSeconds ?? 0
+    const audio = result.file.streams.find((stream) => stream.kind === 'audio')
+    if (!audio || duration <= 0) {
       this.log(
         jobId,
         'info',
-        'Writing the sidecars in one pass did not work, so they are being written one at a time',
-        describeFfmpegFailure(error)
+        'Subtitle timing was not checked',
+        !audio
+          ? 'There is no audio track to compare the lines against.'
+          : 'The file does not report a duration, and the comparison needs one.'
       )
-      return this.extractSubtitlesOneAtATime(result, stem, sourcePath, wanted, signal, jobId)
+      return []
     }
-  }
 
-  /** The fallback: a run per track, so one bad track does not lose the others. */
-  private async extractSubtitlesOneAtATime(
-    result: AnalysisResult,
-    stem: string,
-    sourcePath: string,
-    wanted: readonly { streamIndex: number; outputPath: string }[],
-    signal: AbortSignal,
-    jobId: string
-  ): Promise<number> {
-    const paths = this.host.paths
-    const byOutput = new Map(
-      buildSubtitleExtractCommands(result, stem, sourcePath).map((command) => [command.outputPath, command])
-    )
-    let written = 0
+    this.setStage(jobId, 'subtitles')
+    const started = performance.now()
 
-    for (const target of wanted) {
-      if (signal.aborted) break
-      const command = byOutput.get(target.outputPath)
-      if (!command) continue
-      try {
-        await runFfmpeg({
-          ffmpegPath: this.binaries.ffmpegPath,
-          args: command.args,
-          signal,
-          spawn: (binary, binaryArgs) => this.host.spawnProcess(binary, binaryArgs)
+    // The tracks come out beside the file being written, not beside the film:
+    // these are working files, and the folder the film is in may be read-only
+    // or somebody else's.
+    const scratch = paths.join(paths.dirname(result.file.path), `.plexfixer-subtitles-${Date.now()}`)
+    const targets = wanted.map((streamIndex) => ({
+      streamIndex,
+      outputPath: paths.join(scratch, `track-${streamIndex}.srt`)
+    }))
+
+    const retimed: { streamIndex: number; path: string }[] = []
+    try {
+      await this.host.mkdirp(scratch)
+      const read = await this.readSubtitleTracks(jobId, result.file.path, targets, signal)
+      if (read.length === 0 || signal.aborted) return []
+
+      const speech = await listenForSpeech({
+        ffmpegPath: this.binaries.ffmpegPath,
+        sourcePath: result.file.path,
+        streamIndex: audio.index,
+        durationSeconds: duration,
+        spawn: (command, args) => this.host.spawnProcess(command, args),
+        signal,
+        onAbort: () => void this.host.kill(result.file.path).catch(() => undefined)
+      })
+      if (signal.aborted) return []
+
+      for (const target of read) {
+        const cues = await this.readCues(target.outputPath)
+        if (cues.length === 0) continue
+
+        const report = analyseSync(cues, speech, duration * 1000, {
+          toleranceMs: settings.subtitleSyncToleranceMs
         })
-        written++
-        this.log(jobId, 'info', `Wrote sidecar ${paths.basename(command.outputPath)}`)
-      } catch (error) {
-        // A single unconvertible track should not fail the whole repair, but it
-        // should not vanish either — an image-based track that slipped through
-        // shows up here and nowhere else.
+        // `mismatched` is the subtitle for another cut of the film, and
+        // `unknown` means the measurement could not be made. Moving the lines
+        // on either verdict would be guessing with somebody's file.
+        if (report.state !== 'offset' && report.state !== 'drifting') {
+          this.log(
+            jobId,
+            'info',
+            `Subtitle track ${target.streamIndex} was left as it is`,
+            `${report.summary} (${report.confidence} confidence)`
+          )
+          continue
+        }
+        if (report.confidence === 'poor') {
+          this.log(
+            jobId,
+            'warn',
+            `Subtitle track ${target.streamIndex} looks out of step, but not clearly enough to move`,
+            `${report.summary}\n\nIt was carried across unchanged. The Subtitles panel can retime it by hand.`
+          )
+          continue
+        }
+
+        const moved = applySync(cues, report)
+        await this.writeText(target.outputPath, formatSrt(moved))
+        retimed.push({ streamIndex: target.streamIndex, path: target.outputPath })
+        this.log(jobId, 'info', `Retimed subtitle track ${target.streamIndex}`, report.summary)
+      }
+    } catch (error) {
+      if (!signal.aborted) {
         this.log(
           jobId,
           'warn',
-          `Could not write sidecar ${paths.basename(command.outputPath)}`,
-          describeFfmpegFailure(error)
+          'Subtitle timing could not be checked',
+          `${describeFfmpegFailure(error)}\n\nThe tracks were carried across as they are; nothing was lost.`
         )
       }
+      return []
+    } finally {
+      this.addPhase(jobId, 'subtitles', performance.now() - started, {
+        note: `${retimed.length} of ${wanted.length} retimed`
+      })
     }
 
-    return written
+    return retimed
+  }
+
+  /** Cut the chosen tracks out to .srt, together if possible, singly if not. */
+  private async readSubtitleTracks(
+    jobId: string,
+    sourcePath: string,
+    targets: readonly { streamIndex: number; outputPath: string }[],
+    signal: AbortSignal
+  ): Promise<{ streamIndex: number; outputPath: string }[]> {
+    // One run over the film reads all of them: ffmpeg reads an input once and
+    // demuxes it to as many outputs as it is given.
+    try {
+      await runFfmpeg({
+        ffmpegPath: this.binaries.ffmpegPath,
+        args: buildSubtitleReadCommand(sourcePath, targets),
+        signal,
+        spawn: (binary, binaryArgs) => this.host.spawnProcess(binary, binaryArgs)
+      })
+      return [...targets]
+    } catch (error) {
+      if (signal.aborted) return []
+      // One track ffmpeg will not decode fails the whole run, and the run
+      // cannot say which. Trying them separately costs a read each, which only
+      // happens when something is already wrong.
+      this.log(
+        jobId,
+        'info',
+        'Reading the subtitle tracks in one pass did not work, so they are being read one at a time',
+        describeFfmpegFailure(error)
+      )
+      const done: { streamIndex: number; outputPath: string }[] = []
+      const byOutput = new Map(targets.map((target) => [target.outputPath, target]))
+      for (const command of buildSubtitleReadCommands(sourcePath, targets)) {
+        if (signal.aborted) break
+        const target = byOutput.get(command.outputPath)
+        if (!target) continue
+        try {
+          await runFfmpeg({
+            ffmpegPath: this.binaries.ffmpegPath,
+            args: command.args,
+            signal,
+            spawn: (binary, binaryArgs) => this.host.spawnProcess(binary, binaryArgs)
+          })
+          done.push(target)
+        } catch (singleError) {
+          this.log(
+            jobId,
+            'warn',
+            `Subtitle track ${target.streamIndex} could not be read, so its timing was not checked`,
+            describeFfmpegFailure(singleError)
+          )
+        }
+      }
+      return done
+    }
+  }
+
+  /** A small text file the host wrote, back as cues; empty when unreadable. */
+  private async readCues(path: string): Promise<Cue[]> {
+    try {
+      const stat = await this.host.stat(path)
+      if (!stat || stat.sizeBytes === 0) return []
+      const bytes = await this.host.readRange(path, 0, stat.sizeBytes)
+      return parseCues(decodeSubtitleBytes(bytes)).cues
+    } catch {
+      return []
+    }
+  }
+
+  private async writeText(path: string, text: string): Promise<void> {
+    await this.host.writeRange(path, 0, new TextEncoder().encode(text))
   }
 }
 

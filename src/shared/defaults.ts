@@ -21,7 +21,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
   targetContainer: 'mp4',
   remuxMkvToMp4: true,
-  extractTextSubtitles: true,
+  resyncSubtitlesOnRepair: false,
   dropImageSubtitlesOnMp4: true,
   ensureAacStereo: true,
   // On by default: HEVC direct plays on every current Apple device, Chromecast

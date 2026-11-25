@@ -25,7 +25,7 @@ export const NEW_RULE_TEMPLATE = `# A rule of your own. Lines starting with # ar
 #   name     what the rule is called
 #   when     a question about the file — several lines must all hold
 #   report   info, warning or blocker, then a title and an explanation
-#   fix      transcode-video, remux, drop-track or extract-subtitles
+#   fix      transcode-video, remux, drop-track or resync-subtitles
 #
 # Everything you can ask about is listed on the right.
 

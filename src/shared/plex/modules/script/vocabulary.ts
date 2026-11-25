@@ -194,7 +194,7 @@ export const OPERATORS_BY_LENGTH: readonly Operator[] = [...OPERATORS].sort(
  * What a rule may ask for
  * ------------------------------------------------------------------ */
 
-export type FixName = 'transcode-video' | 'remux' | 'drop-track' | 'extract-subtitles'
+export type FixName = 'transcode-video' | 'remux' | 'drop-track' | 'resync-subtitles'
 
 export interface FixOption {
   name: FixName
@@ -215,8 +215,8 @@ export const FIXES: readonly FixOption[] = [
     needs: ['audio', 'subtitle']
   },
   {
-    name: 'extract-subtitles',
-    describe: 'Write the matched subtitle tracks out as .srt files beside the video',
+    name: 'resync-subtitles',
+    describe: 'Measure the matched subtitle tracks against the audio and correct the timing in the file',
     needs: ['subtitle']
   }
 ]

@@ -3,7 +3,7 @@ import type { VolumeInfo } from './types.js'
 /**
  * The machine a file lives on, as far as reading it is concerned.
  *
- * Everything that inspects media — probing, box walking, sidecar discovery —
+ * Everything that inspects media — probing, box walking, reading a track out —
  * is written against this rather than against `node:fs`, which is what lets
  * the same code run over SSH as over a local disk. It is also the seam the
  * Tauri shell uses: there, these calls land in Rust instead of Node, and the

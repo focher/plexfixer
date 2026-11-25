@@ -17,7 +17,8 @@ export type InPlaceRefusal =
   | 'needs-reencode'
   | 'adds-audio'
   | 'drops-a-track'
-  | 'extracts-subtitles'
+  | 'resyncs-subtitles'
+  | 'converts-a-subtitle'
   | 'moves-the-index'
   | 'changes-the-codec-tag'
   | 'changes-the-level'
@@ -40,7 +41,8 @@ export const REFUSAL_REASON: Record<InPlaceRefusal, string> = {
   'needs-reencode': 'the video has to be re-encoded',
   'adds-audio': 'an AAC track is being added, which has to be encoded and written in',
   'drops-a-track': 'a track is being dropped, which means rewriting the file without it',
-  'extracts-subtitles': 'subtitles are being written out to sidecar files',
+  'resyncs-subtitles': 'a subtitle track is being retimed, which rewrites its cues',
+  'converts-a-subtitle': 'a subtitle track is being rewritten in another format',
   'moves-the-index': 'the MP4 index is at the end of the file and has to be moved to the front, which rewrites every byte',
   'changes-the-codec-tag': 'the video codec tag is changing, which is left to ffmpeg',
   'changes-a-forced-flag': 'a forced-subtitle flag is changing, which makes the header longer',
@@ -71,7 +73,7 @@ export function inPlaceVerdict(result: AnalysisResult): InPlaceVerdict {
   if (plan.strategy !== 'remux') return { refusal: plan.strategy === 'none' ? 'nothing-to-do' : 'not-a-remux' }
   if (plan.videoTranscode || plan.requiresTranscode) return { refusal: 'needs-reencode' }
   if (plan.addCompatibilityAudio) return { refusal: 'adds-audio' }
-  if (plan.extractSubtitles.length > 0) return { refusal: 'extracts-subtitles' }
+  if (plan.resyncSubtitles.length > 0) return { refusal: 'resyncs-subtitles' }
 
   // Moving the index to the front is a rewrite of the whole file by
   // definition; only a file that already has it there can be edited in place.
@@ -100,6 +102,10 @@ export function inPlaceVerdict(result: AnalysisResult): InPlaceVerdict {
   // ffmpeg stores `forced` by adding a box, which changes the file's length.
   if (changes.some((change) => change.setForced != null)) return { refusal: 'changes-a-forced-flag' }
   if (changes.some((change) => change.setTitle != null)) return { refusal: 'changes-a-track-name' }
+  // Rewriting a subtitle's cues or its format replaces the track's payload,
+  // which is the opposite of a fixed-width field edit.
+  if (changes.some((change) => change.resync)) return { refusal: 'resyncs-subtitles' }
+  if (changes.some((change) => change.convertSubtitleTo)) return { refusal: 'converts-a-subtitle' }
 
   const effective = changes.filter((change) => change.setLanguage != null || change.setDefault != null)
   if (effective.length === 0) return { refusal: 'nothing-to-do' }

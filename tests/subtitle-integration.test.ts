@@ -195,8 +195,8 @@ describe.runIf(enabled)('a subtitle measured against real audio', () => {
   }, 60_000)
 
   it('round trips a cue list through ffmpeg’s own SRT reader', async () => {
-    // The sidecars this app writes are read back by Plex, by ffmpeg, and by
-    // this parser. Writing one and having ffmpeg convert it proves the output
+    // The SRT this app writes is read back by ffmpeg, which muxes it into
+    // the film, and by this parser. Writing one and having ffmpeg convert it proves the output
     // is SRT as the rest of the world reads it, not merely as this reads it.
     const cues: Cue[] = [
       { startMs: 1000, endMs: 3000, text: 'Пример строки' },

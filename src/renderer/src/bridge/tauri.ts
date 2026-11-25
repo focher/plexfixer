@@ -37,6 +37,7 @@ import type {
   EnvironmentInfo,
   HostKeyFingerprint,
   Job,
+  MediaStream,
   ModeOverrides,
   OutputOverride,
   RemoteCheck,
@@ -59,10 +60,11 @@ import {
   findSubtitles,
   listTranslationModels,
   readEmbedded,
-  readSidecar,
+  readSubtitleFile,
   transcribe,
   translate,
-  writeSidecar,
+  resyncTracks,
+  writeSubtitleTracks,
   type Progress,
   type SubtitleNet,
   type Workshop
@@ -489,7 +491,8 @@ function buildApi() {
       fetch: (opId: string, candidate: SubtitleCandidate) =>
         subtitleRun(opId, (shop, report) => fetchSubtitle(shop, candidate, report)),
 
-      readSidecar: (opId: string, path: string) => subtitleRun(opId, (shop) => readSidecar(shop, path)),
+      /** An .srt the user picked, read as cues so it can go into the film. */
+      readFile: (opId: string, path: string) => subtitleRun(opId, (shop) => readSubtitleFile(shop, path)),
 
       readTrack: (opId: string, mediaPath: string, streamIndex: number) =>
         subtitleRun(opId, (shop, _report, signal) => readEmbedded(shop, mediaPath, streamIndex, signal)),
@@ -524,13 +527,55 @@ function buildApi() {
       /** Apply a timing report to a cue list; arithmetic, so no round trip. */
       retime: (cues: Cue[], report: SyncReport): Cue[] => applySync(cues, report),
 
+      /**
+       * Put a subtitle into the film: replacing a track, or adding one.
+       *
+       * The streams go across because the native side has no opinion about
+       * them — the renderer already holds the analysis, and the new track's
+       * ordinal is arithmetic on it.
+       */
       write: (
         opId: string,
         mediaPath: string,
         cues: Cue[],
         language: string,
-        options: { forced?: boolean; suffix?: string } = {}
-      ) => subtitleRun(opId, (shop) => writeSidecar(shop, mediaPath, cues, language, options)),
+        options: {
+          streams: MediaStream[]
+          replaceStreamIndex?: number
+          /** Both flags, because writing one of them clears the other. */
+          forced?: boolean
+          default?: boolean
+          title?: string
+        }
+      ) =>
+        subtitleRun(opId, (shop) =>
+          writeSubtitleTracks(
+            shop,
+            mediaPath,
+            [
+              {
+                cues,
+                language,
+                replaceStreamIndex: options.replaceStreamIndex,
+                forced: options.forced,
+                default: options.default,
+                title: options.title
+              }
+            ],
+            { streams: options.streams }
+          )
+        ),
+
+      /**
+       * Measure the chosen tracks against the audio and correct what is out of
+       * step, in one pass over the film.
+       *
+       * The whole of what was asked for: pick the tracks, press the button,
+       * and the film comes back with its subtitles in time. What comes back
+       * says what each verdict was and which tracks actually moved.
+       */
+      resync: (opId: string, result: AnalysisResult, streamIndexes: number[]) =>
+        subtitleRun(opId, (shop) => resyncTracks(shop, result, streamIndexes)),
 
       /** What the chosen translation endpoint has, for the model picker. */
       models: (opId: string) => subtitleRun(opId, (shop) => listTranslationModels(shop)),
@@ -753,6 +798,16 @@ function buildApi() {
       },
       pickDirectory: async (): Promise<string | undefined> => {
         const picked = await openDialog({ directory: true, multiple: false })
+        return picked ?? undefined
+      },
+      /** One subtitle file, to be put into a film as a track. */
+      pickSubtitle: async (): Promise<string | undefined> => {
+        const picked = await openDialog({
+          title: 'Choose a subtitle file',
+          multiple: false,
+          directory: false,
+          filters: [{ name: 'Subtitles', extensions: ['srt', 'vtt', 'ass', 'ssa'] }]
+        })
         return picked ?? undefined
       },
       pickBinary: async (name: 'ffmpeg' | 'ffprobe' | 'whisper' | 'whisper-model'): Promise<string | undefined> => {

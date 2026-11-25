@@ -88,7 +88,7 @@ export default function FileDetail({
   appVersion?: string
   /** Queue a repair that writes what was set on the metadata screen. */
   onApplyMetadata?: (path: string, edit: MetadataEdit) => void
-  /** A subtitle landed beside the film, so the row's sidecar list is stale. */
+  /** A subtitle track went into the film, so the row's streams are stale. */
   onSubtitleWritten?: (path: string) => void
 }): React.JSX.Element {
   const { file, plan, findings } = result
@@ -192,13 +192,6 @@ export default function FileDetail({
         Primary language: <strong>{languageName(result.primaryLanguage)}</strong>{' '}
         <span className="muted">({SOURCE_LABEL[result.primaryLanguageSource]})</span>
       </div>
-      {file.sidecarSubtitles.length > 0 ? (
-        <div className="muted" style={{ marginTop: 4 }}>
-          {file.sidecarSubtitles.length} sidecar subtitle file
-          {file.sidecarSubtitles.length === 1 ? '' : 's'} alongside this file
-        </div>
-      ) : null}
-
       <h4>Repair mode</h4>
       <div className="muted">
         Repairs in <strong>{MODE_LABEL[mode.mode]}</strong>

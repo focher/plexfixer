@@ -216,13 +216,30 @@ describe('analyzeFile — subtitles', () => {
     )
   })
 
-  it('extracts ASS tracks to sidecars rather than letting them burn in', () => {
+  it('rewrites ASS tracks as plain text rather than letting them burn in', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng' }), audio({ index: 1, language: 'eng' }), subtitle({ index: 2, codec: 'ass' })]),
       base
     )
     expect(codes(result)).toContain('subtitle-styled-ass')
-    expect(result.plan.extractSubtitles).toContainEqual({ streamIndex: 2, language: 'eng', forced: false })
+    // Headed for MP4, the container change is the conversion: tx3g is a text
+    // format, so the styling goes on its own and saying so again would put a
+    // line in the plan for something already happening.
+    expect(result.plan.targetContainer).toBe('mp4')
+    expect(result.plan.trackChanges).not.toContainEqual(
+      expect.objectContaining({ streamIndex: 2, convertSubtitleTo: 'srt' })
+    )
+
+    // Staying in Matroska, nothing else would strip it, so the track is
+    // rewritten as SRT — in the file. It is not pulled out into a second file
+    // beside the film; the dialogue survives and the styling does not.
+    const staying = analyzeFile(
+      mkv([video({ language: 'eng' }), audio({ index: 1, language: 'eng' }), subtitle({ index: 2, codec: 'ass' })]),
+      { ...base, targetContainer: 'mkv', remuxMkvToMp4: false }
+    )
+    expect(staying.plan.trackChanges).toContainEqual(
+      expect.objectContaining({ streamIndex: 2, convertSubtitleTo: 'srt' })
+    )
   })
 })
 

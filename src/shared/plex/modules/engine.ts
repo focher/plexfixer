@@ -110,7 +110,7 @@ export function analyzeWithModules(
     targetContainer: state.targetContainer,
     actions,
     trackChanges: [],
-    extractSubtitles: [],
+    resyncSubtitles: [],
     faststart: state.targetContainer === 'mp4',
     unresolved: [],
     requiresTranscode: false,
@@ -152,7 +152,7 @@ export function analyzeWithModules(
     const fragment = result.plan
     if (fragment?.videoTranscode) plan.videoTranscode = fragment.videoTranscode
     if (fragment?.addCompatibilityAudio) plan.addCompatibilityAudio = fragment.addCompatibilityAudio
-    if (fragment?.extractSubtitles?.length) plan.extractSubtitles.push(...fragment.extractSubtitles)
+    if (fragment?.resyncSubtitles?.length) plan.resyncSubtitles.push(...fragment.resyncSubtitles)
     if (fragment?.videoLevel !== undefined) plan.videoLevel = fragment.videoLevel
     if (fragment?.metadataTags) plan.metadataTags = { ...plan.metadataTags, ...fragment.metadataTags }
   }

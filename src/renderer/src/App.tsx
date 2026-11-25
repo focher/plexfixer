@@ -1146,7 +1146,7 @@ export default function App(): React.JSX.Element {
                     onRepair={(paths, mode) => void repair(paths, mode)}
                     onApplyMetadata={(path, edits) => void applyMetadata(path, edits)}
                     onSubtitleWritten={(path) => {
-                      // The sidecar list is part of the probe, so the row is
+                      // The track list is part of the probe, so the row is
                       // re-read rather than patched: the new file is beside the
                       // film and the row should say so.
                       const film = path.replace(/\.[^.]*\.srt$/, '')

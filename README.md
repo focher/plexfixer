@@ -158,7 +158,7 @@ fix transcode-video
 | `name` | What the rule is called. Required. |
 | `when` | One question about the file. Several `when` lines must *all* hold. At least one is required, so a rule cannot match the whole library. |
 | `report` | `info`, `warning` or `blocker`, then a title and an optional explanation, both in quotes. |
-| `fix` | `transcode-video`, `remux`, `drop-track` or `extract-subtitles`. |
+| `fix` | `transcode-video`, `remux`, `drop-track` or `resync-subtitles`. |
 | `summary` / `does` / `how` / `off` | Your own wording for the four explanations. Written for you from the rule if you leave them out. |
 
 Lines starting with `#` are ignored, and an indented line continues the one
@@ -245,17 +245,37 @@ four screens for the four things it does, because a person opening it has one
 subtitle in mind and everything they might want is the same sentence: get a
 subtitle from somewhere, see whether it fits, change it, save it.
 
-Nothing it does writes to the film. Every result is a sidecar `.srt` beside it,
-named the way Plex looks for one — `<film>.<language>[.forced].srt` — and a name
-already taken gets a number rather than being overwritten, because a file
-already there is somebody's. A sidecar is what you want anyway: every client
-renders text without the server doing any work, which is the whole reason this
-app prefers one to a track muxed into the file.
+Everything it does ends up **inside the film**. A subtitle living beside the
+film is a second file to copy, move and lose track of; a track in the film is
+the film. So writing one in means rewriting the file, which is done exactly the
+way a repair is done: copy to a working file, check what came out, then replace
+— with the original moved into the backup folder first when backups are on.
+Nothing is edited in place and nothing is removed until a readable file exists
+to put in its place.
 
-**Where a subtitle comes from.** Any text track already in the file, any sidecar
-already beside it, a search on OpenSubtitles, or the audio itself. Picture
-subtitles (PGS, VobSub) are listed and cannot be used — there is no text in them
-to compare, translate or write out.
+**Putting a track back in time.** The text subtitle tracks in the file are
+listed with a tick box each. Tick one or several, press **Resync to the audio**,
+and PlexFixer finds the speech in the audio, compares it with where each track
+says the lines are, and writes the corrected timings back into the film. The
+speech is found once however many tracks are ticked, and every corrected track
+goes back in a single rewrite — retiming three tracks the obvious way would copy
+a 40 GB film three times. A track that turns out to be in step is reported and
+left exactly as it was, because rewriting a subtitle that was already right is
+not a fix.
+
+Each track gets a verdict: **in step**, **offset** (a constant shift fixes it),
+**drifting** (the timeline needs stretching as well — usually a 23.976 vs 25 fps
+conversion), **does not match** (a subtitle for another cut of the film, which no
+shift will rescue) or **cannot tell**. Only offset and drifting are moved, and
+only when the measurement is confident: a shift applied on a guess is somebody's
+file damaged.
+
+**Where a subtitle comes from.** Any text track already in the file, an `.srt`
+picked from anywhere on disk, a search on OpenSubtitles, or the audio itself.
+Picture subtitles (PGS, VobSub) are listed and cannot be resynced — there is no
+text in them to compare against speech. Writing one from the audio produces a
+text track that can be. Anything loaded can be put into the film: over the track
+it came from, or as a new one.
 
 **Finding one.** Settings → Subtitles takes an OpenSubtitles API key, which is
 yours rather than one shipped with PlexFixer for the same reason as the TMDB
@@ -414,7 +434,7 @@ A repair uses the stored scan only if the file on disk has not changed since
 
 A "safe remux" never re-encodes video or discards audio. It rewraps the
 container, moves the MP4 index to the front, fixes codec tags, corrects language
-tags and default/forced flags, extracts text subtitles to `.srt` sidecars, and —
+tags and default/forced flags, rewrites styled subtitles as plain text, and —
 when nothing in the file is universally playable — **adds** an AAC track
 alongside the originals rather than replacing them. If MP4 cannot hold one of
 your audio tracks, the file stays MKV: losing a lossless track is worse than a
@@ -432,8 +452,7 @@ in beside the original before the original is moved or removed, so a move that
 fails leaves two files rather than none. Nothing that was not asked about is
 touched: if a different file already has the name the repair would take —
 repairing `Movie.mkv` beside an unrelated `Movie.mp4` — that file is left alone
-and the repaired one is written as `Movie (2).mp4`. A subtitle sidecar that
-already exists is kept, not overwritten.
+and the repaired one is written as `Movie (2).mp4`.
 
 ### Where the repaired file goes
 
@@ -544,7 +563,7 @@ again rather than renamed.
 
 The queue also shows *where* each repair has got to, as steps rather than a
 number: **Connecting → Copying 42% → Verifying → Moving**, with the index move
-and subtitle sidecars appearing when a file needs them. A percentage only
+and the subtitle timing check appearing when a file needs them. A percentage only
 exists while ffmpeg is copying; the steps either side of it are the ones that
 go quiet on a remote host or a slow link, and a bar sitting at 100% with no
 explanation is indistinguishable from a repair that has died. A job running on

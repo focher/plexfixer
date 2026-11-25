@@ -26,6 +26,13 @@ interface MappedStream {
   /** 'v' | 'a' | 's' | 't' — the ffmpeg stream-specifier letter. */
   specifier: 'v' | 'a' | 's' | 't'
   ordinal: number
+  /**
+   * True when this track's contents come from a file beside the input rather
+   * than from the input itself — a subtitle that was read out, retimed and is
+   * going back in. Everything else about it, its language and flags included,
+   * still comes from the original track.
+   */
+  replaced?: boolean
 }
 
 function specifierFor(stream: MediaStream): 'v' | 'a' | 's' | 't' | undefined {
@@ -161,6 +168,15 @@ export interface BuildCommandOptions {
   settings: AppSettings
   caps?: EncoderCapabilities
   outputPath: string
+  /**
+   * Subtitle tracks to take from a file instead of from the input.
+   *
+   * Each is an `.srt` written earlier in the run — the track read out of the
+   * film, measured against the audio and shifted. The original track is still
+   * what the plan reasons about; only its cues come from somewhere else, which
+   * is why the stream index here is the *source* index, not an output ordinal.
+   */
+  retimedSubtitles?: readonly { streamIndex: number; path: string }[]
 }
 
 export interface BuiltCommand {
@@ -181,7 +197,17 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
     ? ['-init_hw_device', 'vulkan=plexfixer', '-filter_hw_device', 'plexfixer']
     : []
 
+  // Every retimed subtitle is its own input, so each can be mapped in place of
+  // the track it replaces. They come first, before any -map, because ffmpeg
+  // numbers inputs in the order it is given them and a map that names an input
+  // ffmpeg has not read yet is an error rather than a forward reference.
+  const retimed = new Map((options.retimedSubtitles ?? []).map((entry) => [entry.streamIndex, entry.path]))
+  const inputOrdinal = new Map<number, number>()
   const args: string[] = [...vulkan, '-i', file.path]
+  for (const [streamIndex, path] of retimed) {
+    inputOrdinal.set(streamIndex, inputOrdinal.size + 1)
+    args.push('-i', path)
+  }
   const mapped: MappedStream[] = []
   const counters: Record<'v' | 'a' | 's' | 't', number> = { v: 0, a: 0, s: 0, t: 0 }
 
@@ -190,8 +216,11 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
   const keep = (stream: MediaStream): void => {
     const specifier = specifierFor(stream)
     if (!specifier) return
-    args.push('-map', `0:${stream.index}`)
-    mapped.push({ source: stream, specifier, ordinal: counters[specifier]++ })
+    const replacement = inputOrdinal.get(stream.index)
+    // The retimed file holds exactly one stream, so `:0` rather than the index
+    // it had in the film.
+    args.push('-map', replacement === undefined ? `0:${stream.index}` : `${replacement}:0`)
+    mapped.push({ source: stream, specifier, ordinal: counters[specifier]++, replaced: replacement !== undefined })
   }
 
   const dropped = new Set(plan.trackChanges.filter((c) => c.drop).map((c) => c.streamIndex))
@@ -359,19 +388,24 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
     // ffmpeg gives up. Late, too: the error rate only passes its threshold
     // near the end, so the whole copy is thrown away after running.
     //
-    // Copying leaves those bytes alone. Only the tracks that are in some
-    // other format are converted, because only those have to be.
-    const subtitles = mapped.filter((entry) => entry.specifier === 's')
-    const converting = toMp4
-      ? subtitles.filter((entry) => !isMp4NativeSubtitle(entry.source.codec))
-      : []
+    // Copying leaves those bytes alone, so copy is the default and every
+    // track that genuinely has to change format says so for itself.
+    args.push('-c:s', 'copy')
 
-    if (converting.length === subtitles.length && converting.length > 0) {
-      args.push('-c:s', 'mov_text')
-    } else {
-      args.push('-c:s', 'copy')
-      // A mixed file converts per track; the copy above covers the rest.
-      for (const entry of converting) args.push(`-c:s:${entry.ordinal}`, 'mov_text')
+    for (const entry of mapped) {
+      if (entry.specifier !== 's') continue
+      const asked = changeFor(plan, entry.source.index)?.convertSubtitleTo
+      // A retimed track arrives as SRT in a file of its own, whatever the
+      // original was, so what it needs is decided by where it is going.
+      const incoming = entry.replaced ? 'subrip' : entry.source.codec
+      const codec = toMp4
+        ? isMp4NativeSubtitle(incoming)
+          ? undefined
+          : 'mov_text'
+        : asked && asked !== 'mov_text' && asked !== incoming
+          ? asked
+          : undefined
+      if (codec) args.push(`-c:s:${entry.ordinal}`, codec)
     }
   }
   if (counters.t > 0) args.push('-c:t', 'copy')
@@ -486,84 +520,19 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
  * ------------------------------------------------------------------ */
 
 /**
- * A track's language as it may appear in a file name.
+ * Read subtitle tracks out of a file so their cues can be measured.
  *
- * The tag is read out of the file, and a file can say anything: an unknown tag
- * is kept as written everywhere else so that nothing is silently destroyed,
- * which here would put it straight into a path. `x/../../../tmp/evil` as a
- * language named a sidecar outside the folder the film is in. Plex only reads
- * a language code in this position anyway, so anything that is not two to
- * eight letters is written as undetermined.
- */
-export function sidecarLanguage(language: string): string {
-  return /^[a-z]{2,8}$/.test(language) ? language : 'und'
-}
-
-/**
- * Build one ffmpeg invocation per subtitle track to extract as a sidecar.
+ * Nothing here lands beside the film: these are working files, written into a
+ * scratch directory, read back as text, and replaced by the retimed versions
+ * that go into the repair. They are SRT because SRT is the format the cue
+ * parser and the retiming code in `@shared/subtitles` already speak.
  *
- * Separate invocations rather than one multi-output command: a single bad
- * track then fails on its own instead of taking the others with it.
+ * One invocation for however many tracks, because ffmpeg reads an input once
+ * and demuxes it to as many outputs as it is given — running it per track
+ * meant reading a 4.6 GB film three times to recover a few hundred kilobytes
+ * of text.
  */
-/**
- * Where each extracted subtitle track is written.
- *
- * Plex matches a sidecar to a film by its name — `<film>.<lang>[.forced].srt` —
- * so the names are the whole of how these are found, and two tracks in the same
- * language have to be told apart without breaking that pattern.
- */
-export function sidecarTargets(
-  result: AnalysisResult,
-  outputStem: string
-): { streamIndex: number; outputPath: string }[] {
-  const targets: { streamIndex: number; outputPath: string }[] = []
-  const used = new Set<string>()
-
-  for (const entry of result.plan.extractSubtitles) {
-    const parts = [sidecarLanguage(entry.language)]
-    if (entry.forced) parts.push('forced')
-    let suffix = parts.join('.')
-    // Plex matches sidecars by `<stem>.<lang>[.forced].srt`; keep them unique.
-    let candidate = `${outputStem}.${suffix}.srt`
-    let counter = 2
-    while (used.has(candidate)) {
-      suffix = `${parts.join('.')}.${counter++}`
-      candidate = `${outputStem}.${suffix}.srt`
-    }
-    used.add(candidate)
-    targets.push({ streamIndex: entry.streamIndex, outputPath: candidate })
-  }
-
-  return targets
-}
-
-/**
- * One ffmpeg run per sidecar.
- *
- * Kept for the case where the single run below has failed: one unconvertible
- * track should not take the rest with it, and finding out which one it was
- * means trying them separately.
- */
-export function buildSubtitleExtractCommands(
-  result: AnalysisResult,
-  outputStem: string,
-  sourcePath: string = result.file.path
-): { args: string[]; outputPath: string }[] {
-  return sidecarTargets(result, outputStem).map((target) => ({
-    outputPath: target.outputPath,
-    args: ['-i', sourcePath, '-map', `0:${target.streamIndex}`, '-c:s', 'srt', '-y', target.outputPath]
-  }))
-}
-
-/**
- * One ffmpeg run that writes every sidecar.
- *
- * ffmpeg reads an input once and can demux it to as many outputs as it is
- * given. Running it once per track meant reading the whole film again for each
- * one — three tracks on a 4.6 GB film is fourteen gigabytes of reading to
- * recover a few hundred kilobytes of text.
- */
-export function buildSubtitleExtractCommand(
+export function buildSubtitleReadCommand(
   sourcePath: string,
   targets: readonly { streamIndex: number; outputPath: string }[]
 ): string[] {
@@ -571,5 +540,110 @@ export function buildSubtitleExtractCommand(
   for (const target of targets) {
     args.push('-map', `0:${target.streamIndex}`, '-c:s', 'srt', '-y', target.outputPath)
   }
+  return args
+}
+
+/**
+ * One ffmpeg run per track, for when the single run above has failed.
+ *
+ * One unconvertible track should not take the rest with it, and finding out
+ * which one it was means trying them separately.
+ */
+export function buildSubtitleReadCommands(
+  sourcePath: string,
+  targets: readonly { streamIndex: number; outputPath: string }[]
+): { args: string[]; outputPath: string }[] {
+  return targets.map((target) => ({
+    outputPath: target.outputPath,
+    args: ['-i', sourcePath, '-map', `0:${target.streamIndex}`, '-c:s', 'srt', '-y', target.outputPath]
+  }))
+}
+
+/* ------------------------------------------------------------------ *
+ * Putting a subtitle back into the film
+ * ------------------------------------------------------------------ */
+
+/** One subtitle going into the film. */
+export interface SubtitleMuxTrack {
+  /** The `.srt` holding the cues. */
+  subtitlePath: string
+  /** The track being rewritten; left out, this one is added instead. */
+  replaceStreamIndex?: number
+  language: string
+  /**
+   * The flags the track should carry.
+   *
+   * Both, because `-disposition` sets the whole set rather than adding to it:
+   * an incoming `.srt` carries no flags of its own, so a replacement written
+   * with `forced` alone would quietly clear `default` off the track somebody
+   * had chosen as their subtitle. Leaving both undefined writes no disposition
+   * at all, which is right for a track being added and wrong for one being
+   * replaced — so a replacement should always state them, even as false.
+   */
+  forced?: boolean
+  default?: boolean
+  title?: string
+}
+
+export interface SubtitleMuxOptions {
+  mediaPath: string
+  outputPath: string
+  container: 'mp4' | 'mkv'
+  tracks: readonly SubtitleMuxTrack[]
+  /** How many subtitle tracks the film has now, before any of this. */
+  subtitleCount: number
+}
+
+/**
+ * One ffmpeg run that copies the film and writes subtitle tracks into it.
+ *
+ * `-map 0` takes everything and a negative map leaves out each track being
+ * replaced — which is how a replacement is expressed to ffmpeg: there is no
+ * "overwrite this stream", only "leave that one out and bring this one in".
+ * Everything is a stream copy except the incoming subtitles, which are
+ * reformatted only where the container demands it, so however many tracks are
+ * being rewritten this costs one read and one write of the film and no
+ * encoding at all. Retiming three tracks the obvious way — a run each — would
+ * rewrite a 40 GB film three times.
+ *
+ * The new tracks go last, in the order given, so the output ordinals of
+ * whatever stays do not move: that is what makes each new track's ordinal
+ * something this function can work out rather than guess. Getting it wrong
+ * writes one track's language onto another, which is the kind of quiet damage
+ * this app exists to undo, so the count of what is already there is asked for
+ * rather than inferred.
+ */
+export function buildSubtitleMuxCommand(options: SubtitleMuxOptions): string[] {
+  const { container, tracks, subtitleCount } = options
+  const args = ['-i', options.mediaPath]
+  for (const track of tracks) args.push('-i', track.subtitlePath)
+
+  args.push('-map', '0')
+  for (const track of tracks) {
+    if (track.replaceStreamIndex !== undefined) args.push('-map', `-0:${track.replaceStreamIndex}`)
+  }
+  // Input 0 is the film, so the first subtitle file is input 1.
+  tracks.forEach((_, position) => args.push('-map', `${position + 1}:0`))
+
+  args.push('-c', 'copy')
+  // MP4 holds tx3g and nothing else; Matroska takes the SRT as it stands.
+  if (container === 'mp4') args.push('-c:s', 'mov_text')
+
+  const replaced = tracks.filter((track) => track.replaceStreamIndex !== undefined).length
+  let ordinal = Math.max(0, subtitleCount - replaced)
+  for (const track of tracks) {
+    args.push(`-metadata:s:s:${ordinal}`, `language=${track.language}`)
+    if (track.title !== undefined) args.push(`-metadata:s:s:${ordinal}`, `title=${track.title}`)
+
+    if (track.forced !== undefined || track.default !== undefined) {
+      const flags = [track.default ? 'default' : '', track.forced ? 'forced' : ''].filter(Boolean)
+      // `0` is how ffmpeg is told "no flags"; omitting the option would leave
+      // whatever the muxer defaults to instead.
+      args.push(`-disposition:s:${ordinal}`, flags.length > 0 ? flags.join('+') : '0')
+    }
+    ordinal++
+  }
+
+  args.push(options.outputPath)
   return args
 }

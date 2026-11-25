@@ -54,7 +54,8 @@ import { dropUnstorableSubtitles } from './repairs/drop-unstorable-subtitles.js'
 import { dropExtraVideo } from './repairs/drop-extra-video.js'
 import { customRequests } from './repairs/custom-requests.js'
 import { addCompatibilityAudio } from './repairs/add-compatibility-audio.js'
-import { extractSubtitles } from './repairs/extract-subtitles.js'
+import { convertStyledSubtitles } from './repairs/convert-styled-subtitles.js'
+import { resyncSubtitles } from './repairs/resync-subtitles.js'
 import { fixTrackMetadata } from './repairs/fix-track-metadata.js'
 import { manualMetadata } from './repairs/manual-metadata.js'
 import { dropCoverArt } from './repairs/drop-cover-art.js'
@@ -121,7 +122,8 @@ export const REPAIR_MODULES: readonly RepairModule[] = [
   dropExtraVideo,
   customRequests,
   addCompatibilityAudio,
-  extractSubtitles,
+  convertStyledSubtitles,
+  resyncSubtitles,
   fixTrackMetadata,
   // Last of the repairs that change the plan: a person's own choice beats
   // every rule that had a view about the same track.

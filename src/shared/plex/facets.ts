@@ -30,7 +30,7 @@ export type ResultFacet =
   | 'subtitle-flags'
   | 'languages'
   | 'drop-tracks'
-  | 'extract-subtitles'
+  | 'resync-subtitles'
   | 'add-aac'
   | 'transcode-video'
   | 'blocked'
@@ -51,7 +51,7 @@ export const FACET_ORDER: ResultFacet[] = [
   'subtitle-flags',
   'languages',
   'drop-tracks',
-  'extract-subtitles',
+  'resync-subtitles',
   'add-aac',
   'transcode-video'
 ]
@@ -103,9 +103,9 @@ export const FACET_INFO: Record<ResultFacet, FacetDescription> = {
     label: 'Drops a track',
     hint: 'A track the target container cannot carry is left out of the output.'
   },
-  'extract-subtitles': {
+  'resync-subtitles': {
     label: 'Extracts subtitles',
-    hint: 'Subtitles are written out as .srt sidecars beside the file.'
+    hint: 'Subtitle timing is measured against the audio and corrected in the file.'
   },
   'add-aac': {
     label: 'Adds AAC track',
@@ -158,7 +158,7 @@ export function facetsFor(result: AnalysisResult): Set<ResultFacet> {
     }
   }
 
-  if (plan.extractSubtitles.length > 0) facets.add('extract-subtitles')
+  if (plan.resyncSubtitles.length > 0) facets.add('resync-subtitles')
   if (plan.addCompatibilityAudio) facets.add('add-aac')
   if (plan.videoTranscode || plan.requiresTranscode) facets.add('transcode-video')
 

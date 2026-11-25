@@ -16,11 +16,12 @@
  * does not, and saying that plainly is better than a feature that half works.
  */
 
-import type { AnalysisResult, AppSettings, AudioStream } from '../types.js'
+import type { AnalysisResult, AppSettings, AudioStream, MediaStream } from '../types.js'
 import type { RepairHost } from '../host.js'
 import { normalizeLanguage, UNDEFINED_LANGUAGE } from '../languages.js'
-import { sidecarLanguage } from '../plex/command.js'
-import { uniquePath } from '../plex/output.js'
+import { buildSubtitleMuxCommand } from '../plex/command.js'
+import { runFfmpeg } from '../plex/ffmpeg-run.js'
+import { discardTemporary, promoteOutput, temporaryPathFor } from '../plex/output.js'
 import { listenForSpeech } from './audio.js'
 import {
   ASR_SERVICES,
@@ -264,7 +265,7 @@ export async function fetchSubtitle(
 }
 
 /**
- * Read a subtitle that is already here — a sidecar file, or a track inside the
+ * Read a subtitle that is already here — a file on disk, or a track inside the
  * film.
  *
  * An embedded track comes out through ffmpeg rather than by parsing the
@@ -299,8 +300,13 @@ export async function readEmbedded(
   return parsed.cues.length > 0 ? parsed.cues : { problem: 'That track came out empty.' }
 }
 
-/** Read a subtitle file sitting beside the film. */
-export async function readSidecar(shop: Workshop, path: string): Promise<Cue[] | ProviderProblem> {
+/**
+ * Read a subtitle file from a path the user picked.
+ *
+ * The one place a file outside the film still matters: an `.srt` somebody has
+ * on disk, which they want put into the film as a track.
+ */
+export async function readSubtitleFile(shop: Workshop, path: string): Promise<Cue[] | ProviderProblem> {
   const text = await readWholeFile(shop, path)
   if (text === undefined) return { problem: `${shop.host.paths.basename(path)} could not be read.` }
   const parsed = parseCues(text)
@@ -377,33 +383,202 @@ export { applySync }
  * Writing one out
  * ------------------------------------------------------------------ */
 
+/** One subtitle to put into the film. */
+export interface TrackToWrite {
+  cues: readonly Cue[]
+  language: string
+  /** The track being rewritten; left out, this one is added instead. */
+  replaceStreamIndex?: number
+  /** Both flags, since writing one of them clears the other. */
+  forced?: boolean
+  default?: boolean
+  title?: string
+}
+
 /**
- * Write a subtitle beside the film, under the name Plex looks for.
+ * Put subtitles into the film — replacing tracks that are there, adding new
+ * ones, or both, in a single pass.
  *
- * `<film>.<language>[.forced].srt`, with a number appended if that name is
- * taken — never overwriting, because a file already there is somebody's:
- * downloaded, corrected by hand, or written by an earlier run. That is the same
- * rule the repair runner follows for the sidecars it extracts.
+ * The one thing in this file that rewrites somebody's media, so it goes the
+ * way a repair goes and for the same reasons: the cues are written to working
+ * `.srt` files, ffmpeg copies every stream of the film and takes these tracks
+ * from those files, what came out is checked before it is allowed to replace
+ * anything, and the original is moved into the backup folder first when
+ * backups are on. Nothing is edited in place; nothing is removed until a
+ * readable file exists to put in its place.
+ *
+ * Every track goes in one run. Doing them one at a time would rewrite the film
+ * once per subtitle, which on a feature is minutes of copying for kilobytes of
+ * text.
  */
-export async function writeSidecar(
+export async function writeSubtitleTracks(
   shop: Workshop,
   mediaPath: string,
-  cues: readonly Cue[],
-  language: string,
-  options: { forced?: boolean; suffix?: string } = {}
-): Promise<string> {
+  tracks: readonly TrackToWrite[],
+  options: { streams: readonly MediaStream[]; signal?: AbortSignal; report?: Report }
+): Promise<{ path: string } | ProviderProblem> {
+  const report = options.report ?? noReport
   const paths = shop.host.paths
-  const stem = paths.join(paths.dirname(mediaPath), paths.basename(mediaPath, paths.extname(mediaPath)))
-  const parts = [sidecarLanguage(normalizeLanguage(language))]
-  if (options.suffix) parts.push(options.suffix)
-  if (options.forced) parts.push('forced')
+  const host = shop.host
 
-  const target = await uniquePath(`${stem}.${parts.join('.')}.srt`, shop.host)
-  const bytes = new TextEncoder().encode(formatSrt(cues))
-  // Through writeRange rather than a copy: the host's write side is what works
-  // both here and at the far end of an SSH connection.
-  await shop.host.writeRange(target, 0, bytes)
-  return target
+  const usable = tracks.filter((track) => track.cues.length > 0)
+  if (usable.length === 0) return { problem: 'There are no lines to write.' }
+
+  const container = paths.extname(mediaPath).slice(1).toLowerCase()
+  const stem = paths.basename(mediaPath, paths.extname(mediaPath))
+  const stamp = Date.now()
+  const working = usable.map((_, position) =>
+    paths.join(paths.dirname(mediaPath), `.plexfixer-${stem}-${stamp}-${position}.srt`)
+  )
+  const temporary = temporaryPathFor(mediaPath, host)
+
+  try {
+    report({ step: 'Writing the lines out' })
+    for (let position = 0; position < usable.length; position++) {
+      await host.writeRange(working[position], 0, new TextEncoder().encode(formatSrt(usable[position].cues)))
+    }
+
+    report({
+      step: usable.length === 1 ? 'Putting the track into the file' : `Putting ${usable.length} tracks into the file`
+    })
+    const args = buildSubtitleMuxCommand({
+      mediaPath,
+      outputPath: temporary,
+      container: container === 'mp4' || container === 'm4v' ? 'mp4' : 'mkv',
+      subtitleCount: options.streams.filter((stream) => stream.kind === 'subtitle').length,
+      tracks: usable.map((track, position) => ({
+        subtitlePath: working[position],
+        replaceStreamIndex: track.replaceStreamIndex,
+        language: normalizeLanguage(track.language),
+        forced: track.forced,
+        default: track.default,
+        title: track.title
+      }))
+    })
+
+    await runFfmpeg({
+      ffmpegPath: shop.ffmpegPath,
+      args,
+      signal: options.signal,
+      spawn: (command, commandArgs) => host.spawnProcess(command, commandArgs)
+    })
+
+    // The same gate a repair goes through: a file that came out wrong never
+    // replaces one that was merely out of step.
+    report({ step: 'Checking what came out' })
+    const written = await host.stat(temporary)
+    if (!written || written.sizeBytes === 0) {
+      await discardTemporary(temporary, host).catch(() => undefined)
+      return { problem: 'ffmpeg finished but wrote nothing, so the film was left alone.' }
+    }
+
+    report({ step: 'Putting it in place' })
+    const promoted = await promoteOutput(temporary, mediaPath, mediaPath, shop.settings, host)
+    return { path: promoted.finalPath }
+  } catch (error) {
+    await discardTemporary(temporary, host).catch(() => undefined)
+    return {
+      problem:
+        error instanceof Error
+          ? `The film was left alone: ${error.message}`
+          : 'The film was left alone; the tracks could not be written into it.'
+    }
+  } finally {
+    for (const path of working) await host.remove(path).catch(() => undefined)
+  }
+}
+
+/** What happened to one track in a resync. */
+export interface TrackResync {
+  streamIndex: number
+  report: SyncReport
+  /** True when the cues were actually moved and written back. */
+  moved: boolean
+}
+
+/**
+ * Measure several embedded subtitle tracks against the audio and correct the
+ * ones that are out of step, in one pass over the film.
+ *
+ * The expensive half is finding the speech, and it is the same speech for
+ * every track, so it is measured once and compared against each. Only the
+ * tracks that actually moved are written back; a track already in step is
+ * reported and left exactly as it was, because rewriting a subtitle that was
+ * right is not a fix.
+ *
+ * A verdict of `mismatched` is a subtitle for another cut of the film and
+ * `unknown` means the measurement could not be made. Neither is moved: a
+ * shift applied on either would be a guess made with somebody's file.
+ */
+export async function resyncTracks(
+  shop: Workshop,
+  result: AnalysisResult,
+  streamIndexes: readonly number[],
+  options: { signal?: AbortSignal; report?: Report } = {}
+): Promise<{ path?: string; tracks: TrackResync[] } | ProviderProblem> {
+  const report = options.report ?? noReport
+  if (streamIndexes.length === 0) return { problem: 'No subtitle tracks were chosen.' }
+
+  const read: { streamIndex: number; cues: Cue[] }[] = []
+  for (const [position, streamIndex] of streamIndexes.entries()) {
+    report({
+      step: `Reading track ${streamIndex}`,
+      fraction: streamIndexes.length > 1 ? position / streamIndexes.length : undefined
+    })
+    const cues = await readEmbedded(shop, result.file.path, streamIndex, options.signal)
+    if (isProblem(cues)) continue
+    read.push({ streamIndex, cues })
+  }
+  if (read.length === 0) return { problem: 'None of the chosen tracks could be read as text.' }
+
+  // The first check measures the speech; the rest reuse it. Listening again
+  // per track would read the whole audio once per subtitle.
+  const first = await checkTiming(shop, result, read[0].cues, { signal: options.signal, report })
+  if (isProblem(first)) return first
+
+  const tracks: TrackResync[] = [{ streamIndex: read[0].streamIndex, report: first.report, moved: false }]
+  for (const entry of read.slice(1)) {
+    report({ step: `Comparing track ${entry.streamIndex} against the speech` })
+    const checked = await checkTiming(shop, result, entry.cues, {
+      speech: first.speech,
+      signal: options.signal,
+      report
+    })
+    if (isProblem(checked)) continue
+    tracks.push({ streamIndex: entry.streamIndex, report: checked.report, moved: false })
+  }
+
+  const byIndex = new Map(read.map((entry) => [entry.streamIndex, entry.cues]))
+  const toWrite: TrackToWrite[] = []
+  for (const track of tracks) {
+    const movable = track.report.state === 'offset' || track.report.state === 'drifting'
+    if (!movable || track.report.confidence === 'poor') continue
+    const cues = byIndex.get(track.streamIndex)
+    const source = result.file.streams.find((stream) => stream.index === track.streamIndex)
+    if (!cues || !source) continue
+    track.moved = true
+    // Both flags come across from the track being replaced. A resync is meant
+    // to change the timing and nothing else: a subtitle that was somebody's
+    // default must still be their default afterwards.
+    toWrite.push({
+      cues: applySync(cues, track.report),
+      language: normalizeLanguage(source.language),
+      replaceStreamIndex: track.streamIndex,
+      forced: source.kind === 'subtitle' ? source.disposition.forced : false,
+      default: source.kind === 'subtitle' ? source.disposition.default : false,
+      title: source.title
+    })
+  }
+
+  if (toWrite.length === 0) return { tracks }
+
+  const written = await writeSubtitleTracks(shop, result.file.path, toWrite, {
+    streams: result.file.streams,
+    signal: options.signal,
+    report
+  })
+  if (isProblem(written)) return written
+  return { path: written.path, tracks }
 }
 
 /* ------------------------------------------------------------------ *

@@ -16,7 +16,7 @@ export function isIndexMoveOnly(result: AnalysisResult): boolean {
   if (file.container !== 'mp4' || plan.targetContainer !== 'mp4') return false
   if (plan.strategy !== 'remux' || file.faststart !== false) return false
   if (plan.videoTranscode || plan.requiresTranscode) return false
-  if (plan.addCompatibilityAudio || plan.extractSubtitles.length > 0) return false
+  if (plan.addCompatibilityAudio || plan.resyncSubtitles.length > 0) return false
   if (plan.videoLevel != null) return false
   if (plan.trackChanges.length > 0) return false
 

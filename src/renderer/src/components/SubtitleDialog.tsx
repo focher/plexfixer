@@ -9,10 +9,15 @@
  * out of the file and writing one from the audio are three answers to the same
  * first question rather than three separate features.
  *
- * Nothing it does writes to the film. Every result is a sidecar `.srt` beside
- * it, which is what Plex prefers anyway: every client renders text without the
- * server doing any work, and a file that already direct plays is not worth
- * rewriting to put a subtitle inside it.
+ * Everything it does ends up **inside the film**. A subtitle that lives beside
+ * the film is a second file to copy, move and lose; a track in the file is the
+ * film. So the tracks already there can be picked — several at once — and put
+ * back in time with one button, and anything found, written or translated goes
+ * in as a track rather than next to one.
+ *
+ * Writing into the film means rewriting it, which is done exactly the way a
+ * repair is: copy to a working file, check what came out, then replace, with
+ * the original moved into the backup folder first when backups are on.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -38,8 +43,15 @@ interface Loaded {
   timing?: SyncReport
   /** True once the timing report has been applied to the cues above. */
   retimed?: boolean
-  /** Set when this is a translation, so the saved file is named for it. */
+  /** Set when this is a translation, so the written track is named for it. */
   translatedFrom?: string
+  /**
+   * The stream index this came out of, when it came out of this film.
+   *
+   * It is what makes "put it back" mean replacing the track rather than
+   * growing a second copy of it beside the first.
+   */
+  replaces?: number
 }
 
 type Busy = { opId: string; what: string; step: string; fraction?: number }
@@ -65,6 +77,15 @@ const CONFIDENCE_BADGE: Record<SyncReport['confidence'], string> = {
   poor: 'fail'
 }
 
+/** The verdict in one word, for a badge. */
+const STATE_WORD: Record<SyncReport['state'], string> = {
+  'in-sync': 'in step',
+  offset: 'offset',
+  drifting: 'drifting',
+  mismatched: 'does not match',
+  unknown: 'cannot tell'
+}
+
 const STATE_BADGE: Record<SyncReport['state'], string> = {
   'in-sync': 'ok',
   offset: 'warn',
@@ -82,13 +103,17 @@ export default function SubtitleDialog({
   result: AnalysisResult
   settings: AppSettings
   onClose: () => void
-  /** A sidecar landed on disk, so the row should be re-read. */
+  /** The film was rewritten, so the row should be re-read. */
   onWrote: (path: string) => void
 }): React.JSX.Element {
   const { file } = result
   const api = window.plexfixer.subtitles
 
   const [loaded, setLoaded] = useState<Loaded | undefined>()
+  /** Tracks ticked for a resync, by stream index. */
+  const [picked, setPicked] = useState<Set<number>>(new Set())
+  /** What the last measurement said about each track. */
+  const [verdicts, setVerdicts] = useState<Map<number, SyncReport>>(new Map())
   const [busy, setBusy] = useState<Busy | undefined>()
   const [problem, setProblem] = useState<{ problem: string; hint?: string } | undefined>()
   const [note, setNote] = useState<string | undefined>()
@@ -163,24 +188,79 @@ export default function SubtitleDialog({
           cues,
           language: normalizeLanguage(track.language),
           origin: `Track ${track.index} in the file${track.title ? ` — ${track.title}` : ''}`,
-          forced: track.disposition.forced
+          forced: track.disposition.forced,
+          replaces: track.index
         })
         setCandidates(undefined)
       }
     })()
   }
 
-  const loadSidecar = (path: string): void => {
+  /** An .srt from anywhere on disk, to be added to the film as a track. */
+  const addFromFile = (): void => {
     void (async () => {
-      const cues = await run('Reading the file beside it', (opId) => api.readSidecar(opId, path))
+      const path = await window.plexfixer.dialog.pickSubtitle()
+      if (!path) return
+      const cues = await run('Reading the file', (opId) => api.readFile(opId, path))
       if (cues) {
-        // The language is in the name — `film.ru.srt` — which is how Plex finds
-        // it, so it is the best guess available.
-        const parts = path.split(/[\\/]/).pop()?.split('.') ?? []
+        const name = path.split(/[\\/]/).pop() ?? path
+        // A language in the name — `film.ru.srt`, `subs.fr.srt` — is a better
+        // guess than undetermined, and the picker below can correct it.
+        const parts = name.split('.')
         const tag = parts.length >= 3 ? normalizeLanguage(parts[parts.length - 2]) : 'und'
-        setLoaded({ cues, language: tag, origin: `${parts.join('.')}, beside the film` })
+        setLoaded({ cues, language: tag, origin: `${name}, from disk` })
         setCandidates(undefined)
       }
+    })()
+  }
+
+  /* --- the tracks already in the film --- */
+
+  const toggle = (index: number): void => {
+    setPicked((current) => {
+      const next = new Set(current)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+  }
+
+  /**
+   * Measure the ticked tracks against the audio and put the film back in time.
+   *
+   * One pass: the speech is found once and every track compared against it,
+   * and whatever moved goes back in a single rewrite of the film.
+   */
+  const resyncPicked = (): void => {
+    const indexes = [...picked].sort((a, b) => a - b)
+    if (indexes.length === 0) return
+    void (async () => {
+      const outcome = await run(
+        indexes.length === 1 ? 'Resyncing the track' : `Resyncing ${indexes.length} tracks`,
+        (opId) => api.resync(opId, result, indexes)
+      )
+      if (!outcome) return
+
+      setVerdicts((current) => {
+        const next = new Map(current)
+        for (const track of outcome.tracks) next.set(track.streamIndex, track.report)
+        return next
+      })
+
+      const moved = outcome.tracks.filter((track) => track.moved)
+      if (moved.length === 0) {
+        setNote(
+          outcome.tracks.every((track) => track.report.state === 'in-sync')
+            ? 'Every track measured is already in step with the audio, so the film was left alone.'
+            : 'Nothing was moved — what each track measured is beside it below.'
+        )
+        return
+      }
+      setNote(
+        `${moved.length} track${moved.length === 1 ? '' : 's'} retimed and written into the film.` +
+          (settings.keepBackups ? ' The original is in the backup folder.' : '')
+      )
+      if (outcome.path) onWrote(outcome.path)
     })()
   }
 
@@ -237,7 +317,7 @@ export default function SubtitleDialog({
       if (!current?.timing) return current
       return { ...current, cues: api.retime(current.cues, current.timing), retimed: true }
     })
-    setNote('The lines have been moved. Nothing is on disk until you save.')
+    setNote('The lines have been moved. The film is untouched until you put the track into it.')
   }
 
   const translateIt = (): void => {
@@ -267,20 +347,43 @@ export default function SubtitleDialog({
     })()
   }
 
+  /**
+   * Put what is loaded into the film — over the track it came from, or as a new
+   * one.
+   *
+   * Replacing is the right default for a track that was read out of this film
+   * and corrected: two copies of the same subtitle, one of them wrong, is
+   * worse than one that is right. Anything from anywhere else is added, since
+   * there is nothing of its own in the file to replace.
+   */
   const save = (): void => {
     if (!loaded) return
     void (async () => {
-      const path = await run('Writing it beside the film', (opId) =>
-        api.write(opId, file.path, loaded.cues, loaded.language, {
-          forced: loaded.forced,
-          // A translation of a subtitle that is already in this language would
-          // otherwise fight the original for the same name.
-          suffix: loaded.translatedFrom ? 'plexfixer' : undefined
-        })
+      const replacing = loaded.replaces !== undefined && !loaded.translatedFrom
+      const replacedTrack = textTracks.find((track) => track.index === loaded.replaces)
+      const written = await run(
+        replacing ? 'Replacing the track in the film' : 'Adding the track to the film',
+        (opId) =>
+          api.write(opId, file.path, loaded.cues, loaded.language, {
+            streams: file.streams,
+            replaceStreamIndex: replacing ? loaded.replaces : undefined,
+            // Stated rather than left out when a track is being replaced: the
+            // disposition is written as a whole, so silence would clear the
+            // flags the track already had.
+            forced: replacing ? !!loaded.forced : loaded.forced,
+            default: replacing ? !!replacedTrack?.disposition.default : undefined,
+            title: loaded.translatedFrom ? `${languageName(loaded.language)} (PlexFixer)` : undefined
+          })
       )
-      if (path) {
-        setNote(`Written: ${path.split(/[\\/]/).pop()}`)
-        onWrote(path)
+      if (written) {
+        setNote(
+          replacing
+            ? `Track ${loaded.replaces} in the film has been replaced.` +
+                (settings.keepBackups ? ' The original is in the backup folder.' : '')
+            : 'Added to the film as a new track.' +
+                (settings.keepBackups ? ' The original is in the backup folder.' : '')
+        )
+        onWrote(written.path)
       }
     })()
   }
@@ -314,40 +417,89 @@ export default function SubtitleDialog({
         <h2>Subtitles</h2>
         <div className="about-version mono">{file.fileName}</div>
 
-        {/* ---------- where from ---------- */}
-        <h4 className="block-heading">Where from</h4>
-
+        {/* ---------- the tracks already in the film ---------- */}
         {textTracks.length > 0 ? (
-          <div className="subtitle-sources">
-            {textTracks.map((track) => (
-              <button key={track.index} className="ghost" disabled={!!busy} onClick={() => loadTrack(track)}>
-                Track {track.index} · {languageName(track.language)}
-                {track.disposition.forced ? ' · forced' : ''}
-              </button>
-            ))}
-          </div>
-        ) : null}
+          <>
+            <h4 className="block-heading">Tracks in this file</h4>
+            <div className="subtitle-tracks">
+              {textTracks.map((track) => {
+                const verdict = verdicts.get(track.index)
+                return (
+                  <div className="subtitle-track" key={track.index}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={picked.has(track.index)}
+                        disabled={!!busy}
+                        onChange={() => toggle(track.index)}
+                      />
+                      <span>
+                        Track {track.index} · {languageName(track.language)}
+                        {track.disposition.forced ? ' · forced' : ''}
+                        {track.title ? ` — ${track.title}` : ''}
+                        <span className="muted"> · {track.codec.toUpperCase()}</span>
+                      </span>
+                    </label>
+                    {verdict ? (
+                      <div className="subtitle-track-verdict">
+                        <span className={`badge ${STATE_BADGE[verdict.state]}`}>{STATE_WORD[verdict.state]}</span>
+                        <span className="detail-text">{verdict.summary}</span>
+                      </div>
+                    ) : null}
+                    <button className="ghost" disabled={!!busy} onClick={() => loadTrack(track)}>
+                      Open
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
 
-        {file.sidecarSubtitles.length > 0 ? (
-          <div className="subtitle-sources">
-            {file.sidecarSubtitles.map((path) => (
-              <button key={path} className="ghost" disabled={!!busy} onClick={() => loadSidecar(path)}>
-                {path.split(/[\\/]/).pop()}
+            <div className="subtitle-actions">
+              <button
+                className="primary"
+                disabled={!!busy || picked.size === 0}
+                onClick={resyncPicked}
+                title="Find the speech in the audio, compare it with these tracks, and write the corrected timings into the film"
+              >
+                {picked.size > 1 ? `Resync ${picked.size} tracks to the audio` : 'Resync to the audio'}
               </button>
-            ))}
-          </div>
+              <button
+                className="ghost"
+                disabled={!!busy || picked.size === textTracks.length}
+                onClick={() => setPicked(new Set(textTracks.map((track) => track.index)))}
+              >
+                Select all
+              </button>
+              {picked.size > 0 ? (
+                <button className="ghost" disabled={!!busy} onClick={() => setPicked(new Set())}>
+                  Clear
+                </button>
+              ) : null}
+            </div>
+            <p className="section-hint">
+              Finding the speech reads the whole audio track once, however many subtitles are ticked, and the
+              corrected tracks go back in a single rewrite of the film. A track already in step is reported and left
+              exactly as it was. The original is moved into the backup folder first when backups are on.
+            </p>
+          </>
         ) : null}
 
         {pictureTracks > 0 ? (
           <p className="section-hint">
-            {pictureTracks} picture subtitle{pictureTracks === 1 ? ' is' : 's are'} in this file and cannot be used
-            here — there is no text in them to compare, translate or write out.
+            {pictureTracks} picture subtitle{pictureTracks === 1 ? ' is' : 's are'} in this file and cannot be resynced
+            — there is no text in them, so there is nothing to compare against the speech. Writing one from the audio,
+            below, produces a text track that can be.
           </p>
         ) : null}
 
+        {/* ---------- adding one ---------- */}
+        <h4 className="block-heading">Add a subtitle</h4>
         <div className="subtitle-sources">
           <button disabled={!!busy} onClick={search}>
             Find one online
+          </button>
+          <button disabled={!!busy} onClick={addFromFile}>
+            From a file on disk…
           </button>
           <button disabled={!!busy} onClick={() => fromAudio(false)}>
             Write one from the audio
@@ -420,8 +572,10 @@ export default function SubtitleDialog({
               <button disabled={!!busy} onClick={check}>
                 {loaded.timing ? 'Check the timing again' : 'Check the timing'}
               </button>
-              <button disabled={!!busy} onClick={save}>
-                Save beside the film
+              <button className="primary" disabled={!!busy} onClick={save}>
+                {loaded.replaces !== undefined && !loaded.translatedFrom
+                  ? `Replace track ${loaded.replaces} in the film`
+                  : 'Add to the film as a track'}
               </button>
             </div>
 
@@ -429,13 +583,7 @@ export default function SubtitleDialog({
               <div className="subtitle-timing">
                 <div className="title">
                   <span className={`badge ${STATE_BADGE[loaded.timing.state]}`}>
-                    {loaded.timing.state === 'in-sync'
-                      ? 'in step'
-                      : loaded.timing.state === 'mismatched'
-                        ? 'does not match'
-                        : loaded.timing.state === 'unknown'
-                          ? 'cannot tell'
-                          : loaded.timing.state}
+                    {STATE_WORD[loaded.timing.state]}
                   </span>
                   <span className={`badge ${CONFIDENCE_BADGE[loaded.timing.confidence]}`}>
                     {loaded.timing.confidence} confidence

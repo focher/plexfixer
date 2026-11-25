@@ -413,7 +413,7 @@ export function parseScript(source: string): ParseResult {
     if (!fix) {
       problems.push({
         line,
-        message: `There is no fix called "${rest}". A rule can ask for transcode-video, remux, drop-track or extract-subtitles.`
+        message: `There is no fix called "${rest}". A rule can ask for transcode-video, remux, drop-track or resync-subtitles.`
       })
       continue
     }

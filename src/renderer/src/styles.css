@@ -2837,6 +2837,50 @@ select.bulk-metadata-found {
   overflow-wrap: anywhere;
 }
 
+/* The tracks already in the film: a tick, what it is, and what the last
+   measurement said about it. Bordered as one block, because picking several
+   is the point and a row of loose checkboxes does not read as a set. */
+.subtitle-tracks {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 8px 0;
+}
+
+.subtitle-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subtitle-track:last-child {
+  border-bottom: none;
+}
+
+.subtitle-track label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.subtitle-track-verdict {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  /* The summary is a sentence; it may wrap, but the badge beside it must not
+     be pushed off the row by it. */
+  flex: 2;
+}
+
+.subtitle-track-verdict .detail-text {
+  overflow-wrap: anywhere;
+}
+
 .subtitle-timing {
   border: 1px solid var(--border);
   border-radius: 8px;

@@ -211,29 +211,6 @@ export async function walkBoxes(
   }
 }
 
-/** Sidecar subtitles sitting next to the media file (`Movie.en.srt` etc.). */
-const SIDECAR_EXTENSIONS = new Set(['srt', 'ass', 'ssa', 'vtt', 'sub', 'idx', 'sup'])
-
-async function findSidecarSubtitles(filePath: string, host: ProbeHost): Promise<string[]> {
-  try {
-    const paths = host.paths
-    const dir = paths.dirname(filePath)
-    const stem = paths.basename(filePath, paths.extname(filePath)).toLowerCase()
-    const entries = await host.list(dir)
-    return entries
-      .filter((entry) => {
-        if (entry.isDirectory) return false
-        const ext = paths.extname(entry.name).slice(1).toLowerCase()
-        if (!SIDECAR_EXTENSIONS.has(ext)) return false
-        return entry.name.toLowerCase().startsWith(stem)
-      })
-      .map((entry) => paths.join(dir, entry.name))
-      .sort()
-  } catch {
-    return []
-  }
-}
-
 /* ------------------------------------------------------------------ *
  * Stream mapping
  * ------------------------------------------------------------------ */
@@ -334,8 +311,6 @@ export class ProbeError extends Error {
 
 export interface ProbeOptions {
   ffprobePath: string
-  /** Also look for sidecar subtitle files beside the media file. */
-  includeSidecars?: boolean
   timeoutMs?: number
   /** Where the file lives and where ffprobe runs. */
   host: ProbeHost
@@ -456,7 +431,6 @@ export async function probeFile(filePath: string, options: ProbeOptions): Promis
         ? await walkBoxes(sizeBytes, (offset, length) => host.readRange(filePath, offset, length))
         : undefined,
     streams: await withH264Config(raw.streams.map(mapStream), filePath, options, host),
-    sidecarSubtitles: options.includeSidecars === false ? [] : await findSidecarSubtitles(filePath, host),
     tags: raw.format?.tags ?? {}
   }
 }

@@ -1009,13 +1009,17 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
         <span className="muted">Add an AAC track when nothing compatible exists</span>
       </Field>
 
-      <Field label="Subtitles" inline hint="Sidecar SRT never triggers a burn-in transcode.">
+      <Field
+        label="Subtitles"
+        inline
+        hint="Finding the speech reads the whole audio track, which adds twenty seconds to a minute to every repair — whether or not anything turns out to be out of step."
+      >
         <input
           type="checkbox"
-          checked={settings.extractTextSubtitles}
-          onChange={(event) => set({ extractTextSubtitles: event.target.checked })}
+          checked={settings.resyncSubtitlesOnRepair}
+          onChange={(event) => set({ resyncSubtitlesOnRepair: event.target.checked })}
         />
-        <span className="muted">Extract text subtitles to .srt sidecars</span>
+        <span className="muted">Check subtitle timing against the audio during a repair</span>
       </Field>
 
       <Field label="Image subtitles" inline hint="PGS/VobSub cannot be stored in MP4 at all.">
