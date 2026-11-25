@@ -21,7 +21,7 @@ import type {
 } from '../types.js'
 import type { RepairHost } from '../host.js'
 import { FfmpegError, runFfmpeg } from './ffmpeg-run.js'
-import { probeFile } from './probe.js'
+import { ProbeError, probeFile } from './probe.js'
 import { QtFaststartError, runQtFaststart } from './qt-faststart.js'
 import { indexMoveMismatch, isIndexMoveOnly } from './faststart.js'
 import { buildMp4TagsCommand, canWriteWithMp4Tags, isMp4Container } from './mp4-tags.js'
@@ -1016,10 +1016,7 @@ export class RepairRunner {
         // for. ffmpeg can exit 0 having produced something unplayable.
         this.setStage(id, 'verifying')
         const verifyStarted = performance.now()
-        probed = await probeFile(temporaryPath, {
-          ffprobePath: this.binaries.ffprobePath,
-          host: this.host
-        })
+        probed = await this.verifyOutput(id, temporaryPath, signal)
         this.addPhase(id, 'verify', performance.now() - verifyStarted)
       }
       this.log(id, 'info', 'Re-probed the output', describeStreams(probed))
@@ -1116,7 +1113,12 @@ export class RepairRunner {
       const detail =
         error instanceof FfmpegError
           ? `exit code ${error.exitCode ?? 'unknown'}\n\n${error.stderrTail || '(ffmpeg printed nothing to stderr)'}`
-          : undefined
+          : // A refused output is reported in one line, and the line ffprobe
+            // leads with is seldom the reason. The whole of what it printed
+            // goes here, where there is room for it.
+            error instanceof ProbeError
+            ? error.detail
+            : undefined
 
       this.update({
         ...job,
@@ -1177,6 +1179,9 @@ export class RepairRunner {
     let lastProgressAt = 0
     let finaliseFrom: number | undefined
     let lastSpeed: string | undefined
+    // The last figure ffmpeg gave for what it had written. Held against the
+    // file system's own answer below, which does not always agree.
+    let lastBytesWritten: number | undefined
 
     await runFfmpeg({
       ffmpegPath: this.binaries.ffmpegPath,
@@ -1195,6 +1200,7 @@ export class RepairRunner {
         this.update({ ...job, progress })
         lastProgressAt = performance.now()
         if (progress.speed) lastSpeed = progress.speed
+        if (progress.bytesWritten != null) lastBytesWritten = progress.bytesWritten
         // Everything after the last byte is reported is the finalising pass,
         // which is where an MP4 index move hides.
         if (finaliseFrom == null && progress.fraction >= 0.999) {
@@ -1244,7 +1250,7 @@ export class RepairRunner {
     if (signal.aborted) throw new Error('Cancelled')
     this.log(id, 'info', 'ffmpeg finished cleanly')
 
-    const outputBytes = (await this.host.stat(temporaryPath))?.sizeBytes
+    const outputBytes = await this.settledSize(id, temporaryPath, lastBytesWritten)
     this.addPhase(id, 'ffmpeg', ffmpegMs, { bytes: outputBytes })
     this.mergeMetrics(id, {
       outputBytes,
@@ -1264,6 +1270,90 @@ export class RepairRunner {
       })
     }
     return outputBytes
+  }
+
+  /**
+   * How big the output actually is, once the file system agrees with ffmpeg.
+   *
+   * A write to a network share is not finished when the process that made it
+   * exits: the redirector still has pages to flush, and until it has, the
+   * share answers questions about the file from a view that is behind. A
+   * 13 GB remux once came back measured at 4.77 GB a fraction of a second
+   * after ffmpeg had reported writing 11.5 GB of it — not a short file, a
+   * stale answer, and the repair was condemned on the strength of it.
+   *
+   * ffmpeg's own running total is the second opinion. It only ever counts
+   * bytes it has handed over, and the index move that follows rewrites them
+   * rather than adding more, so the finished file cannot honestly be smaller
+   * than the last figure ffmpeg gave. Smaller means the share is still
+   * catching up, so it is asked again.
+   */
+  private async settledSize(id: string, path: string, reportedBytes: number | undefined): Promise<number | undefined> {
+    let size = (await this.host.stat(path))?.sizeBytes
+    if (reportedBytes == null || reportedBytes <= 0) return size
+
+    for (const pause of SETTLE_PAUSES_MS) {
+      if ((size ?? 0) >= reportedBytes) return size
+      await delay(pause)
+      size = (await this.host.stat(path))?.sizeBytes
+    }
+
+    if ((size ?? 0) < reportedBytes) {
+      this.log(
+        id,
+        'warn',
+        'The file system reports less than ffmpeg says it wrote',
+        `ffmpeg wrote   ${formatBytes(reportedBytes)}\non disk        ${formatBytes(size ?? 0)}\n\n` +
+          'On a network share this is usually the share still catching up rather than a short file, ' +
+          'and the check that follows may fail for the same reason. Repairing to a local disk and ' +
+          'moving the result afterwards avoids it.'
+      )
+    }
+    return size
+  }
+
+  /**
+   * Probe the output, with a second and third go at it.
+   *
+   * ffmpeg exiting is not the same as the output being readable. Across a
+   * network share the index can be visible while the data behind it is not,
+   * and ffprobe asked at that moment reads a file that does not add up: its
+   * decoders complain about data that is not there yet and it refuses the
+   * file. Waiting a moment and asking again costs seconds against a copy that
+   * took a quarter of an hour, and the alternative is throwing that copy away
+   * over a question asked too early.
+   *
+   * A genuinely broken output fails every attempt and is still refused — this
+   * buys it a few seconds, not the benefit of the doubt.
+   */
+  private async verifyOutput(id: string, temporaryPath: string, signal: AbortSignal): Promise<MediaFile> {
+    let lastError: unknown
+    for (let attempt = 0; attempt <= VERIFY_RETRY_PAUSES_MS.length; attempt += 1) {
+      if (attempt > 0) {
+        const pause = VERIFY_RETRY_PAUSES_MS[attempt - 1]
+        this.log(
+          id,
+          'warn',
+          `The output did not read back cleanly; trying again in ${Math.round(pause / 1000)}s`,
+          `${lastError instanceof Error ? lastError.message : String(lastError)}\n\n` +
+            'A file just written across a network share is not always readable the instant the write ends.'
+        )
+        await delay(pause)
+        if (signal.aborted) throw new Error('Cancelled')
+      }
+      try {
+        const probed = await probeFile(temporaryPath, {
+          ffprobePath: this.binaries.ffprobePath,
+          host: this.host
+        })
+        if (attempt > 0) this.log(id, 'info', `The output read back cleanly on attempt ${attempt + 1}`)
+        return probed
+      } catch (error) {
+        if (signal.aborted) throw error
+        lastError = error
+      }
+    }
+    throw lastError
   }
 
   /**
@@ -1567,6 +1657,27 @@ function describeFfmpegFailure(error: unknown): string {
     return `exit code ${error.exitCode ?? 'unknown'}\n\n${error.stderrTail}`
   }
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * How long to let a network share catch up with a finished write.
+ *
+ * Short, and only paid when the share and ffmpeg disagree: a local disk
+ * answers correctly first time and never waits at all.
+ */
+const SETTLE_PAUSES_MS = [500, 1500, 3000]
+
+/**
+ * How long to wait before asking again whether the output reads back.
+ *
+ * Measured against the thing it protects: a remux of a large file over a slow
+ * link runs for minutes, so a few seconds spent making sure before discarding
+ * it is not a cost worth optimising.
+ */
+const VERIFY_RETRY_PAUSES_MS = [2000, 5000]
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 const BACKUP_LABEL = '.plexfixer-backups'

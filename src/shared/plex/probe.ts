@@ -12,6 +12,7 @@
  */
 
 import type { ProbeHost } from '../host.js'
+import { summarizeToolFailure } from './tool-failure.js'
 import type {
   AudioStream,
   ContainerFormat,
@@ -302,7 +303,15 @@ function mapStream(raw: RawStream): MediaStream {
 export class ProbeError extends Error {
   constructor(
     public readonly filePath: string,
-    message: string
+    message: string,
+    /**
+     * Everything the tool printed, for the detail beneath the message.
+     *
+     * `message` is one line because it is read in a list; the reason a file
+     * was refused is often two or three lines down from the first thing
+     * ffprobe said, so the rest is kept rather than summarised away.
+     */
+    public readonly detail?: string
   ) {
     super(message)
     this.name = 'ProbeError'
@@ -402,7 +411,7 @@ export async function probeFile(filePath: string, options: ProbeOptions): Promis
     raw = JSON.parse(stdout) as RawProbe
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    throw new ProbeError(filePath, `ffprobe could not read this file: ${message.split('\n')[0]}`)
+    throw new ProbeError(filePath, `ffprobe could not read this file: ${summarizeToolFailure(message)}`, message)
   }
 
   if (!raw.streams || raw.streams.length === 0) {

@@ -191,6 +191,40 @@ pub async fn known_hosts_location() -> Result<String, String> {
     Ok(known_hosts_path()?.to_string_lossy().into_owned())
 }
 
+/// What a failed command printed, bounded.
+///
+/// All of it, not the first line. ffmpeg and ffprobe print the reason a file
+/// was refused *after* whatever their decoders grumbled about on the way, so
+/// the first line is routinely the least useful one there is — a repair that
+/// took a quarter of an hour was once reported as an AAC decoder warning while
+/// the sentence naming the real fault sat on the line below, discarded here.
+///
+/// The tail rather than the head for the same reason: when there is more than
+/// fits, the end is where the conclusion is.
+fn stderr_tail(stderr: &str) -> String {
+    const MAX_LINES: usize = 40;
+    const MAX_CHARS: usize = 8000;
+
+    let lines: Vec<&str> = stderr.lines().filter(|line| !line.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return "no output".to_string();
+    }
+
+    let skipped = lines.len().saturating_sub(MAX_LINES);
+    let mut text = lines[skipped..].join("\n");
+    if skipped > 0 {
+        text = format!("... {skipped} earlier line(s) omitted\n{text}");
+    }
+
+    // Char boundaries, not bytes: stderr carries file names, and cutting a
+    // multi-byte one in half would panic.
+    if text.chars().count() > MAX_CHARS {
+        let cut: String = text.chars().skip(text.chars().count() - MAX_CHARS).collect();
+        text = format!("... truncated\n{cut}");
+    }
+    text
+}
+
 #[tauri::command]
 pub async fn host_exec(
     app: AppHandle,
@@ -247,8 +281,15 @@ pub async fn host_exec(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let first = stderr.lines().next().unwrap_or("no output").to_string();
-        return Err(format!("{command} exited with an error: {first}"));
+        let code = output
+            .status
+            .code()
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        return Err(format!(
+            "{command} exited with an error (exit {code}):\n{}",
+            stderr_tail(&stderr)
+        ));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -812,4 +853,50 @@ pub async fn host_volume(path: String) -> Result<VolumeFacts, String> {
         df: None,
         fs_type: None,
     }))
+}
+
+#[cfg(test)]
+mod stderr_tail_tests {
+    use super::stderr_tail;
+
+    /// The case this was written for: ffprobe grumbles about a decoder first
+    /// and names the real fault afterwards. Reporting the first line called a
+    /// discarded 13 GB remux an "AAC decoder warning".
+    #[test]
+    fn keeps_the_line_after_the_decoder_noise() {
+        let stderr = "[aac @ 000001bbc3e450c0] skip_data_stream_element: Input buffer exhausted before END element found\n\
+                      Z:\\Movies\\film.m4v: Invalid data found when processing input\n";
+        let tail = stderr_tail(stderr);
+        assert!(tail.contains("Invalid data found when processing input"));
+        assert!(tail.contains("skip_data_stream_element"));
+    }
+
+    #[test]
+    fn says_so_when_nothing_was_printed() {
+        assert_eq!(stderr_tail(""), "no output");
+        assert_eq!(stderr_tail("\n  \n\t\n"), "no output");
+    }
+
+    #[test]
+    fn drops_blank_lines_but_keeps_order() {
+        assert_eq!(stderr_tail("first\n\nsecond\n"), "first\nsecond");
+    }
+
+    #[test]
+    fn keeps_the_end_when_there_is_more_than_fits() {
+        let many: String = (0..100).map(|n| format!("line {n}\n")).collect();
+        let tail = stderr_tail(&many);
+        assert!(tail.contains("line 99"), "the conclusion must survive");
+        assert!(!tail.contains("line 0\n"), "the opening is what gets dropped");
+        assert!(tail.starts_with("... 60 earlier line(s) omitted"));
+        assert_eq!(tail.lines().count(), 41);
+    }
+
+    /// stderr carries file names, and cutting one mid-character would panic.
+    #[test]
+    fn cuts_on_character_boundaries() {
+        let wide: String = std::iter::repeat("Train Dreams — é日本\n").take(400).collect();
+        let tail = stderr_tail(&wide);
+        assert!(tail.chars().count() <= 8000 + "... truncated\n".chars().count());
+    }
 }
