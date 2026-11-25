@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { VideoStream } from '@shared/types.js'
 import { DEFAULT_SETTINGS } from '@shared/defaults.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
+import { fileStatus } from '@shared/plex/facets.js'
 import type { AppSettings } from '@shared/types.js'
 import { audio, flags, mainAudio, mkv, mp4, subtitle, video } from './fixtures.js'
 
@@ -189,6 +190,78 @@ describe('analyzeFile — audio', () => {
     )
     expect(codes(result)).toContain('audio-codec-limited')
     expect(codes(result)).not.toContain('audio-no-compatible-track')
+  })
+
+  it('passes a file the companion-track repair has already fixed', () => {
+    // The bug this is here for: a DTS-HD MA rip repaired by adding an AAC
+    // track came back from the next scan still reporting "DTS (DTS-HD MA) is
+    // not direct-playable" as a blocker — the remedy applied, and the finding
+    // still firing. The file could never reach "passed" and the same repair
+    // was offered for ever.
+    const repaired = mkv([
+      video({ language: 'eng' }),
+      audio({ index: 1, codec: 'aac', channels: 2, language: 'eng', disposition: flags({ default: true }) }),
+      audio({ index: 2, codec: 'dts', profile: 'DTS-HD MA', channels: 8, language: 'eng' })
+    ])
+
+    const result = analyzeFile(repaired, { ...base, targetContainer: 'mkv', remuxMkvToMp4: false })
+
+    // The lossless track is still named, because knowing it survived is worth
+    // something — but as a note, not a fault.
+    const unsupported = result.findings.find((finding) => finding.code === 'audio-codec-unsupported')
+    expect(unsupported?.severity).toBe('info')
+    expect(unsupported?.remedy).toBe('lossless')
+
+    // And nothing is proposed: no second companion track, no audio encode.
+    expect(result.plan.addCompatibilityAudio).toBeUndefined()
+    expect(result.plan.strategy).toBe('none')
+    expect(fileStatus(result)).toBe('passed')
+  })
+
+  it('passes a repaired MP4 with DTS beside AAC under default settings', () => {
+    // The shape the user's file is actually in after a repair: an MP4, the
+    // companion AAC as the default, the lossless original kept. No override of
+    // the container settings — if this does not pass, nothing does.
+    const result = analyzeFile(
+      mp4([
+        video({ language: 'eng' }),
+        audio({ index: 1, codec: 'aac', channels: 6, channelLayout: '5.1', language: 'eng', disposition: flags({ default: true }) }),
+        audio({ index: 2, codec: 'dts', profile: 'DTS-HD MA', channels: 8, language: 'eng' })
+      ], { faststart: true }),
+      base
+    )
+
+    expect(result.plan.strategy).toBe('none')
+    expect(fileStatus(result)).toBe('passed')
+  })
+
+  it('still blocks a lossless track with nothing playable beside it', () => {
+    // The other side of the same rule: the companion has to actually be there.
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng' }),
+        audio({ index: 1, codec: 'dts', profile: 'DTS-HD MA', channels: 8, language: 'eng' })
+      ]),
+      base
+    )
+    const unsupported = result.findings.find((finding) => finding.code === 'audio-codec-unsupported')
+    expect(unsupported?.severity).toBe('blocker')
+    expect(result.plan.strategy).toBe('transcode-audio')
+  })
+
+  it('does not count a 7.1 AAC track as the compatible one', () => {
+    // "Compatible" means a client can play it as it stands, and 7.1 is beyond
+    // what the safe-channel rule allows — so this file still needs a companion.
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng' }),
+        audio({ index: 1, codec: 'aac', channels: 8, channelLayout: '7.1', language: 'eng' }),
+        audio({ index: 2, codec: 'truehd', channels: 8, language: 'eng' })
+      ]),
+      base
+    )
+    expect(codes(result)).toContain('audio-no-compatible-track')
+    expect(result.plan.addCompatibilityAudio).toBeDefined()
   })
 
   it('does not add a companion track when the setting is off', () => {

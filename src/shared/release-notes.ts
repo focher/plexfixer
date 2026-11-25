@@ -63,6 +63,15 @@ export const RELEASE_NOTES: ReleaseNote[] = [
           'on almost every row.'
       },
       {
+        title: 'A repaired file now says it is repaired',
+        body:
+          'A disc rip whose soundtrack cannot be direct-played is fixed by adding a compatible track beside it ' +
+          '\u2014 and until now the next scan went on reporting the original as a blocker anyway, so the file never ' +
+          'reached Passed and the same repair was offered again for ever. A track nothing can play is only a ' +
+          'fault when nothing beside it can be played; where a compatible track exists, the original is noted as ' +
+          'kept rather than flagged as broken.'
+      },
+      {
         title: 'Resync the tracks you pick, in one pass',
         body:
           'The Subtitles panel opens on the text subtitle tracks already in the file, with a tick box each. Tick ' +
