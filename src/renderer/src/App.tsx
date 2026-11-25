@@ -12,6 +12,7 @@ import type {
   RepairRequest,
   ScanError
 } from '@shared/types.js'
+import { withQueuedOrder } from '@shared/jobs.js'
 import { resolveMode } from '@shared/mode.js'
 import { newId } from '@shared/ids.js'
 import { DEFAULT_SORT, nextSort, sortResults, type SortState } from '@shared/sort.js'
@@ -1262,24 +1263,17 @@ export default function App(): React.JSX.Element {
               // the same jobs, and a removal sends no update event.
               setJobs((previous) => previous.filter((job) => job.state !== 'queued'))
             }}
-            onMove={(id, offset) => {
+            onMove={(id, index) => {
               void (async () => {
-                // The runner says which repair it changed places with, and the
-                // same two swap here. Reordering sends no update event — the
-                // jobs themselves have not changed, only the order of them —
-                // and working it out from the offset again here would be a
-                // second guess at something already decided.
-                const swappedWith = await window.plexfixer.jobs.move(id, offset)
-                if (!swappedWith) return
-                setJobs((previous) => {
-                  const first = previous.findIndex((job) => job.id === id)
-                  const second = previous.findIndex((job) => job.id === swappedWith)
-                  if (first < 0 || second < 0) return previous
-                  const next = [...previous]
-                  next[first] = previous[second]
-                  next[second] = previous[first]
-                  return next
-                })
+                // The runner hands back the new order of what is waiting, and
+                // the same order is applied here by the same rule. Reordering
+                // sends no update event — the jobs themselves have not
+                // changed, only the order of them — and working the new
+                // arrangement out again here would be a second guess at
+                // something already decided.
+                const order = await window.plexfixer.jobs.move(id, index)
+                if (!order) return
+                setJobs((previous) => withQueuedOrder(previous, (job) => job.state === 'queued', order))
               })()
             }}
             onReveal={(path) => void window.plexfixer.shell.reveal(path)}

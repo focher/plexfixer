@@ -114,9 +114,12 @@ describe('moving a waiting repair', () => {
     await reaches(instance, ids.get('A')!, 'running')
     expect(waiting(instance, ids)).toEqual(['B', 'C', 'D'])
 
-    // Tonight's film is last. Move it to the front.
-    expect(instance.moveQueued(ids.get('D')!, -1)).toBe(ids.get('C'))
-    expect(instance.moveQueued(ids.get('D')!, -1)).toBe(ids.get('B'))
+    // Tonight's film is last. Drag it to the front, in one move.
+    expect(instance.moveQueuedTo(ids.get('D')!, 0)).toEqual([
+      ids.get('D')!,
+      ids.get('B')!,
+      ids.get('C')!
+    ])
     expect(waiting(instance, ids)).toEqual(['D', 'B', 'C'])
 
     // And it is the one that starts when the slot frees up.
@@ -128,26 +131,35 @@ describe('moving a waiting repair', () => {
 
   it('moves the row with it', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
-    const ids = queueAll(instance, ['A', 'B', 'C', 'D'])
+    const ids = queueAll(instance, ['A', 'B', 'C', 'D', 'E'])
     await reaches(instance, ids.get('A')!, 'running')
-    expect(rows(instance, ids)).toEqual(['A', 'B', 'C', 'D'])
+    expect(rows(instance, ids)).toEqual(['A', 'B', 'C', 'D', 'E'])
 
-    instance.moveQueued(ids.get('D')!, -1)
-    expect(rows(instance, ids)).toEqual(['A', 'B', 'D', 'C'])
-    expect(waiting(instance, ids)).toEqual(['B', 'D', 'C'])
+    instance.moveQueuedTo(ids.get('E')!, 0)
+    expect(rows(instance, ids)).toEqual(['A', 'E', 'B', 'C', 'D'])
+    expect(waiting(instance, ids)).toEqual(['E', 'B', 'C', 'D'])
 
-    instance.moveQueued(ids.get('B')!, 1)
-    expect(rows(instance, ids)).toEqual(['A', 'D', 'B', 'C'])
-    expect(waiting(instance, ids)).toEqual(['D', 'B', 'C'])
+    instance.moveQueuedTo(ids.get('E')!, 2)
+    expect(rows(instance, ids)).toEqual(['A', 'B', 'C', 'E', 'D'])
+    expect(waiting(instance, ids)).toEqual(['B', 'C', 'E', 'D'])
   })
 
-  it('leaves the ends of the queue alone', { timeout: 30_000 }, async () => {
+  it('takes a place past the end of the queue to mean the end', { timeout: 30_000 }, async () => {
+    const instance = await runner(1)
+    const ids = queueAll(instance, ['A', 'B', 'C', 'D'])
+    await reaches(instance, ids.get('A')!, 'running')
+
+    instance.moveQueuedTo(ids.get('B')!, 99)
+    expect(waiting(instance, ids)).toEqual(['C', 'D', 'B'])
+    expect(rows(instance, ids)).toEqual(['A', 'C', 'D', 'B'])
+  })
+
+  it('says nothing changed when it is already in that place', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
     const ids = queueAll(instance, ['A', 'B', 'C'])
     await reaches(instance, ids.get('A')!, 'running')
 
-    expect(instance.moveQueued(ids.get('B')!, -1)).toBeUndefined()
-    expect(instance.moveQueued(ids.get('C')!, 1)).toBeUndefined()
+    expect(instance.moveQueuedTo(ids.get('B')!, 0)).toBeUndefined()
     expect(rows(instance, ids)).toEqual(['A', 'B', 'C'])
   })
 
@@ -156,7 +168,7 @@ describe('moving a waiting repair', () => {
     const ids = queueAll(instance, ['A', 'B'])
     await reaches(instance, ids.get('A')!, 'running')
 
-    expect(instance.moveQueued(ids.get('A')!, 1)).toBeUndefined()
+    expect(instance.moveQueuedTo(ids.get('A')!, 1)).toBeUndefined()
     expect(rows(instance, ids)).toEqual(['A', 'B'])
   })
 
@@ -166,20 +178,21 @@ describe('moving a waiting repair', () => {
     await reaches(instance, ids.get('A')!, 'running')
     instance.cancel(ids.get('B')!)
 
-    expect(instance.moveQueued(ids.get('B')!, -1)).toBeUndefined()
-    expect(instance.moveQueued('no-such-job', -1)).toBeUndefined()
+    expect(instance.moveQueuedTo(ids.get('B')!, 0)).toBeUndefined()
+    expect(instance.moveQueuedTo('no-such-job', 0)).toBeUndefined()
   })
 
   /**
-   * The order is only about what has not started, so what has finished keeps
-   * its place in the record regardless.
+   * The order is only about what has not started, so a running repair keeps
+   * its place in the list and a finished one goes on being the record of
+   * something that happened.
    */
   it('reorders around rows that are no longer waiting', { timeout: 30_000 }, async () => {
     const instance = await runner(1)
     const ids = queueAll(instance, ['A', 'B', 'C'])
     await reaches(instance, ids.get('A')!, 'running')
 
-    instance.moveQueued(ids.get('C')!, -1)
+    instance.moveQueuedTo(ids.get('C')!, 0)
     expect(rows(instance, ids)).toEqual(['A', 'C', 'B'])
     // A is still running and still at the top of the list.
     expect(instance.list()[0]?.id).toBe(ids.get('A'))

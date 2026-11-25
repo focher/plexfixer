@@ -984,12 +984,13 @@ function buildApi() {
       clearFinished: async (): Promise<void> => runner?.clearFinished(),
       clearQueued: async (): Promise<number> => runner?.clearQueued() ?? 0,
       /**
-       * Run a waiting repair sooner (`-1`) or later (`1`).
+       * Move a waiting repair to a place in the queue, counting from the front
+       * of what is waiting.
        *
-       * Resolves to the id it changed places with, which the window uses to
-       * make the same swap in the list it is drawing.
+       * Resolves to the new order of the waiting repairs, which the window
+       * applies to the list it is drawing.
        */
-      move: async (id: string, offset: -1 | 1): Promise<string | undefined> => runner?.moveQueued(id, offset),
+      move: async (id: string, index: number): Promise<string[] | undefined> => runner?.moveQueuedTo(id, index),
       onUpdate: (listener: (job: Job) => void): Unsubscribe => jobUpdate.on(listener)
     },
     shell: {

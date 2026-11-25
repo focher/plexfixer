@@ -2369,9 +2369,9 @@ button.expander:hover:not(:disabled) {
 .job {
   display: grid;
   /* The third column carries "621ms · 1024 MB/s · 356x realtime", which is
-     wider than a bare duration ever was. The last holds up to three 28px
-     icons: a waiting repair can be moved up, moved down, or stopped. */
-  grid-template-columns: 84px minmax(0, 1fr) 225px 92px;
+     wider than a bare duration ever was. The last holds up to two 28px icons:
+     a waiting repair can be dragged elsewhere, or stopped. */
+  grid-template-columns: 84px minmax(0, 1fr) 225px 62px;
   gap: 12px;
   align-items: center;
   padding: 6px 12px;
@@ -3119,8 +3119,34 @@ button.expander:hover:not(:disabled) {
 
 @media (max-width: 1120px) {
   .job {
-    grid-template-columns: 84px 1fr 170px 92px;
+    grid-template-columns: 84px 1fr 170px 62px;
   }
+}
+
+/* ---------- dragging a waiting repair ---------- */
+
+/* The one control on a row that should read as "take hold of this". */
+.job-row-actions .icon-button.grip {
+  cursor: grab;
+}
+
+.job-row-actions .icon-button.grip:active {
+  cursor: grabbing;
+}
+
+/* The row being carried: faded, so the gap it left is the thing you read. */
+.job.dragging {
+  opacity: 0.4;
+}
+
+/*
+  Where it would land. The whole row rather than a line between two rows,
+  because dropping takes the target's place in the queue — a line would promise
+  an insertion point the queue does not actually work in.
+*/
+.job.drop-target {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 /* ---------- remote host ---------- */

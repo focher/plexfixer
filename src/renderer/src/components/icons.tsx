@@ -170,22 +170,30 @@ export function StopIcon(props: IconProps): React.JSX.Element {
   )
 }
 
-/** Run this waiting repair sooner. */
-export function ArrowUpIcon(props: IconProps): React.JSX.Element {
+/**
+ * Drag this waiting repair to another place in the queue.
+ *
+ * Dots rather than lines: the conventional grip, and the one thing on a row
+ * that reads as "take hold of this" without a label.
+ */
+export function GripIcon(props: IconProps): React.JSX.Element {
   return (
-    <Svg {...props}>
-      <path d="M8 13V3" />
-      <path d="M3.5 7.5 8 3l4.5 4.5" />
-    </Svg>
-  )
-}
-
-/** Run this waiting repair later. */
-export function ArrowDownIcon(props: IconProps): React.JSX.Element {
-  return (
-    <Svg {...props}>
-      <path d="M8 3v10" />
-      <path d="M3.5 8.5 8 13l4.5-4.5" />
-    </Svg>
+    <svg
+      className={props.className}
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      stroke="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="6" cy="4" r="1.3" />
+      <circle cx="10" cy="4" r="1.3" />
+      <circle cx="6" cy="8" r="1.3" />
+      <circle cx="10" cy="8" r="1.3" />
+      <circle cx="6" cy="12" r="1.3" />
+      <circle cx="10" cy="12" r="1.3" />
+    </svg>
   )
 }

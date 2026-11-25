@@ -22,6 +22,7 @@ import type {
 import type { RepairHost } from '../host.js'
 import { FfmpegError, runFfmpeg } from './ffmpeg-run.js'
 import { ProbeError, probeFile } from './probe.js'
+import { withQueuedOrder } from '../jobs.js'
 import { QtFaststartError, runQtFaststart } from './qt-faststart.js'
 import { indexMoveMismatch, isIndexMoveOnly } from './faststart.js'
 import { buildMp4TagsCommand, canWriteWithMp4Tags, isMp4Container } from './mp4-tags.js'
@@ -242,29 +243,29 @@ export class RepairRunner {
   }
 
   /**
-   * Change where a waiting repair sits in the queue.
+   * Move a waiting repair to a given place in the queue.
    *
-   * `-1` runs it sooner, `1` later. Returns the id of the repair it changed
-   * places with, so the window can make the same swap in the list it draws,
-   * or `undefined` when nothing moved.
+   * `index` counts from the front of what is waiting, so 0 is next out, and it
+   * is clamped — dropping something past the bottom of the list means the
+   * bottom. Returns the new order of the waiting repairs, which the window
+   * applies to the list it is drawing, or `undefined` when nothing moved.
    *
-   * Only a queued repair can be moved, and only past another queued repair.
-   * What is running is already writing a file, and what has finished is a
-   * record of something that happened; neither has a place in an order that
-   * is about what happens next.
+   * Only a queued repair can be moved. What is running is already writing a
+   * file, and what has finished is a record of something that happened;
+   * neither has a place in an order that is about what happens next.
    */
-  moveQueued(id: string, offset: -1 | 1): string | undefined {
+  moveQueuedTo(id: string, index: number): string[] | undefined {
     const job = this.jobs.get(id)
     if (!job || job.state !== 'queued') return undefined
 
-    const swappedWith = this.queue.move(id, offset)
-    if (!swappedWith) return undefined
+    const order = this.queue.moveTo(id, index)
+    if (!order) return undefined
 
     // The list the window draws is this map's order, so the two have to move
     // together: a repair that changed places in the queue and stayed put on
     // screen would look like a button that does nothing.
-    this.swapJobOrder(id, swappedWith)
-    return swappedWith
+    this.applyQueuedOrder(order)
+    return order
   }
 
   /** The queued repairs, in the order they will be started. */
@@ -273,23 +274,18 @@ export class RepairRunner {
   }
 
   /**
-   * Exchange two jobs' places in the list.
+   * Deal the waiting repairs back into the places they hold in the list.
    *
    * A `Map` keeps what is put into it in order and offers no way to reorder
-   * it, so it is rebuilt. The queue is tens of rows, not thousands.
+   * it, so it is rebuilt. The queue is tens of rows, not thousands. The rule
+   * for which row goes where is the window's rule too, and lives beside it.
    */
-  private swapJobOrder(a: string, b: string): void {
-    const entries = [...this.jobs.entries()]
-    const first = entries.findIndex(([id]) => id === a)
-    const second = entries.findIndex(([id]) => id === b)
-    if (first < 0 || second < 0) return
-
-    const held = entries[first]
-    entries[first] = entries[second]
-    entries[second] = held
+  private applyQueuedOrder(order: string[]): void {
+    const rows = [...this.jobs.values()]
+    const next = withQueuedOrder(rows, (job) => job.state === 'queued', order)
 
     this.jobs.clear()
-    for (const [id, job] of entries) this.jobs.set(id, job)
+    for (const job of next) this.jobs.set(job.id, job)
   }
 
   private update(job: Job): void {

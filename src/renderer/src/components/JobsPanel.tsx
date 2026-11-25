@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AboutInfo, AnalysisResult, AppSettings, EnvironmentInfo, Job, JobLogEntry } from '@shared/types.js'
 import { buildDiagnosticsReport, buildJobReport } from '@shared/report.js'
 import { PHASE_LABEL, diagnoseMetrics, formatMs, phase, rankedPhases, summarizeMetrics } from '@shared/metrics.js'
 import { STAGE_DETAIL, describeProgress, stalledSeconds, stepsFor } from '@shared/stages.js'
 import { countCompleted, visibleJobs } from '@shared/jobs.js'
-import { ArrowDownIcon, ArrowUpIcon, CopyIcon, FolderIcon, StopIcon } from './icons.js'
+import { CopyIcon, FolderIcon, GripIcon, StopIcon } from './icons.js'
 import { mediaTitle } from '@shared/plex/title.js'
 import { readPref, writePref } from '../prefs.js'
 import MenuButton from './MenuButton.js'
@@ -185,8 +185,11 @@ export default function JobsPanel({
   onClear: () => void
   /** Drop the repairs that have not started yet. */
   onClearQueue: () => void
-  /** Run a waiting repair sooner (`-1`) or later (`1`). */
-  onMove: (id: string, offset: -1 | 1) => void
+  /**
+   * Move a waiting repair to a place in the queue, counting from the front of
+   * what is waiting.
+   */
+  onMove: (id: string, index: number) => void
   onReveal: (path: string) => void
   /** Write a report to a file the user picks; resolves to the path, or undefined. */
   onSave: (suggestedName: string, contents: string) => Promise<string | undefined>
@@ -201,6 +204,20 @@ export default function JobsPanel({
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [running])
+  /*
+    A drag starts from the handle, not from anywhere on the row.
+
+    A ref rather than state, and checked when the drag starts rather than
+    deciding `draggable` from it: the browser reads `draggable` as the gesture
+    begins, and a React state change made on pointer-down is not guaranteed to
+    have been rendered by then — the drag would simply not start, on the first
+    attempt and on a fast machine only. So a waiting row is always draggable
+    and the drag is refused unless the pointer went down on the handle.
+  */
+  const grabbedHandle = useRef(false)
+  const [dragging, setDragging] = useState<string>()
+  /** The place in the queue the dragged repair would land in, while over it. */
+  const [dropAt, setDropAt] = useState<number>()
   const [copied, setCopied] = useState<string>()
   const [saved, setSaved] = useState<string>()
   const [hideCompleted, setHideCompleted] = useState(() => readPref('hideCompleted'))
@@ -419,7 +436,46 @@ export default function JobsPanel({
           const waiting = place != null
           return (
             <div key={job.id}>
-              <div className="job">
+              <div
+                className={`job${dragging === job.id ? ' dragging' : ''}${
+                  waiting && dragging && dragging !== job.id && dropAt === place ? ' drop-target' : ''
+                }`}
+                draggable={waiting}
+                onPointerDown={(event) => {
+                  grabbedHandle.current = Boolean((event.target as HTMLElement).closest?.('.grip'))
+                }}
+                onDragStart={(event) => {
+                  if (!waiting || !grabbedHandle.current) {
+                    event.preventDefault()
+                    return
+                  }
+                  setDragging(job.id)
+                  event.dataTransfer.effectAllowed = 'move'
+                  // Firefox starts no drag at all without something set here.
+                  event.dataTransfer.setData('text/plain', job.id)
+                }}
+                onDragOver={(event) => {
+                  // Only the waiting part of the list has an order to change,
+                  // so a running or finished row is not somewhere to drop.
+                  if (!waiting || !dragging || dragging === job.id) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  setDropAt(place)
+                }}
+                onDrop={(event) => {
+                  if (!waiting || !dragging || dragging === job.id) return
+                  event.preventDefault()
+                  onMove(dragging, place)
+                  setDragging(undefined)
+                  setDropAt(undefined)
+                  grabbedHandle.current = false
+                }}
+                onDragEnd={() => {
+                  setDragging(undefined)
+                  setDropAt(undefined)
+                  grabbedHandle.current = false
+                }}
+              >
                 {/*
                   "queued" on every waiting row says nothing about which of
                   them is about to start, which is the only thing the order is
@@ -479,26 +535,26 @@ export default function JobsPanel({
                 </span>
                 <span className="job-row-actions">
                   {waiting ? (
-                    <>
-                      <button
-                        className="icon-button"
-                        onClick={() => onMove(job.id, -1)}
-                        disabled={place === 0}
-                        aria-label="Repair this one sooner"
-                        data-label={place === 0 ? 'Already next' : 'Move up'}
-                      >
-                        <ArrowUpIcon />
-                      </button>
-                      <button
-                        className="icon-button"
-                        onClick={() => onMove(job.id, 1)}
-                        disabled={place === queued.length - 1}
-                        aria-label="Repair this one later"
-                        data-label={place === queued.length - 1 ? 'Already last' : 'Move down'}
-                      >
-                        <ArrowDownIcon />
-                      </button>
-                    </>
+                    <button
+                      className="icon-button grip"
+                      /*
+                        A drag is a mouse, and the queue should not need one.
+                        The handle is a button, so it takes focus, and the
+                        arrow keys move the repair a place at a time from
+                        there — the same reordering, without a second pair of
+                        buttons on every row to say so.
+                      */
+                      onKeyDown={(event) => {
+                        const to = event.key === 'ArrowUp' ? place - 1 : event.key === 'ArrowDown' ? place + 1 : undefined
+                        if (to == null || to < 0 || to > queued.length - 1) return
+                        event.preventDefault()
+                        onMove(job.id, to)
+                      }}
+                      aria-label={`Drag to reorder — ${place + 1} of ${queued.length} waiting. Arrow keys move it.`}
+                      data-label="Drag to reorder"
+                    >
+                      <GripIcon />
+                    </button>
                   ) : null}
                   {job.state === 'queued' || job.state === 'running' ? (
                     <button

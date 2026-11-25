@@ -447,19 +447,19 @@ export function installPreviewBridge(): void {
       clearFinished: async (): Promise<void> => undefined,
       clearQueued: async (): Promise<void> => undefined,
       /**
-       * The same answer the real queue gives: the id this one changed places
-       * with. The harness keeps its own copy of the waiting order so the
-       * arrows go on working past the first click, which is the only way to
-       * see whether they read correctly at the ends of a queue.
+       * The same answer the real queue gives: the new order of what is
+       * waiting. The harness keeps its own copy of that order, so a drag goes
+       * on working past the first one — which is the only way to see whether
+       * dropping something at the top or the bottom lands where it should.
        */
-      move: async (id: string, offset: -1 | 1): Promise<string | undefined> => {
+      move: async (id: string, index: number): Promise<string[] | undefined> => {
         const from = waitingOrder.indexOf(id)
-        const to = from + offset
-        if (from < 0 || to < 0 || to >= waitingOrder.length) return undefined
-        const other = waitingOrder[to]
-        waitingOrder[to] = waitingOrder[from]
-        waitingOrder[from] = other
-        return other
+        if (from < 0) return undefined
+        const to = Math.max(0, Math.min(waitingOrder.length - 1, Math.trunc(index)))
+        if (to === from) return undefined
+        const [moved] = waitingOrder.splice(from, 1)
+        waitingOrder.splice(to, 0, moved)
+        return [...waitingOrder]
       }
     },
     backups: {

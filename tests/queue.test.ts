@@ -169,7 +169,8 @@ describe('changing how many run at once', () => {
  * A queue of fifty films starts in whatever order the library was walked in,
  * and the one you actually want tonight is somewhere in the middle of it. The
  * order of what has not started is the only part of a queue that is still
- * anyone's to decide.
+ * anyone's to decide, and it is decided by dragging a row to a place — not by
+ * nudging it one step at a time.
  */
 describe('reordering what is waiting', () => {
   it('starts the one moved to the front first', async () => {
@@ -181,40 +182,50 @@ describe('reordering what is waiting', () => {
     expect(started).toEqual(['a'])
     expect(queue.pendingIds()).toEqual(['b', 'c', 'd'])
 
-    expect(queue.move('d', -1)).toBe('c')
-    expect(queue.move('d', -1)).toBe('b')
-    expect(queue.pendingIds()).toEqual(['d', 'b', 'c'])
+    expect(queue.moveTo('d', 0)).toEqual(['d', 'b', 'c'])
 
     await finish('a')
     expect(started).toEqual(['a', 'd'])
   })
 
-  it('says which task changed places, so a caller can follow', () => {
+  it('moves a task to any place in one go, in either direction', () => {
     const queue = new TaskQueue(1)
     const { add } = tasks()
-    for (const id of ['a', 'b', 'c']) add(queue, id)
+    for (const id of ['a', 'b', 'c', 'd', 'e']) add(queue, id)
+    expect(queue.pendingIds()).toEqual(['b', 'c', 'd', 'e'])
 
-    expect(queue.move('c', -1)).toBe('b')
-    expect(queue.pendingIds()).toEqual(['c', 'b'])
-    expect(queue.move('c', 1)).toBe('b')
-    expect(queue.pendingIds()).toEqual(['b', 'c'])
+    // Top to bottom, then bottom to the middle.
+    expect(queue.moveTo('b', 3)).toEqual(['c', 'd', 'e', 'b'])
+    expect(queue.moveTo('b', 1)).toEqual(['c', 'b', 'd', 'e'])
   })
 
-  it('does nothing at either end of the queue', () => {
+  /**
+   * "Drop it at the bottom" is a gesture, not a measurement. The caller should
+   * not have to count the queue to express it, and a queue that shrank while
+   * the drag was in the air must not throw the task somewhere surprising.
+   */
+  it('clamps a place outside the queue to its ends', () => {
+    const queue = new TaskQueue(1)
+    const { add } = tasks()
+    for (const id of ['a', 'b', 'c', 'd']) add(queue, id)
+
+    expect(queue.moveTo('b', 99)).toEqual(['c', 'd', 'b'])
+    expect(queue.moveTo('b', -99)).toEqual(['b', 'c', 'd'])
+  })
+
+  it('says nothing changed when it is already there', () => {
     const queue = new TaskQueue(1)
     const { add } = tasks()
     for (const id of ['a', 'b', 'c']) add(queue, id)
 
-    expect(queue.move('b', -1)).toBeUndefined()
-    expect(queue.move('c', 1)).toBeUndefined()
+    expect(queue.moveTo('b', 0)).toBeUndefined()
+    expect(queue.moveTo('c', 1)).toBeUndefined()
     expect(queue.pendingIds()).toEqual(['b', 'c'])
   })
 
   /**
-   * A running repair has a file open and a temporary half written. "Sooner"
-   * cannot mean anything to it, and the task it would change places with has
-   * not started — moving it would reorder the queue around a task that is not
-   * in the queue.
+   * A running task has a file open and a temporary half written. "Sooner"
+   * cannot mean anything to it, and it is not in the queue to be moved around.
    */
   it('will not move what is already running', () => {
     const queue = new TaskQueue(1)
@@ -222,7 +233,7 @@ describe('reordering what is waiting', () => {
     for (const id of ['a', 'b']) add(queue, id)
 
     expect(started).toEqual(['a'])
-    expect(queue.move('a', 1)).toBeUndefined()
+    expect(queue.moveTo('a', 1)).toBeUndefined()
     expect(queue.pendingIds()).toEqual(['b'])
   })
 
@@ -230,7 +241,7 @@ describe('reordering what is waiting', () => {
     const queue = new TaskQueue(1)
     const { add } = tasks()
     add(queue, 'a')
-    expect(queue.move('nobody', -1)).toBeUndefined()
+    expect(queue.moveTo('nobody', 0)).toBeUndefined()
   })
 
   it('never starts anything by itself', async () => {
@@ -238,7 +249,7 @@ describe('reordering what is waiting', () => {
     const { started, add } = tasks()
     for (const id of ['a', 'b', 'c']) add(queue, id)
 
-    queue.move('c', -1)
+    queue.moveTo('c', 0)
     await new Promise((resolve) => setTimeout(resolve, 10))
     // Still one running and two waiting: the order changed, not the limit.
     expect(started).toEqual(['a'])

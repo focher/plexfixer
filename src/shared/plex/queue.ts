@@ -104,12 +104,14 @@ export class TaskQueue {
   }
 
   /**
-   * Move a waiting task one place towards the front (`-1`) or the back (`1`).
+   * Move a waiting task to a given place in the queue.
    *
-   * Returns the id it changed places with, so a caller holding its own view of
-   * the order can make the same swap, or `undefined` when there was nothing to
-   * swap with: the task is already at that end of the queue, has already
-   * started, or has gone.
+   * `index` counts from the front of what is waiting, so 0 is next out. It is
+   * clamped, which is what lets "drop it at the bottom" be expressed as a
+   * number past the end rather than something the caller has to measure.
+   *
+   * Returns the new order of what is waiting, or `undefined` when nothing
+   * changed: the task has already started, has gone, or is already there.
    *
    * Only what is waiting can be reordered. A running task has a file open and
    * a temporary half written, and "run this one sooner" cannot mean anything
@@ -118,16 +120,16 @@ export class TaskQueue {
    * Nothing is pumped afterwards. Reordering changes which task runs next, not
    * how many may run, and a free slot would already have been filled.
    */
-  move(id: string, offset: -1 | 1): string | undefined {
+  moveTo(id: string, index: number): string[] | undefined {
     const from = this.pending.findIndex((task) => task.id === id)
     if (from < 0) return undefined
-    const to = from + offset
-    if (to < 0 || to >= this.pending.length) return undefined
 
-    const other = this.pending[to]
-    this.pending[to] = this.pending[from]
-    this.pending[from] = other
-    return other.id
+    const to = Math.max(0, Math.min(this.pending.length - 1, Math.trunc(index)))
+    if (to === from) return undefined
+
+    const [task] = this.pending.splice(from, 1)
+    this.pending.splice(to, 0, task)
+    return this.pendingIds()
   }
 
   /** The ids still waiting, in the order they will be started. */
