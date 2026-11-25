@@ -1,3 +1,5 @@
+import { normalizeLanguage, UNDEFINED_LANGUAGE } from '../languages.js'
+
 /**
  * The Whisper models, and which of them is worth fetching.
  *
@@ -310,4 +312,44 @@ export function describeWhisper(resolved: ResolvedWhisper): string {
     default:
       return 'No whisper-cli yet. Transcribing on this machine needs one.'
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * What a track can be translated into
+ * ------------------------------------------------------------------ */
+
+/**
+ * The languages offered for one track, in the order they should appear.
+ *
+ * Three rules, each of which was wrong once:
+ *
+ *   - The list comes from Settings — the preferred subtitle language and the
+ *     "Also look for" ones — because those are the languages this library has
+ *     been told it cares about.
+ *   - A track's own language is not on its own list. Translating an English
+ *     subtitle into English is not a thing, and offering it is what made the
+ *     picker look broken: with the default settings the list came to exactly
+ *     one entry, the track's own, so it opened on a single dead option.
+ *   - Duplicates and undetermined are dropped, so a language named twice in
+ *     Settings does not appear twice here.
+ */
+export function translationTargets(
+  trackLanguage: string,
+  preferred: string,
+  alsoLookFor: readonly string[]
+): string[] {
+  const own = normalizeLanguage(trackLanguage)
+  const seen = new Set<string>()
+  const targets: string[] = []
+
+  for (const raw of [preferred, ...alsoLookFor]) {
+    const language = normalizeLanguage(raw)
+    if (!language || language === UNDEFINED_LANGUAGE) continue
+    if (language === own) continue
+    if (seen.has(language)) continue
+    seen.add(language)
+    targets.push(language)
+  }
+
+  return targets
 }

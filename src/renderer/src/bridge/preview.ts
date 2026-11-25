@@ -307,7 +307,14 @@ const never = (): (() => void) => () => undefined
 export function installPreviewBridge(): void {
   // A key, so the metadata-lookup button renders in its live state rather
   // than greyed out. Nothing in the preview reaches themoviedb.org.
-  let settings: AppSettings = { ...DEFAULT_SETTINGS, tmdbCredential: 'preview' }
+  let settings: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    tmdbCredential: 'preview',
+    // Languages to translate into, so the per-track picker has something in it.
+    // With the defaults it holds one entry — the track's own — which is what
+    // made it look broken.
+    subtitleSearchLanguages: ['fre', 'spa', 'deu']
+  }
   let overrides: Record<string, string> = {}
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const progressListeners = new Set<(event: any) => void>()

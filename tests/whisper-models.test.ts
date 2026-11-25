@@ -9,6 +9,7 @@ import {
   MAC_INSTRUCTION,
   modelOfPath,
   RECOMMENDED_MODEL,
+  translationTargets,
   whisperBuild,
   whisperModel,
   WHISPER_BUILDS,
@@ -140,5 +141,37 @@ describe('what the panel says about the binary in use', () => {
     expect(describeWhisper({ source: 'installed', path: '/x/whisper-cli' })).toContain('PlexFixer installed')
     expect(describeWhisper({ source: 'path', path: '/opt/homebrew/bin/whisper-cli' })).toContain('already installed')
     expect(describeWhisper({ source: 'none' })).toContain('needs one')
+  })
+})
+
+describe('what a track can be translated into', () => {
+  it('never offers a track its own language', () => {
+    // The bug: with the default settings the preferred language is the only
+    // one configured, so an English track's picker came to exactly one option
+    // — English — and opened on a choice that did nothing. It read as broken
+    // because, for the thing it was for, it was.
+    expect(translationTargets('eng', 'eng', [])).toEqual([])
+    expect(translationTargets('eng', 'eng', ['fre', 'spa'])).toEqual(['fre', 'spa'])
+    expect(translationTargets('fre', 'eng', ['fre', 'spa'])).toEqual(['eng', 'spa'])
+  })
+
+  it('puts the preferred language first', () => {
+    // It is the one most likely to be wanted, so it should not have to be
+    // hunted for among the others.
+    // Normalised on the way through, the way every language in this app is:
+    // `deu` is ISO 639-2/T and the rest of the code speaks /B, so it comes
+    // back as `ger`.
+    expect(translationTargets('jpn', 'eng', ['spa', 'deu'])).toEqual(['eng', 'spa', 'ger'])
+  })
+
+  it('drops duplicates and undetermined', () => {
+    expect(translationTargets('jpn', 'eng', ['eng', 'spa', 'spa'])).toEqual(['eng', 'spa'])
+    expect(translationTargets('jpn', 'und', ['', 'spa'])).toEqual(['spa'])
+  })
+
+  it('matches however the language was spelled', () => {
+    // A file may say `fra`, `fre` or `French`; a track whose language is the
+    // same as a target in another spelling must still not be offered it.
+    expect(translationTargets('fra', 'eng', ['fre'])).toEqual(['eng'])
   })
 })

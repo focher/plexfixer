@@ -22,7 +22,8 @@
 
 import { useState } from 'react'
 import type { AnalysisResult, AppSettings, AudioStream, MediaStream, SubtitleStream, VideoStream } from '@shared/types.js'
-import { languageName, normalizeLanguage } from '@shared/languages.js'
+import { languageName } from '@shared/languages.js'
+import { translationTargets } from '@shared/subtitles/models.js'
 import { formatLevel, isTextSubtitle } from '@shared/plex/rules.js'
 import { formatBitrate } from '../format.js'
 import { CheckIcon, PlusIcon, SyncIcon, TranslateIcon } from './icons.js'
@@ -93,23 +94,17 @@ export interface TrackListProps {
 
 export default function TrackList(props: TrackListProps): React.JSX.Element {
   const streams = props.result.file.streams.filter((stream) => stream.kind !== 'data')
-  // The languages Settings already says this library cares about. Offering
-  // every language in the world here would be a list nobody scrolls; the ones
-  // somebody has configured are the ones they want.
-  const languages = [
-    props.settings.preferredSubtitleLanguage,
-    ...(props.settings.subtitleSearchLanguages ?? [])
-  ]
-    .map(normalizeLanguage)
-    .filter((language, index, all) => language && language !== 'und' && all.indexOf(language) === index)
-
   return (
     <div className="tracks">
       {streams.map((stream) => (
         <TrackRow
           key={stream.index}
           stream={stream}
-          languages={languages}
+          languages={translationTargets(
+            stream.language,
+            props.settings.preferredSubtitleLanguage,
+            props.settings.subtitleSearchLanguages ?? []
+          )}
           busy={props.busy?.has(stream.index) ?? false}
           onResync={props.onResync}
           onTranslate={props.onTranslate}
@@ -137,7 +132,18 @@ function TrackRow({
   onResync?: (streamIndex: number) => void
   onTranslate?: (streamIndex: number, language: string) => void
 }): React.JSX.Element {
-  const [target, setTarget] = useState(languages[0] ?? '')
+  // Already narrowed to this track: see `translationTargets`.
+  const options = languages
+
+  /*
+   * The choice is derived rather than stored, and only remembered once it is
+   * made. `useState(languages[0])` read the list on the first render and never
+   * looked again, so a language added in Settings never appeared, and a list
+   * that arrived empty left the selection stuck on nothing for ever.
+   */
+  const [chosen, setChosen] = useState<string>()
+  const target = chosen && options.includes(chosen) ? chosen : (options[0] ?? '')
+
   const flags = otherFlags(stream)
   // Only a text subtitle can be measured against speech or translated: there
   // are no words in a picture of words to work with.
@@ -173,31 +179,41 @@ function TrackRow({
             >
               <SyncIcon />
             </button>
-            {languages.length > 0 ? (
-              <span className="track-translate">
+            <span className="track-translate">
+              {/*
+                With nothing to offer, the picker is left out rather than
+                rendered with one dead entry in it, and the button says where
+                to add languages. A control that opens on a single choice reads
+                as broken, and it was.
+              */}
+              {options.length > 0 ? (
                 <select
                   value={target}
                   disabled={busy}
                   aria-label={`Language to translate track ${stream.index} into`}
-                  onChange={(event) => setTarget(event.target.value)}
+                  onChange={(event) => setChosen(event.target.value)}
                 >
-                  {languages.map((language) => (
+                  {options.map((language) => (
                     <option key={language} value={language}>
                       {languageName(language)}
                     </option>
                   ))}
                 </select>
-                <button
-                  className="icon-button"
-                  disabled={busy || !onTranslate || !target}
-                  onClick={() => onTranslate?.(stream.index, target)}
-                  aria-label={`Translate track ${stream.index}`}
-                  title={`Translate this track into ${languageName(target)} and add it to the film`}
-                >
-                  <TranslateIcon />
-                </button>
-              </span>
-            ) : null}
+              ) : null}
+              <button
+                className="icon-button"
+                disabled={busy || !onTranslate || !target}
+                onClick={() => onTranslate?.(stream.index, target)}
+                aria-label={`Translate track ${stream.index}`}
+                title={
+                  target
+                    ? `Translate this track into ${languageName(target)} and add it to the film`
+                    : 'Add the languages you want under Settings → Subtitles → Also look for'
+                }
+              >
+                <TranslateIcon />
+              </button>
+            </span>
           </>
         ) : null}
       </span>
