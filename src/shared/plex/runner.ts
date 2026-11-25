@@ -24,6 +24,7 @@ import { FfmpegError, runFfmpeg } from './ffmpeg-run.js'
 import { probeFile } from './probe.js'
 import { QtFaststartError, runQtFaststart } from './qt-faststart.js'
 import { indexMoveMismatch, isIndexMoveOnly } from './faststart.js'
+import { buildMp4TagsCommand, canWriteWithMp4Tags, isMp4Container } from './mp4-tags.js'
 import {
   buildRepairCommand,
   buildSubtitleReadCommand,
@@ -56,6 +57,8 @@ export interface RunnerBinaries {
   ffprobePath: string
   /** Moves an MP4's index in one pass, when that is the whole repair. */
   qtFaststartPath?: string
+  /** Writes tags without rewriting the file; optional. */
+  mp4tagsPath?: string
 }
 
 export interface EnqueueOptions {
@@ -775,6 +778,130 @@ export class RepairRunner {
     return true
   }
 
+  /**
+   * Write the file's own tags without rewriting the file.
+   *
+   * A title or an episode number is text of any length, so it cannot be slotted
+   * into the header the way a language tag can — which is why this used to mean
+   * a full remux, reading and writing every byte of a film to change two words.
+   * `mp4tags` does it properly: it keeps `free` padding beside the header and
+   * rewrites the chunk-offset tables when the header grows, so `mdat` never
+   * moves. The same library Subler uses, which is why that app is instant.
+   *
+   * Narrow on purpose. It runs only when writing tags is the *whole* repair: a
+   * plan that also drops a track or re-encodes has to copy the file anyway, and
+   * doing both would write the file twice.
+   *
+   * Returns false for anything it will not do, and the ordinary remux follows.
+   */
+  private async tryTagsOnly(id: string, options: EnqueueOptions, outputPath: string): Promise<boolean> {
+    const { result, settings } = options
+    const tags = result.plan.metadataTags
+    if (!tags || Object.keys(tags).length === 0) return false
+
+    const mp4tags = this.binaries.mp4tagsPath
+    if (!mp4tags) return false
+    if (this.host.kind === 'remote') return false
+    // Writing where the file lies is the whole point; somewhere else is a copy.
+    if (settings.outputPlacement !== 'in-place' || outputPath !== result.file.path) return false
+    if (!isMp4Container(result.file.extension)) return false
+    if (!canWriteWithMp4Tags(tags)) return false
+
+    // Everything else the plan might do needs the file rewritten. Tags have to
+    // be all of it.
+    const plan = result.plan
+    if (plan.strategy === 'transcode-video' || plan.requiresTranscode) return false
+    if (plan.videoTranscode || plan.addCompatibilityAudio) return false
+    if (plan.trackChanges.length > 0 || plan.resyncSubtitles.length > 0) return false
+    if (plan.targetContainer !== 'mp4' || plan.videoCodecTag || plan.videoLevel != null) return false
+    // Moving the index is a rewrite of the file by definition.
+    if (plan.faststart && result.file.faststart !== true) return false
+
+    const job = this.jobs.get(id)
+    if (!job) return false
+
+    const args = buildMp4TagsCommand(result.file.path, tags)
+    if (args.length === 0) return false
+
+    this.update({ ...job, state: 'running', stage: 'planning', startedAt: Date.now(), command: [mp4tags, ...args] })
+    this.log(id, 'info', 'Planned actions', describePlan(result))
+
+    // The same instant clone the header editor takes: it shares the file's
+    // data, so it costs no time and almost no space.
+    let backupPath: string | undefined
+    try {
+      backupPath = await cloneToBackup(result.file.path, settings, this.host)
+    } catch (error) {
+      this.log(id, 'warn', 'Could not make an instant backup; writing the tags without one', String(error))
+    }
+    if (backupPath) this.noteBackup(backupPath, result.file.path, true)
+
+    this.log(
+      id,
+      'info',
+      `Writing ${Object.keys(tags).length} tag${Object.keys(tags).length === 1 ? '' : 's'} into the file`,
+      `${Object.entries(tags)
+        .map(([key, value]) => `${key} = ${value || '(cleared)'}`)
+        .join('\n')}\n\n` +
+        'Written into the header where the file lies. The film itself is not copied, ' +
+        'so this takes about as long on a 40 GB file as on a 40 MB one.'
+    )
+
+    try {
+      await this.host.exec(mp4tags, args, { timeoutMs: 120_000 })
+    } catch (error) {
+      // Nothing is half-written: mp4tags either rewrites the header or leaves
+      // it. The remux still works, so this is a fallback and not a failure.
+      this.log(id, 'warn', 'Could not write the tags in place; falling back to a full rewrite', String(error))
+      return false
+    }
+
+    // The same gate the header editor uses: what does the file say now?
+    try {
+      const probed = await probeFile(result.file.path, {
+        ffprobePath: this.binaries.ffprobePath,
+        host: this.host
+      })
+      const missing = Object.entries(tags).filter(([key, value]) => {
+        const written = Object.entries(probed.tags).find(([name]) => name.toLowerCase() === key)?.[1]
+        return value.trim() === '' ? written != null && written.trim() !== '' : (written ?? '') !== value
+      })
+      if (missing.length > 0) {
+        throw new Error(`the file does not read back with ${missing.map(([key]) => key).join(', ')}`)
+      }
+    } catch (error) {
+      this.log(id, 'warn', 'The tags did not verify; falling back to a full rewrite', String(error))
+      return false
+    }
+
+    const running = this.jobs.get(id)
+    if (running) {
+      const elapsed = running.startedAt ? Date.now() - running.startedAt : 0
+      this.addPhase(id, 'in-place-edit', elapsed, { note: 'tags written into the header; nothing copied' })
+      this.addPhase(id, 'total', elapsed)
+      const finished = this.jobs.get(id) ?? running
+      const seconds = finished.startedAt ? ((Date.now() - finished.startedAt) / 1000).toFixed(1) : '?'
+      this.update({
+        ...finished,
+        state: 'done',
+        stage: 'finished',
+        outputPath: result.file.path,
+        progress: { ...finished.progress, fraction: 1 },
+        message: [
+          'tags written in place — nothing copied',
+          backupPath
+            ? `original kept in ${this.host.paths.join(BACKUP_LABEL, this.host.paths.basename(backupPath))}`
+            : undefined
+        ]
+          .filter(Boolean)
+          .join('; '),
+        finishedAt: Date.now(),
+        log: [...finished.log, { at: Date.now(), level: 'info', text: `Done in ${seconds}s` }]
+      })
+    }
+    return true
+  }
+
   private async execute(
     id: string,
     options: EnqueueOptions,
@@ -793,6 +920,10 @@ export class RepairRunner {
     // machine: an unreachable host hangs here, not in ffmpeg.
     this.setStage(id, 'connecting')
     const checkStarted = performance.now()
+    // Tags first: a tag edit is the one repair that needs neither a copy nor a
+    // header patch, and asking about it before the patcher keeps the patcher's
+    // refusal reasons about the things it actually refuses.
+    if (await this.tryTagsOnly(id, options, outputPath)) return
     if (await this.tryInPlace(id, options, outputPath)) return
     const checkMs = performance.now() - checkStarted
 

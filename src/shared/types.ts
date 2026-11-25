@@ -932,6 +932,13 @@ export interface EnvironmentInfo {
   ffprobePath?: string
   /** Moves an MP4's index in one pass; optional, ffmpeg does it otherwise. */
   qtFaststartPath?: string
+  /**
+   * Writes a file's own tags without rewriting it; optional.
+   *
+   * Without it a tag edit goes through ffmpeg, which copies every byte of the
+   * film to change two words.
+   */
+  mp4tagsPath?: string
   ffmpegSource?: 'settings' | 'bundled' | 'path'
   ffprobeSource?: 'settings' | 'bundled' | 'path'
   ffmpegVersion?: string

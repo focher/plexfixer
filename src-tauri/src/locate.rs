@@ -143,6 +143,20 @@ pub fn locate_qt_faststart(app: &AppHandle, ffmpeg: &Path) -> Option<PathBuf> {
     qt_faststart_beside(ffmpeg).or_else(|| locate(app, "qt-faststart", None).map(|found| found.path))
 }
 
+/// `mp4tags`, which writes a file's own tags without rewriting the file.
+///
+/// Optional in exactly the way `qt-faststart` is: without it a tag edit goes
+/// through ffmpeg, which copies every byte to change two words. Found the same
+/// way, and for the same reason — a Homebrew mp4v2 is as good as the bundled
+/// one, and somebody who has installed it should not have it ignored.
+pub fn locate_mp4tags(app: &AppHandle, ffmpeg: Option<&Path>) -> Option<PathBuf> {
+    let beside = ffmpeg
+        .and_then(|path| path.parent())
+        .map(|dir| dir.join(exe_name("mp4tags")))
+        .filter(|candidate| candidate.is_file());
+    beside.or_else(|| locate(app, "mp4tags", None).map(|found| found.path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -183,7 +183,8 @@ async function ensureRunner(): Promise<RepairRunner> {
   const binaries = {
     ffmpegPath: environment.ffmpegPath,
     ffprobePath: ready.ffprobePath,
-    qtFaststartPath: environment.qtFaststartPath
+    qtFaststartPath: environment.qtFaststartPath,
+    mp4tagsPath: environment.mp4tagsPath
   }
 
   if (!runner) {

@@ -55,6 +55,7 @@ import { promisify } from 'node:util'
 import { assertChecksum, hashingTap } from './lib/checksum.mjs'
 import { licenseOf } from './lib/ffmpeg-license.mjs'
 import { ensureQtFaststart } from './lib/qt-faststart.mjs'
+import { ensureMp4Tags } from './lib/mp4tags.mjs'
 
 const execFileAsync = promisify(execFile)
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -307,6 +308,28 @@ async function addQtFaststart(platformKey, outputDir, workDir, force) {
   }
 }
 
+/**
+ * Build `mp4tags` into the platform folder, and say what happened.
+ *
+ * Never throws, for the same reason `qt-faststart` does not: without it the app
+ * writes tags by remuxing, which is what it did before this existed.
+ */
+async function addMp4Tags(platformKey, outputDir, workDir, force) {
+  const result = await ensureMp4Tags({
+    platformKey,
+    outputDir,
+    workDir: join(workDir, 'mp4v2'),
+    force,
+    download,
+  })
+  if (result.state === 'built') {
+    console.log(`  → mp4tags (mp4v2 ${result.version}, compiled here)`)
+  } else if (result.state === 'skipped') {
+    console.log(`  no mp4tags: ${result.reason}`)
+    console.log('    tag edits will rewrite the file through ffmpeg instead.')
+  }
+}
+
 async function fetchTarget(platformKey, { force, allowNonfree }) {
   const target = TARGETS[platformKey]
   if (!target) {
@@ -336,6 +359,7 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
     // qt-faststart, and skipping the whole target would never add one.
     if (haveFfmpeg) {
       await addQtFaststart(platformKey, outputDir, workDir, force)
+      await addMp4Tags(platformKey, outputDir, workDir, force)
       return
     }
     if (target.kind === 'files') {
@@ -390,6 +414,7 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
     }
 
     await addQtFaststart(platformKey, outputDir, workDir, force)
+    await addMp4Tags(platformKey, outputDir, workDir, force)
   } finally {
     // Retries for the same reason `move` has them: a scanner still holding one
     // of the files it just unpacked would otherwise fail a fetch that worked.

@@ -22,7 +22,7 @@ use tauri::{AppHandle, Manager};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-use crate::locate::{locate, locate_qt_faststart};
+use crate::locate::{locate, locate_mp4tags, locate_qt_faststart};
 use crate::settings::Store;
 
 /// Directories that never hold library media and cost time to walk.
@@ -111,8 +111,14 @@ pub async fn allowed_binary(app: &AppHandle, command: &str) -> bool {
         .filter_map(|name| locate(app, name, None).map(|found| found.path))
         .collect();
     let ffmpeg = locate(app, "ffmpeg", chosen("ffmpegPath").as_deref()).map(|found| found.path);
-    if let Some(qt) = ffmpeg.and_then(|ffmpeg| locate_qt_faststart(app, &ffmpeg)) {
+    if let Some(qt) = ffmpeg.as_deref().and_then(|ffmpeg| locate_qt_faststart(app, ffmpeg)) {
         located.push(qt);
+    }
+    // `mp4tags`, which writes a file's own tags without rewriting the file.
+    // Resolved here like the rest: beside the ffmpeg in use, bundled, or on
+    // PATH. The caller never names it.
+    if let Some(tags) = locate_mp4tags(app, ffmpeg.as_deref()) {
+        located.push(tags);
     }
     // A whisper.cpp build this app installed into its own folder, and one
     // already on PATH — a Homebrew install, say, on the platform upstream

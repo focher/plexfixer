@@ -35,6 +35,29 @@ Both macOS architectures come from one upstream build, configured
 is deliberate: 0.1.1 took the two architectures from two different projects,
 and only one of them turned out to be redistributable.
 
+## mp4v2 (`mp4tags`)
+
+PlexFixer bundles `mp4tags`, built from [mp4v2](https://github.com/enzo1982/mp4v2)
+v2.1.3, as a **separate executable** invoked as a subprocess. No mp4v2 code is
+linked into the application.
+
+mp4v2 is distributed under the **Mozilla Public License 1.1**, which is in the
+source archive as `COPYING`. The exact source PlexFixer compiles is pinned in
+`scripts/lib/mp4tags.mjs` — one release tarball, checked against a SHA-256
+before anything is built from it — and is available from the release page
+above.
+
+It is built rather than downloaded because mp4v2 publishes source and nothing
+else: no project ships a prebuilt `mp4tags` for Windows or for either macOS
+architecture. The build is CMake with `BUILD_SHARED=OFF`, so the tool carries
+its own copy of the library and there is no shared object to ship beside it.
+
+It exists to make a metadata edit instant. ffmpeg can only write a file's tags
+by remuxing it, which reads and writes every byte to change two words; mp4v2
+keeps free space beside the header and rewrites the chunk-offset tables when
+the header grows, so the media data never moves. Without it the app writes tags
+the way it always did, by rewriting the file.
+
 Every download is pinned to a release tag and checked against a SHA-256 before
 it is used, so a build either ships the bytes that were chosen or stops.
 `scripts/fetch-ffmpeg.mjs` is the single place these URLs and checksums are
