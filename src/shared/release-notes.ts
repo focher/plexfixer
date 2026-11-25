@@ -34,6 +34,45 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.3.1',
+    headline: 'Typing works again: the dialogs were taking focus back from under you.',
+    changes: [
+      {
+        title: 'Fields keep the caret',
+        body:
+          'Click into a field, the caret appears, and it is gone again \u2014 every field, in every dialog. Three of ' +
+          'them re-ran the effect that focuses their Close button on every render of whatever was around them, ' +
+          'and that happens for anything at all: a repair reporting progress, a scan, a counter ticking. The ' +
+          'focus now happens once, when the dialog opens. This is also the likeliest reason an episode number ' +
+          'could come out as 206 when you typed 6: a caret put back at the start mid-edit puts keystrokes ' +
+          'where they were not aimed.'
+      },
+      {
+        title: 'The editor trusts what the file says over what it is called',
+        body:
+          'The season and episode boxes were filled in from the file name and ignored the tags the file ' +
+          'carries \u2014 and those boxes are written back, so picking a series could overwrite a correct ' +
+          'episode number with one read out of the name. A tag is evidence; a name is an inference, and an ' +
+          'inference should not replace a statement.'
+      },
+      {
+        title: 'The translate picker has something to pick',
+        body:
+          'The language dropdown on a subtitle track offered one option \u2014 the track\u2019s own language \u2014 so it ' +
+          'opened on a choice that did nothing. A track is no longer offered the language it is already in, ' +
+          'and with nothing left to offer the picker is not drawn at all; the button says where to add ' +
+          'languages instead.'
+      },
+      {
+        title: 'An open file survives a re-scan',
+        body:
+          'A background re-scan could unmount the details panel for a single frame, taking any dialog open ' +
+          'inside it \u2014 and everything typed into it \u2014 with it. While a row is open it now keeps showing ' +
+          'what it had.'
+      }
+    ]
+  },
+  {
     version: '0.3.0',
     headline: 'A light interface built around titles rather than file names, and subtitles that stay in the film.',
     changes: [
