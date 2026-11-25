@@ -375,6 +375,13 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
         if (!platformKey.startsWith('win32')) await chmod(finalPaths[name], 0o755)
         console.log(`  → ${finalPaths[name]}`)
       }
+      // The same two tools the archive path gets. This `return` used to come
+      // straight after the loop, so a target whose binaries are fetched as
+      // individual files — darwin-x64 is the only one — silently never got
+      // either of them. Intel Macs have been shipping without qt-faststart
+      // since it was added, and would have shipped without mp4tags too.
+      await addQtFaststart(platformKey, outputDir, workDir, force)
+      await addMp4Tags(platformKey, outputDir, workDir, force)
       return
     }
 
