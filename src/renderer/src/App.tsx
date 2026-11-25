@@ -15,7 +15,8 @@ import type {
 import { resolveMode } from '@shared/mode.js'
 import { DEFAULT_SORT, nextSort, sortResults, type SortState } from '@shared/sort.js'
 import ResultsTable from './components/ResultsTable.js'
-import FilterBar from './components/FilterBar.js'
+import FileDetail from './components/FileDetail.js'
+import { FilterMenu, HidePassed, SearchBox } from './components/LibraryControls.js'
 import MenuButton from './components/MenuButton.js'
 import BulkMetadataDialog from './components/BulkMetadataDialog.js'
 import RepairDialog from './components/RepairDialog.js'
@@ -32,6 +33,17 @@ import { pruneSelection } from '@shared/selection.js'
 import { latestNotes, notesSince, type ReleaseNote } from '@shared/release-notes.js'
 import { formatBytes } from './format.js'
 import { readPref, readText, writePref, writeText } from './prefs.js'
+
+const OUTPUT_OVERRIDES_KEY = 'plexfixer.outputOverrides'
+
+function readOutputOverrides(): Record<string, OutputOverride> {
+  try {
+    const raw = localStorage.getItem(OUTPUT_OVERRIDES_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, OutputOverride>) : {}
+  } catch {
+    return {}
+  }
+}
 import {
   codecFilterActive,
   countCodecs,
@@ -118,6 +130,19 @@ export default function App(): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [scanErrors, setScanErrors] = useState<ScanError[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  /** The row whose details are open in the panel beside the list. */
+  const [openPath, setOpenPath] = useState<string>()
+  /**
+   * Where one file's repair goes, when that is not what Settings says.
+   *
+   * Kept here rather than in the settings file because it belongs to a path
+   * that may not exist tomorrow: a destination set on a file that has since
+   * been moved or repaired is not worth carrying forward, and the settings
+   * file is not the place to accumulate dead paths.
+   */
+  const [outputOverrides, setOutputOverrides] = useState<Record<string, OutputOverride>>(() => readOutputOverrides())
+  const outputOverridesRef = useRef(outputOverrides)
+  outputOverridesRef.current = outputOverrides
   // The paths a bulk metadata lookup is open for; undefined when it is not.
   const [lookingUp, setLookingUp] = useState<string[] | undefined>()
   const [facets, setFacets] = useState<Set<ResultFacet>>(new Set())
@@ -145,6 +170,8 @@ export default function App(): React.JSX.Element {
     summary: RepairSummary
     mode?: RepairMode
     mayRename: boolean
+    /** A destination already set on the file, which the dialog starts from. */
+    output?: OutputOverride
   }>()
 
   const scanIdRef = useRef<string | undefined>(undefined)
@@ -567,11 +594,17 @@ export default function App(): React.JSX.Element {
       // Anything that re-encodes asks first — one file included, which used to
       // start hours of work from a single click — and the question it asks is
       // where the result goes, not only whether to go ahead.
+      // A destination set on a file applies to repairs of that file. Only for
+      // one at a time: a selection of twenty with four different destinations
+      // is one job queue that cannot honour all of them, and quietly picking
+      // one would be worse than ignoring them all.
+      const output = requests.length === 1 ? outputOverridesRef.current[requests[0].file.path] : undefined
+
       if (summary.reencode > 0) {
-        setConfirming({ requests, summary, mode, mayRename })
+        setConfirming({ requests, summary, mode, mayRename, output })
         return
       }
-      await startRepair(requests, mode)
+      await startRepair(requests, mode, output)
     },
     []
   )
@@ -678,11 +711,6 @@ export default function App(): React.JSX.Element {
   // The folders the library was built from, for the folder-level suggestion.
   const libraryRoots = useMemo(() => refreshRoots(library.values()), [library])
 
-  const needsTranscode = useMemo(
-    () => results.filter((entry) => fileStatus(entry) === 'reencode').map((entry) => entry.file.path),
-    [results]
-  )
-
   const resultsByPath = useMemo(() => {
     const map = new Map<string, AnalysisResult>()
     for (const entry of results) map.set(entry.file.path, entry)
@@ -692,6 +720,11 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     resultsByPathRef.current = resultsByPath
   }, [resultsByPath])
+
+  // The row the panel is showing. Read from the map rather than held in state,
+  // so a re-scan of that file updates the panel instead of leaving it showing
+  // what the file used to be.
+  const openResult = openPath ? resultsByPath.get(openPath) : undefined
 
   // The search narrows first, so the chips count what the search left.
   const searched = useMemo(
@@ -943,128 +976,87 @@ export default function App(): React.JSX.Element {
 
               {results.length > 0 ? (
                 <>
-                  <div className="summary">
-                    {STATUS_TILES.map((tile) => {
-                      const on = status === tile.key
-                      return (
-                        <button
-                          key={tile.key}
-                          className={`stat ${tile.tone}`}
-                          aria-pressed={on}
-                          title={on ? 'Show all files again' : tile.hint}
-                          onClick={() => setStatus(on ? undefined : tile.key)}
-                        >
-                          <div className="value">{counts[tile.key]}</div>
-                          <div className="label">
-                            {tile.label}
-                            {on ? <span className="clear-mark"> ×</span> : null}
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  {needsTranscode.length > 0 ? (
-                    <div className="banner">
-                      <strong>
-                        {needsTranscode.length} file{needsTranscode.length === 1 ? '' : 's'} cannot be fixed by a remux
-                        alone.
-                      </strong>{' '}
-                      A safe remux will skip {needsTranscode.length === 1 ? 'it' : 'them'}; Force transcode re-encodes the
-                      video.
-                      <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        <button onClick={() => void repair(needsTranscode, 'force-transcode')}>
-                          Force transcode {needsTranscode.length === 1 ? 'it' : 'these'} now
-                        </button>
-                        {libraryRoots.length === 1 &&
-                        resolveMode(libraryRoots[0], overrides, settings.defaultMode).mode !== 'force-transcode' ? (
+                  <div className="library-bar">
+                    <div className="summary">
+                      {STATUS_TILES.map((tile) => {
+                        const on = status === tile.key
+                        return (
                           <button
-                            onClick={() => void setMode(libraryRoots[0], 'force-transcode')}
-                            title={`Everything under ${libraryRoots[0]} repairs in force-transcode mode from now on`}
+                            key={tile.key}
+                            className={`stat ${tile.tone}${counts[tile.key] === 0 ? ' quiet' : ''}`}
+                            aria-pressed={on}
+                            title={on ? 'Show all files again' : tile.hint}
+                            onClick={() => setStatus(on ? undefined : tile.key)}
                           >
-                            Set this folder to Force transcode
+                            <span className="value">{counts[tile.key]}</span>
+                            <span className="label">
+                              {tile.label}
+                              {on ? <span className="clear-mark"> ×</span> : null}
+                            </span>
                           </button>
-                        ) : null}
-                      </div>
+                        )
+                      })}
                     </div>
-                  ) : null}
 
-                  <div className="searchbar">
-                    <input
-                      type="search"
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      placeholder="Search files and folders"
-                      aria-label="Search files and folders"
-                      spellCheck={false}
-                    />
-                    {(query.trim() || status || hidingPassed) && !chipFiltersActive ? (
-                      <span className="muted nowrap">
-                        {visibleResults.length} of {results.length}
-                      </span>
-                    ) : null}
                     <span className="spacer" />
-                    <label
-                      className={`toggle${hidingPassed ? ' on' : ''}`}
-                      title={
-                        status === 'passed'
-                          ? 'Turns off the Passed filter and hides passed files'
-                          : 'Leave out files that passed every check'
+
+                    <SearchBox
+                      value={query}
+                      onChange={setQuery}
+                      summary={
+                        visibleResults.length === results.length
+                          ? undefined
+                          : `${visibleResults.length} of ${results.length}`
                       }
-                    >
-                      <input
-                        type="checkbox"
-                        checked={hidingPassed}
-                        onChange={(event) => {
-                          const on = event.target.checked
-                          setHidePassed(on)
-                          writePref('hidePassed', on)
-                          // Hiding passed files while the Passed tile is showing
-                          // only them is a contradiction. The switch is the later
-                          // instruction, so the tile gives way.
-                          if (on && status === 'passed') setStatus(undefined)
-                        }}
-                      />
-                      <span className="switch" aria-hidden="true" />
-                      Hide passed
-                      <span className="count">{counts.passed}</span>
-                    </label>
+                    />
+
+                    <HidePassed
+                      on={hidingPassed}
+                      count={counts.passed}
+                      onChange={(hide) => {
+                        setHidePassed(hide)
+                        writePref('hidePassed', hide)
+                        // Hiding passed files while the Passed tile is showing
+                        // only them is a contradiction. The switch is the later
+                        // instruction, so the tile gives way.
+                        if (hide && status === 'passed') setStatus(undefined)
+                      }}
+                    />
+
+                    <FilterMenu
+                      counts={facetCounts}
+                      active={facets}
+                      codecCounts={codecCounts}
+                      codecs={codecs}
+                      onToggle={(facet) =>
+                        setFacets((previous) => {
+                          const next = new Set(previous)
+                          if (next.has(facet)) next.delete(facet)
+                          else next.add(facet)
+                          return next
+                        })
+                      }
+                      onToggleCodec={(kind, codec) =>
+                        setCodecs((previous) => {
+                          const next = new Set(previous[kind])
+                          if (next.has(codec)) next.delete(codec)
+                          else next.add(codec)
+                          return { ...previous, [kind]: next }
+                        })
+                      }
+                      onClear={() => {
+                        setFacets(new Set())
+                        setCodecs({ video: new Set(), audio: new Set() })
+                      }}
+                    />
                   </div>
 
-                  <FilterBar
-                    counts={facetCounts}
-                    active={facets}
-                    codecCounts={codecCounts}
-                    codecs={codecs}
-                    total={results.length}
-                    shown={visibleResults.length}
-                    onToggle={(facet) =>
-                      setFacets((previous) => {
-                        const next = new Set(previous)
-                        if (next.has(facet)) next.delete(facet)
-                        else next.add(facet)
-                        return next
-                      })
-                    }
-                    onToggleCodec={(kind, codec) =>
-                      setCodecs((previous) => {
-                        const next = new Set(previous[kind])
-                        if (next.has(codec)) next.delete(codec)
-                        else next.add(codec)
-                        return { ...previous, [kind]: next }
-                      })
-                    }
-                    onClearCodecs={(kind) => setCodecs((previous) => ({ ...previous, [kind]: new Set() }))}
-                    onClear={() => {
-                      setFacets(new Set())
-                      setCodecs(emptyCodecFilter())
-                    }}
-                  />
+
                 </>
               ) : null}
             </div>
 
-            <div className="library-body">
+            <div className={`library-body${openResult ? ' with-panel' : ''}`}>
               {results.length === 0 && !scanning ? (
                 <div className={`dropzone${dragging ? ' active' : ''}`}>
                   <h2>Drop media files or a folder here</h2>
@@ -1156,9 +1148,57 @@ export default function App(): React.JSX.Element {
                     onReveal={(path) => void window.plexfixer.shell.reveal(path)}
                     onContextMenu={(path) => void window.plexfixer.shell.fileMenu(path)}
                     onRefresh={(path) => void refreshFile(path)}
+                    onLookUp={(path) => setLookingUp([path])}
+                    lookUpDisabledHint={
+                      settings.tmdbCredential.trim() === ''
+                        ? 'Add your themoviedb.org key under Settings → Metadata first'
+                        : undefined
+                    }
                     refreshing={refreshing}
+                    activePath={openPath}
+                    onOpen={(path) => setOpenPath((current) => (current === path ? undefined : path))}
                   />
                 </>
+              ) : null}
+
+              {/*
+                The details of whichever row is open, beside the list rather
+                than unfolded inside it. A row that grew to four hundred pixels
+                pushed every other row off the screen, so comparing the file
+                you opened with the one under it meant closing it again.
+              */}
+              {openResult && settings ? (
+                <aside className="detail-panel">
+                  <FileDetail
+                    result={openResult}
+                    job={jobsByPath.get(openResult.file.path)}
+                    onReveal={(path) => void window.plexfixer.shell.reveal(path)}
+                    mode={resolveMode(openResult.file.path, overrides, settings.defaultMode)}
+                    defaultMode={settings.defaultMode}
+                    overrides={overrides}
+                    onSetMode={(path, mode) => void setMode(path, mode)}
+                    settings={settings}
+                    environment={environment}
+                    appVersion={about?.version}
+                    onApplyMetadata={(path, edits) => void applyMetadata(path, edits)}
+                    onSubtitleWritten={(path) => void refreshFile(path)}
+                    onClose={() => setOpenPath(undefined)}
+                    outputOverride={outputOverrides[openResult.file.path]}
+                    onSetOutput={(next) =>
+                      setOutputOverrides((previous) => {
+                        const updated = { ...previous }
+                        if (next) updated[openResult.file.path] = next
+                        else delete updated[openResult.file.path]
+                        try {
+                          localStorage.setItem(OUTPUT_OVERRIDES_KEY, JSON.stringify(updated))
+                        } catch {
+                          /* a destination that is not remembered is not worth an error */
+                        }
+                        return updated
+                      })
+                    }
+                  />
+                </aside>
               ) : null}
             </div>
           </div>

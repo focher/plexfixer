@@ -4,7 +4,8 @@ import { buildDiagnosticsReport, buildJobReport } from '@shared/report.js'
 import { PHASE_LABEL, diagnoseMetrics, formatMs, phase, rankedPhases, summarizeMetrics } from '@shared/metrics.js'
 import { STAGE_DETAIL, describeProgress, stalledSeconds, stepsFor } from '@shared/stages.js'
 import { countCompleted, visibleJobs } from '@shared/jobs.js'
-import { shortenPath } from '../format.js'
+import { CopyIcon, FolderIcon, StopIcon } from './icons.js'
+import { mediaTitle } from '@shared/plex/title.js'
 import { readPref, writePref } from '../prefs.js'
 import MenuButton from './MenuButton.js'
 
@@ -20,6 +21,29 @@ const TONE: Record<Job['state'], string> = {
 /** Seconds since the job's first log entry, so steps read as a timeline. */
 function offsetOf(entry: JobLogEntry, start: number): string {
   return `${((entry.at - start) / 1000).toFixed(1)}s`
+}
+
+/**
+ * What to call the file a job is working on.
+ *
+ * The analysis is the better source, since it holds the tags — but a job
+ * outlives the row it came from: the library can be re-scanned, or the file
+ * replaced and no longer at the path the job remembers. So this falls back to
+ * reading the path's last segment the same way, rather than to showing the
+ * path, which is what it used to do and what nobody recognises at a glance.
+ */
+function jobTitle(job: Job, result?: AnalysisResult): string {
+  const file =
+    result?.file ??
+    ({
+      fileName: job.sourcePath.split(/[\\/]/).pop() ?? job.sourcePath,
+      tags: {}
+    } as AnalysisResult['file'])
+
+  const title = mediaTitle(file)
+  const code = title.code ? `${title.code} ` : ''
+  const name = title.episodeTitle ? `${title.title} — ${title.episodeTitle}` : title.title
+  return `${code}${name}`
 }
 
 function JobLog({ job }: { job: Job }): React.JSX.Element {
@@ -354,6 +378,7 @@ export default function JobsPanel({
         ) : null}
         {diagnosticsMenu}
         <button
+          className="caution"
           onClick={onCancelAll}
           disabled={active.length === 0}
           title="Stop everything: what is running, what is waiting, and anything still being added. Repairs that never started are removed; finished ones stay."
@@ -385,8 +410,14 @@ export default function JobsPanel({
               <div className="job">
                 <span className={`badge ${TONE[job.state]}`}>{job.state}</span>
                 <span>
-                  <div className="name" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {shortenPath(job.sourcePath, 2)}
+                  {/*
+                    The title, as the library shows it. The queue used to show
+                    a shortened path, which meant the same film was named one
+                    way in the list and another here — and a path is the one
+                    thing about a file nobody recognises at a glance.
+                  */}
+                  <div className="job-title">
+                    {jobTitle(job, resultsByPath.get(job.sourcePath))}
                   </div>
                   {job.message ? (
                     <div className="muted" style={{ fontSize: 12 }}>
@@ -404,8 +435,16 @@ export default function JobsPanel({
                       {open ? '▾' : '▸'} {job.log.length} step{job.log.length === 1 ? '' : 's'}
                       {job.metrics ? ' and timings' : ''}
                     </button>
-                    <button className="ghost" onClick={() => void copy(job.id, reportFor(job))}>
-                      {copied === job.id ? 'Copied ✓' : 'Copy report'}
+                    {/* The same icon, in the same place, as the one in the
+                        library's detail panel: copying the report is one
+                        action and should not have two appearances. */}
+                    <button
+                      className="icon-button"
+                      onClick={() => void copy(job.id, reportFor(job))}
+                      aria-label="Copy the report"
+                      data-label={copied === job.id ? 'Copied' : 'Copy report'}
+                    >
+                      <CopyIcon />
                     </button>
                   </div>
                 </span>
@@ -419,14 +458,24 @@ export default function JobsPanel({
                         ? `${Math.round((job.finishedAt - job.startedAt) / 1000)}s`
                         : ''))}
                 </span>
-                <span className="nowrap">
+                <span className="job-row-actions">
                   {job.state === 'queued' || job.state === 'running' ? (
-                    <button className="ghost" onClick={() => onCancel(job.id)}>
-                      Cancel
+                    <button
+                      className="icon-button danger"
+                      onClick={() => onCancel(job.id)}
+                      aria-label="Stop this repair"
+                      data-label="Stop"
+                    >
+                      <StopIcon />
                     </button>
                   ) : job.state === 'done' ? (
-                    <button className="ghost" onClick={() => onReveal(job.outputPath)}>
-                      Reveal
+                    <button
+                      className="icon-button"
+                      onClick={() => onReveal(job.outputPath)}
+                      aria-label="Show where the file is"
+                      data-label="Show in folder"
+                    >
+                      <FolderIcon />
                     </button>
                   ) : null}
                 </span>

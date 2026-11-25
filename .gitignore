@@ -26,3 +26,6 @@ stats.html
 
 # Per-machine Claude Code permissions (settings.json is shared, .local is not)
 .claude/settings.local.json
+
+# Screenshots taken for a UI review; not part of the build.
+ui-review/

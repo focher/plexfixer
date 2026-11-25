@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import type {
   AnalysisResult,
   AppSettings,
@@ -12,11 +11,11 @@ import { MODE_LABEL, resolveMode } from '@shared/mode.js'
 import { summarizeReason } from '@shared/plex/reason.js'
 import { fileStatus, type FileStatus } from '@shared/plex/facets.js'
 import { describeProgress } from '@shared/stages.js'
-import FileDetail from './FileDetail.js'
 import type { SortKey, SortState } from '@shared/sort.js'
-import { formatAgo, formatAudioCodec, formatBytes, formatVideoCodec, parentDirectory, shortenPath } from '../format.js'
-import { audioStreams, defaultAudioStream, videoStreams } from '@shared/plex/tracks.js'
-import { BoltIcon, RefreshIcon, WrenchIcon } from './icons.js'
+import { formatAudioCodec, formatBytes, formatVideoCodec, parentDirectory } from '../format.js'
+import { defaultAudioStream, videoStreams } from '@shared/plex/tracks.js'
+import { BoltIcon, InfoIcon, RefreshIcon, TagIcon, WrenchIcon } from './icons.js'
+import { mediaKindLabel, mediaTitle } from '@shared/plex/title.js'
 
 /** How an overridden mode shows in the row. */
 const MODE_TONE: Record<RepairMode, string> = {
@@ -62,6 +61,10 @@ export interface ResultsTableProps {
   onApplyMetadata?: (path: string, edit: MetadataEdit) => void
   /** A subtitle landed beside a film, so that row needs re-reading. */
   onSubtitleWritten?: (path: string) => void
+  /** The row whose details are open in the panel beside the list. */
+  activePath?: string
+  /** Clicking a row opens it there rather than unfolding it here. */
+  onOpen: (path: string) => void
   /** Per-file and per-folder mode overrides, and the fallback they resolve against. */
   overrides: ModeOverrides
   defaultMode: RepairMode
@@ -76,6 +79,17 @@ export interface ResultsTableProps {
   onContextMenu: (path: string) => void
   /** Re-analyse one file without rebuilding the whole table. */
   onRefresh: (path: string) => void
+  /**
+   * Look one file up on themoviedb.org.
+   *
+   * Per row as well as in the Bulk menu, because looking one film up is the
+   * commoner thing by far — a new rip lands, its tags are whatever the ripper
+   * wrote, and selecting it to reach a menu is three clicks to do what the
+   * row is already offering two of.
+   */
+  onLookUp?: (path: string) => void
+  /** Why the lookup is unavailable, when it is. */
+  lookUpDisabledHint?: string
   /** Paths with a refresh in flight. */
   refreshing: Set<string>
   /** Which column the table is ordered by. */
@@ -118,24 +132,52 @@ function SortHeader({
   )
 }
 
+/**
+ * The technical facts, behind an icon.
+ *
+ * They were two columns of their own — size over codecs, and when it was
+ * scanned — and they earned neither. Nobody scans a library to find out how
+ * big the files are; they want to know what is wrong and what will be done
+ * about it. So the facts move behind an icon beside the title, where they are
+ * one hover away from whoever actually wants them, and the width they were
+ * using goes to the two columns that answer the question.
+ */
+function Technical({ result }: { result: AnalysisResult }): React.JSX.Element {
+  const { file } = result
+  const video = videoStreams(file)[0]
+  const resolution = video && video.kind === 'video' ? `${video.width}×${video.height}` : undefined
+  const audio = defaultAudioStream(file)
+
+  return (
+    <span className="info-hover">
+      <button className="icon-button info-button" aria-label="Technical details" title="">
+        <InfoIcon />
+      </button>
+      <span className="info-card" role="tooltip">
+        <span className="info-row">
+          <span className="info-key">Folder</span>
+          <span className="info-value mono">{parentDirectory(file.path)}</span>
+        </span>
+        <span className="info-row">
+          <span className="info-key">File</span>
+          <span className="info-value mono">{file.fileName}</span>
+        </span>
+        <span className="info-row">
+          <span className="info-key">Video</span>
+          <span className="info-value">
+            {[resolution, formatVideoCodec(video?.codec), formatAudioCodec(audio?.codec)].filter(Boolean).join(' · ')}
+          </span>
+        </span>
+        <span className="info-row">
+          <span className="info-key">Size</span>
+          <span className="info-value">{formatBytes(file.sizeBytes)}</span>
+        </span>
+      </span>
+    </span>
+  )
+}
+
 export default function ResultsTable(props: ResultsTableProps): React.JSX.Element {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  // Ticks so the "Scanned" column ages without the parent re-rendering.
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(timer)
-  }, [])
-
-  const toggleExpanded = (path: string): void => {
-    setExpanded((previous) => {
-      const next = new Set(previous)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-  }
-
   const allSelected = props.results.length > 0 && props.results.every((r) => props.selected.has(r.file.path))
 
   return (
@@ -148,11 +190,10 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
           aria-label="Select all files"
         />
         <SortHeader label="Status" column="status" sort={props.sort} onSort={props.onSort} />
-        <SortHeader label="File" column="name" sort={props.sort} onSort={props.onSort} />
-        <SortHeader label="Why" column="reason" sort={props.sort} onSort={props.onSort} />
-        <SortHeader label="Plan" column="plan" sort={props.sort} onSort={props.onSort} />
-        <SortHeader label="Technical" column="size" sort={props.sort} onSort={props.onSort} />
-        <SortHeader label="Scanned" column="scanned" sort={props.sort} onSort={props.onSort} />
+        <span>Type</span>
+        <SortHeader label="Title" column="name" sort={props.sort} onSort={props.onSort} />
+        <SortHeader label="Issues" column="reason" sort={props.sort} onSort={props.onSort} />
+        <SortHeader label="Proposed action" column="plan" sort={props.sort} onSort={props.onSort} />
         <span>Action</span>
       </div>
 
@@ -161,19 +202,11 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         const job = props.jobs.get(path)
         const jobActive = job?.state === 'queued' || job?.state === 'running'
         const nothingToDo = result.plan.strategy === 'none'
-        const open = expanded.has(path)
+        const open = props.activePath === path
         const reason = summarizeReason(result)
+        const title = mediaTitle(result.file)
+        const changes = result.plan.trackChanges
         const isRefreshing = props.refreshing.has(path)
-        // The first real video track; cover art is not the film's codec.
-        const videoCodec = videoStreams(result.file)[0]?.codec
-        // The track that plays by default, then how many others there are.
-        const audioTracks = audioStreams(result.file)
-        const defaultAudio = defaultAudioStream(result.file)
-        const otherAudio = audioTracks.length - (defaultAudio ? 1 : 0)
-        const codecLine = `${formatVideoCodec(videoCodec)}, ${formatAudioCodec(defaultAudio?.codec)}${otherAudio > 0 ? ` +${otherAudio}` : ''}`
-        const audioDetail = audioTracks
-          .map((track) => `${formatAudioCodec(track.codec)}${track === defaultAudio ? ' (default)' : ''}`)
-          .join(', ')
         const statusKey = fileStatus(result)
         const status = STATUS_BADGE[statusKey]
         const plan = PLAN_BADGE[result.plan.strategy]
@@ -187,13 +220,14 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         return (
           <div key={path}>
             <div
-              className="row"
+              className={`row${open ? ' open' : ''}`}
+              aria-current={open ? 'true' : undefined}
               onClick={(event) => {
                 // Controls in the row do their own thing, and a drag to select
-                // a file name should not toggle the row open.
+                // a title should not open the panel.
                 if ((event.target as HTMLElement).closest('button, input, select, a, label')) return
                 if (window.getSelection()?.toString()) return
-                toggleExpanded(path)
+                props.onOpen(path)
               }}
               onContextMenu={(event) => {
                 event.preventDefault()
@@ -211,21 +245,24 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                   {status.label}
                 </span>
               </span>
-              <span className="name">
-                <button className="expander" onClick={() => toggleExpanded(path)} aria-expanded={open}>
-                  {open ? '▾' : '▸'}
-                </button>
-                <span className="name-text">
-                  {result.file.fileName}
-                  <span className="dir">{shortenPath(parentDirectory(path), 2)}</span>
+              <span className="kind">{mediaKindLabel(title)}</span>
+              <span className="title-cell">
+                <span className="title-text">
+                  <span className="title-main">
+                    {title.code ? <span className="episode-code">{title.code}</span> : null}
+                    <span className="title-name" title={title.guessed ? 'Read from the file name' : undefined}>
+                      {title.title}
+                    </span>
+                    {title.year && !title.code ? <span className="title-year">{title.year}</span> : null}
+                  </span>
+                  {title.episodeTitle ? <span className="title-episode">{title.episodeTitle}</span> : null}
                 </span>
+                <Technical result={result} />
               </span>
               <span className="reason" title={reason.detail}>
                 <span className="reason-text">{reason.headline}</span>
                 <span className="reason-note">
-                  <button className="more" onClick={() => toggleExpanded(path)} aria-expanded={open}>
-                    {open ? 'hide' : reason.others > 0 ? `+${reason.others} more` : 'details'}
-                  </button>
+                  {reason.others > 0 ? <span className="more-count">+{reason.others} more</span> : null}
                   {mode.source !== 'default' ? (
                     <span
                       className={`badge ${MODE_TONE[mode.mode]}`}
@@ -262,20 +299,24 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                     {job.state}
                   </span>
                 ) : null}
-              </span>
-              <span
-                className="technical"
-                title={`${result.file.sizeBytes.toLocaleString()} bytes · ${formatVideoCodec(videoCodec)} · Audio: ${audioDetail || 'none'}`}
-              >
-                <span>{formatBytes(result.file.sizeBytes)}</span>
-                <span className="muted">{codecLine}</span>
-              </span>
-              <span
-                className="muted nowrap"
-                style={{ fontSize: 12 }}
-                title={result.scannedAt ? new Date(result.scannedAt).toLocaleString() : undefined}
-              >
-                {formatAgo(result.scannedAt, now)}
+                {/*
+                  What the repair will actually do to each track, which used to
+                  be a column inside the expanded row. It belongs here: "remux"
+                  says how the file is rewritten, and these say what changes —
+                  which is the part anybody deciding whether to run it needs.
+                */}
+                {changes.length > 0 ? (
+                  <span className="plan-changes">
+                    {changes.slice(0, 3).map((change, index) => (
+                      <span key={index} className="plan-change">
+                        {change.reason}
+                      </span>
+                    ))}
+                    {changes.length > 3 ? (
+                      <span className="plan-change muted">+{changes.length - 3} more</span>
+                    ) : null}
+                  </span>
+                ) : null}
               </span>
               <span className="actions">
                 <button
@@ -286,6 +327,18 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                   title="Re-scan this file"
                 >
                   <RefreshIcon className={isRefreshing ? 'spin' : undefined} />
+                </button>
+                <button
+                  className="icon-button"
+                  onClick={() => props.onLookUp?.(path)}
+                  disabled={!props.onLookUp || props.lookUpDisabledHint !== undefined}
+                  aria-label={`Look up ${result.file.fileName}`}
+                  title={
+                    props.lookUpDisabledHint ??
+                    'Metadata lookup — search themoviedb.org and review the answer before writing'
+                  }
+                >
+                  <TagIcon />
                 </button>
                 {jobActive && job ? (
                   <span
@@ -336,22 +389,6 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 )}
               </span>
             </div>
-            {open ? (
-              <FileDetail
-                result={result}
-                job={job}
-                onReveal={props.onReveal}
-                mode={mode}
-                defaultMode={props.defaultMode}
-                overrides={props.overrides}
-                onSetMode={props.onSetMode}
-                settings={props.settings}
-                environment={props.environment}
-                appVersion={props.appVersion}
-                onApplyMetadata={props.onApplyMetadata}
-                onSubtitleWritten={props.onSubtitleWritten}
-              />
-            ) : null}
           </div>
         )
       })}

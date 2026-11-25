@@ -168,7 +168,12 @@ export default function RepairDialog({
           <button ref={start} onClick={onClose}>
             Cancel
           </button>
-          <button className="primary" disabled={problem != null} onClick={() => onConfirm(override)}>
+          {/*
+            This dialog only opens when something is going to be re-encoded,
+            which is the slow, lossy, hard-to-undo repair. Orange is what the
+            rest of the app uses for exactly that: not a refusal, a warning.
+          */}
+          <button className="primary caution" disabled={problem != null} onClick={() => onConfirm(override)}>
             Start
           </button>
         </div>

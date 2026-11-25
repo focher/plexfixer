@@ -34,6 +34,72 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.3.0',
+    headline: 'A light interface built around titles rather than file names, and subtitles that stay in the film.',
+    changes: [
+      {
+        title: 'Light, and the colours mean something',
+        body:
+          'The whole interface is light now, led by blue, and the other three colours are spent deliberately: ' +
+          'green for nothing to do, orange for a warning \u2014 something lossy, slow, or worth looking at \u2014 and red ' +
+          'only for danger, meaning it cannot be fixed or something will be lost. Nothing else is tinted.'
+      },
+      {
+        title: 'The library reads as films and episodes',
+        body:
+          'Rows are titles rather than file names, with the season and episode ahead of the series name and the ' +
+          'episode\u2019s own name under it. Two columns went: how big the file is and when it was scanned, which ' +
+          'nobody scans a library to find out \u2014 the technical facts are behind an info icon beside the title. ' +
+          'What is left answers the two questions the list is for, now headed Issues and Proposed action, with ' +
+          'the per-track changes a repair will make listed under the latter.'
+      },
+      {
+        title: 'Details beside the list, not inside it',
+        body:
+          'Clicking a row opens a panel on the right rather than unfolding the row, which used to push every ' +
+          'other row off the screen. The four counts are one line with search and the filters beside them; the ' +
+          'filters are one button holding every way of narrowing the list, each a checkbox. Every subtitle ' +
+          'track has its own resync and translate buttons, and the default track is a tick rather than a badge ' +
+          'on almost every row.'
+      },
+      {
+        title: 'Resync the tracks you pick, in one pass',
+        body:
+          'The Subtitles panel opens on the text subtitle tracks already in the file, with a tick box each. Tick ' +
+          'one or several, press Resync to the audio, and PlexFixer finds the speech, compares it with where ' +
+          'each track says the lines are, and writes the corrected timings back into the film. The speech is ' +
+          'found once however many tracks are ticked, and every corrected track goes back in a single rewrite \u2014 ' +
+          'a track at a time would copy a 40 GB film three times to change some timecodes. A track already in ' +
+          'step is reported and left exactly as it was.'
+      },
+      {
+        title: 'Nothing lands beside the film any more',
+        body:
+          'Sidecar .srt files are gone: a subtitle beside the film is a second file to copy, move and lose, and ' +
+          'a track in the film is the film. Anything found online, written from the audio or translated goes in ' +
+          'as a track \u2014 over the one it came from, or alongside the rest. Writing into the film goes the way a ' +
+          'repair goes: copy to a working file, check what came out, then replace, with the original moved into ' +
+          'the backup folder first when backups are on.'
+      },
+      {
+        title: 'Styled subtitles are rewritten rather than pulled out',
+        body:
+          'ASS and SSA tracks become plain SRT inside the file. The dialogue is identical; the styling, which no ' +
+          'client can reproduce and which is the whole reason Plex burns these in, is what goes. Text tracks ' +
+          'headed into an MP4 are converted to tx3g instead of being dropped, so a file with an STL or SubViewer ' +
+          'track no longer loses it \u2014 only picture subtitles are left behind, because there is no text in them.'
+      },
+      {
+        title: 'A repair can check the timing while it is in there',
+        body:
+          'New under Compatibility, off by default: every text subtitle measured against the audio during a ' +
+          'repair and corrected if it is out of step. Off because finding the speech reads the whole audio ' +
+          'track, twenty seconds to a minute on a feature, whether or not anything turns out to be wrong. ' +
+          'Rules written in the editor use resync-subtitles where they used extract-subtitles.'
+      }
+    ]
+  },
+  {
     version: '0.2.13',
     headline: 'The whisper.cpp builds 0.2.12 added are now actually offered on Windows, where they are the ones that exist.',
     changes: [

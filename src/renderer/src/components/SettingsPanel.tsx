@@ -174,7 +174,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
           </button>
         ))}
         <span className="nav-spacer" />
-        <button className="ghost nav-reset" onClick={props.onReset}>
+        <button className="ghost nav-reset danger" onClick={props.onReset}>
           Reset all settings to defaults
         </button>
       </nav>
@@ -1259,7 +1259,11 @@ function OutputSection(props: SettingsPanelProps): React.JSX.Element {
       </Field>
 
       <Field label="Backups on disk" hint="Every backup folder under the scanned library, including old ones.">
-        <button onClick={props.onRemoveAllBackups} disabled={!props.canRemoveBackups || props.removingBackups}>
+        <button
+          className="danger"
+          onClick={props.onRemoveAllBackups}
+          disabled={!props.canRemoveBackups || props.removingBackups}
+        >
           {props.removingBackups ? 'Working…' : 'Remove all backups…'}
         </button>
       </Field>

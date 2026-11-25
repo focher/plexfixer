@@ -1,26 +1,41 @@
 :root {
-  --bg: #101219;
-  --bg-raised: #1a1d26;
-  --bg-hover: #222632;
-  --bg-sunken: #0c0e13;
-  --border: #272c37;
-  --border-strong: #39414f;
-  --text: #e8ebf1;
-  --text-dim: #99a2b2;
-  --text-faint: #6b7483;
-  --accent: #e5a00d;
-  --accent-bright: #f5b324;
-  --accent-text: #1a1206;
+  /* Light, and led by blue.
+     Colour carries meaning here, so the three status colours are spent
+     carefully and never for decoration:
+       blue   — the app itself, and anything routine
+       green  — nothing to do
+       orange — a warning: worth looking at, costs something, is lossy
+       red    — danger: cannot be fixed, or would lose something
+     Nothing else is coloured. A screen where everything is tinted says
+     nothing, and the whole point of the list is to be read at a glance. */
+  --bg: #f4f7fb;
+  --bg-raised: #ffffff;
+  --bg-hover: #eef3f9;
+  --bg-sunken: #e8eef6;
+  --border: #d9e1ec;
+  --border-strong: #b6c4d6;
+  --text: #15202e;
+  --text-dim: #566679;
+  --text-faint: #8395a9;
+  --accent: #1f6feb;
+  --accent-bright: #1a5fd0;
+  --accent-text: #ffffff;
   /* Accent at the two strengths used for tinting backgrounds. */
-  --accent-soft: rgb(229 160 13 / 10%);
-  --accent-line: rgb(229 160 13 / 45%);
-  --ok: #46c55a;
-  --warn: #d29922;
-  --fail: #f85149;
-  --info: #58a6ff;
+  --accent-soft: rgb(31 111 235 / 8%);
+  --accent-line: rgb(31 111 235 / 35%);
+  --ok: #1a7f37;
+  --warn: #bc4c00;
+  --fail: #cf222e;
+  --info: #1f6feb;
+  /* The same four at the strength a background can take without the text on
+     it losing contrast. */
+  --ok-soft: rgb(26 127 55 / 10%);
+  --warn-soft: rgb(188 76 0 / 10%);
+  --fail-soft: rgb(207 34 46 / 10%);
+  --info-soft: rgb(31 111 235 / 10%);
   --radius: 10px;
-  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 28%);
-  color-scheme: dark;
+  --shadow: 0 1px 2px rgb(21 32 46 / 6%), 0 8px 24px rgb(21 32 46 / 8%);
+  color-scheme: light;
 }
 
 * {
@@ -38,8 +53,8 @@ body {
   /* Two very low-contrast pools of light, so a full-screen window does not
      read as one flat slab. */
   background:
-    radial-gradient(1200px 600px at 15% -10%, rgb(229 160 13 / 6%), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgb(88 166 255 / 5%), transparent 55%),
+    radial-gradient(1200px 600px at 15% -10%, rgb(31 111 235 / 7%), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgb(31 111 235 / 4%), transparent 55%),
     var(--bg);
   background-attachment: fixed;
   color: var(--text);
@@ -54,14 +69,14 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333a47;
+  background: #c3cfdd;
   border: 3px solid transparent;
   border-radius: 999px;
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #434c5c;
+  background: #aabbcd;
   background-clip: content-box;
 }
 
@@ -77,7 +92,7 @@ input {
 }
 
 button {
-  background: linear-gradient(180deg, #232733, #1c202a);
+  background: linear-gradient(180deg, #ffffff, #f3f6fa);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 6px 12px;
@@ -86,8 +101,8 @@ button {
 }
 
 button:hover:not(:disabled) {
-  background: linear-gradient(180deg, #2b3040, #232733);
-  border-color: #4a5365;
+  background: linear-gradient(180deg, #f7f9fc, #eaf0f8);
+  border-color: var(--border-strong);
 }
 
 button:active:not(:disabled) {
@@ -112,8 +127,8 @@ button.primary {
 }
 
 button.primary:hover:not(:disabled) {
-  background: #f2ad1d;
-  border-color: #f2ad1d;
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
 }
 
 button.ghost {
@@ -134,7 +149,7 @@ button.ghost:hover:not(:disabled) {
 }
 
 .detail button.ghost:hover:not(:disabled) {
-  border-color: #4a5365;
+  border-color: var(--border-strong);
 }
 
 select,
@@ -175,7 +190,7 @@ code {
   justify-content: center;
   gap: 8px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, #171a22, #0e1016);
+  background: linear-gradient(180deg, #ffffff, #f4f7fb);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.1em;
@@ -191,7 +206,7 @@ code {
   border-radius: 2px;
   transform: rotate(45deg);
   background: linear-gradient(135deg, var(--accent-bright), var(--accent));
-  box-shadow: 0 0 10px rgb(229 160 13 / 45%);
+  box-shadow: 0 0 10px rgb(31 111 235 / 35%);
 }
 
 .toolbar {
@@ -201,7 +216,7 @@ code {
   gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, rgb(26 29 38 / 60%), transparent);
+  background: linear-gradient(180deg, rgb(255 255 255 / 85%), transparent);
   flex-wrap: wrap;
 }
 
@@ -215,7 +230,7 @@ code {
 }
 
 .tabs {
-  background: rgb(12 14 19 / 70%);
+  background: var(--bg-sunken);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 3px;
@@ -229,17 +244,17 @@ code {
 }
 
 .tabs button:hover:not(:disabled) {
-  background: rgb(255 255 255 / 4%);
+  background: rgb(21 32 46 / 5%);
   border-color: transparent;
   color: var(--text);
 }
 
 .tabs button[aria-selected='true'],
 .tabs button[aria-selected='true']:hover:not(:disabled) {
-  background: linear-gradient(180deg, #2a2f3d, #222634);
+  background: linear-gradient(180deg, #f7f9fc, #edf2f8);
   border-color: var(--border-strong);
   color: var(--text);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 90%);
 }
 
 .content {
@@ -283,6 +298,279 @@ code {
   flex-direction: column;
 }
 
+/*
+ * With a row open, the list and its details sit side by side.
+ *
+ * The details used to unfold inside the row, which pushed every other row off
+ * the screen — so comparing the file you opened against the one below it meant
+ * closing it again. Beside the list, the list stays a list.
+ */
+.library-body.with-panel {
+  flex-direction: row;
+  gap: 12px;
+}
+
+.library-body.with-panel .results {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.detail-panel {
+  flex: 0 0 clamp(340px, 34%, 520px);
+  min-width: 0;
+  overflow: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* Narrow windows cannot give a panel a third of the width and still show a
+   table, so it goes back to being stacked under the list. */
+@media (max-width: 1000px) {
+  .library-body.with-panel {
+    flex-direction: column;
+  }
+
+  .detail-panel {
+    flex: 0 0 auto;
+    max-height: 50%;
+  }
+}
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.detail-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.detail-title-main {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.detail-title-episode {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
+.detail-path {
+  font-size: 11px;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+/* The three things done to a file, as icons with their label on hover. */
+.detail-actions {
+  display: flex;
+  gap: 4px;
+  padding: 8px 14px 0;
+}
+
+.detail-actions .icon-button {
+  position: relative;
+}
+
+.detail-actions .icon-button::after {
+  content: attr(data-label);
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: none;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg-raised);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.detail-actions .icon-button:hover::after,
+.detail-actions .icon-button:focus-visible::after {
+  display: block;
+}
+
+.detail-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.detail-note.bad {
+  color: var(--fail);
+}
+
+/* ---------- the track list ---------- */
+
+.tracks {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/*
+ * A row that wraps rather than one that overflows.
+ *
+ * It was a six-column grid, and in a panel a third of the window wide the two
+ * subtitle buttons and their language picker did not fit: the description ran
+ * under them and the translate button was clipped off the edge entirely. Fixed
+ * columns cannot solve that — there is no set of widths that fits a 520px
+ * panel and a 340px one.
+ *
+ * So the row is a flex line that wraps. The facts take what they need and the
+ * controls stay whole; when the panel is too narrow for both, the controls
+ * drop to a line of their own instead of being cut in half.
+ */
+.track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.track-facts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 190px;
+  min-width: 0;
+}
+
+.track:last-of-type {
+  border-bottom: none;
+}
+
+.track.busy {
+  opacity: 0.6;
+}
+
+/* "Which track plays" is answered by looking down this column rather than by
+   reading a badge on every row that has one. */
+.track-default {
+  display: inline-flex;
+  justify-content: center;
+  color: var(--ok);
+}
+
+.track-kind {
+  flex: 0 0 52px;
+  color: var(--text-dim);
+}
+
+.track-codec {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.track-kind,
+.track-codec,
+.track-language {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-language {
+  flex: 0 0 auto;
+  min-width: 56px;
+}
+
+.track-detail {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.track-detail > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-title,
+.track-flags {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  /* Never squeezed, never grown: whatever the row has to say, the two things
+     that can be done to it stay the same size and in the same place. */
+  flex: 0 0 auto;
+}
+
+/* The row keeps the height of a row with buttons in it whether or not this
+   one has any, so a list of mixed tracks does not jump as the eye goes down. */
+.track-actions:empty::after {
+  content: '';
+  display: block;
+  height: 22px;
+}
+
+.track-translate {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.track-translate select {
+  padding: 2px 4px;
+  font-size: 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-raised);
+  width: 92px;
+  min-width: 0;
+}
+
+.track-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--text-dim);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.track-add:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
 .banner {
   border: 1px solid var(--border-strong);
   border-left: 3px solid var(--warn);
@@ -297,6 +585,52 @@ code {
   border-left-color: var(--fail);
 }
 
+/*
+ * Buttons that spend something you cannot get back.
+ *
+ * The same two words the rest of the app uses: red is danger — this deletes
+ * files, or throws away settings — and orange is a warning, meaning it costs
+ * you work rather than data. A button that merely tidies a list gets neither,
+ * because a screen where everything is coloured says nothing.
+ */
+button.danger {
+  color: var(--fail);
+  border-color: color-mix(in srgb, var(--fail) 35%, var(--border-strong));
+}
+
+button.danger:hover:not(:disabled) {
+  background: var(--fail-soft);
+  border-color: var(--fail);
+  color: var(--fail);
+}
+
+button.caution {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--border-strong));
+}
+
+button.caution:hover:not(:disabled) {
+  background: var(--warn-soft);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* A filled button says the same thing by being the colour rather than by
+   carrying it, so the two modifiers compose instead of fighting. */
+button.primary.caution,
+button.primary.caution:hover:not(:disabled) {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: #ffffff;
+}
+
+button.primary.danger,
+button.primary.danger:hover:not(:disabled) {
+  background: var(--fail);
+  border-color: var(--fail);
+  color: #ffffff;
+}
+
 .banner strong {
   color: var(--text);
 }
@@ -306,7 +640,7 @@ code {
 .dropzone {
   border: 2px dashed var(--border-strong);
   border-radius: 14px;
-  background: linear-gradient(180deg, rgb(26 29 38 / 55%), transparent);
+  background: linear-gradient(180deg, rgb(255 255 255 / 70%), transparent);
   padding: 56px 24px;
   text-align: center;
   color: var(--text-dim);
@@ -338,22 +672,44 @@ code {
 
 /* ---------- summary ---------- */
 
+/*
+ * The four counts and the two controls that steer the list, on one line.
+ *
+ * One line because the counts are a legend, not a dashboard: they say what the
+ * list is made of and let you narrow it to one kind, and stacking a number
+ * above a word made four cards the height of three table rows to carry eight
+ * words. Search and the filter menu sit at the right of the same line, which
+ * is where the list's controls belong — beside what they control.
+ */
+.library-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.library-bar .spacer {
+  flex: 1 1 auto;
+}
+
 .summary {
   display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .stat {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(180deg, var(--bg-raised), #16191f);
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  background: linear-gradient(180deg, var(--bg-raised), #f6f9fc);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 11px 16px;
-  min-width: 116px;
+  padding: 7px 13px 7px 15px;
   transition: transform 100ms ease, border-color 120ms ease, background 120ms ease;
   /* Tiles are buttons (each is a filter) but keep the tile look. */
   text-align: left;
@@ -385,7 +741,7 @@ code {
 }
 
 button.stat:hover:not(:disabled) {
-  background: linear-gradient(180deg, #20242e, #181b22);
+  background: linear-gradient(180deg, #ffffff, #f2f6fa);
   border-color: var(--border-strong);
   transform: translateY(-1px);
 }
@@ -393,38 +749,51 @@ button.stat:hover:not(:disabled) {
 button.stat[aria-pressed='true'],
 button.stat[aria-pressed='true']:hover:not(:disabled) {
   border-color: var(--accent);
-  background: rgba(229, 160, 13, 0.08);
-}
-
-.stat[aria-pressed='true'] .label {
-  color: var(--text-dim);
+  background: var(--accent-soft);
 }
 
 .stat .value {
-  font-size: 24px;
+  font-size: 17px;
   font-weight: 650;
-  line-height: 1.15;
+  line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
 
+/* The label takes the count's colour: the two are one statement, and a grey
+   word beside a green number reads as a caption rather than as part of it. */
 .stat .label {
   font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+.stat.ok .value,
+.stat.ok .label {
+  color: var(--ok);
+}
+.stat.warn .value,
+.stat.warn .label {
+  color: var(--warn);
+}
+.stat.fail .value,
+.stat.fail .label {
+  color: var(--fail);
+}
+.stat.info .value,
+.stat.info .label {
+  color: var(--info);
+}
+
+/* A count of zero is not news. It stays legible and stops competing with the
+   three beside it that have something to say. */
+.stat.quiet .value,
+.stat.quiet .label {
   color: var(--text-faint);
 }
 
-.stat.ok .value {
-  color: var(--ok);
-}
-.stat.warn .value {
-  color: var(--warn);
-}
-.stat.fail .value {
-  color: var(--fail);
-}
-.stat.info .value {
-  color: var(--info);
+.stat.quiet::before {
+  opacity: 0.25;
 }
 
 /* ---------- results ---------- */
@@ -439,22 +808,189 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
   box-shadow: var(--shadow);
 }
 
+/*
+ * Seven columns became five, and the two that went were the two nobody
+ * scanned a library to read: how big the file is, and when it was looked at.
+ * What is left answers the only questions the list is for — what is wrong, and
+ * what will be done about it — and the rows are tight enough that a library
+ * fits on a screen instead of needing to be scrolled past.
+ */
 .row {
   display: grid;
-  grid-template-columns: 28px 92px 1fr 1.25fr 128px 112px 76px 100px;
+  grid-template-columns: 24px 88px 84px minmax(0, 1.1fr) minmax(0, 1.15fr) minmax(0, 1fr) 124px;
   gap: 10px;
   align-items: center;
-  padding: 9px 12px;
+  padding: 5px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
 }
 
-/* The window can go down to 940px, where eight columns stop fitting. */
 @media (max-width: 1120px) {
   .row {
-    grid-template-columns: 24px 84px 1fr 1.05fr 104px 100px 62px 96px;
+    grid-template-columns: 22px 80px 72px minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.9fr) 118px;
     gap: 8px;
   }
+}
+
+/* The row whose details are open in the panel, so the two are visibly one
+   thing rather than a list and an unrelated sidebar. */
+.row.open {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* ---------- type and title ---------- */
+
+.row .kind {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.title-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.title-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.title-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.title-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+
+/* The season and episode, which is the first thing you look for in a row of
+   episodes and is useless if it has to be found inside the title. */
+.episode-code {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.title-year {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.title-episode {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- the technical facts, on an icon ---------- */
+
+.info-hover {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+
+button.info-button {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  box-shadow: none;
+}
+
+button.info-button:hover:not(:disabled) {
+  background: none;
+  border: none;
+  color: var(--accent);
+}
+
+.info-card {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: -8px;
+  z-index: 12;
+  display: none;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+  width: max-content;
+  max-width: 460px;
+  padding: 8px 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  /* It follows the pointer out of the icon and into itself, so a path can be
+     read without the card closing halfway through. */
+  pointer-events: none;
+}
+
+.info-hover:hover .info-card,
+.info-hover:focus-within .info-card {
+  display: grid;
+}
+
+.info-row {
+  display: contents;
+}
+
+.info-key {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  padding-top: 2px;
+}
+
+.info-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- what the repair will do, per track ---------- */
+
+.plan-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.plan-change {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.more-count {
+  font-size: 11px;
+  color: var(--text-faint);
 }
 
 /* ---------- the "technical" column: size over video and audio codec ---------- */
@@ -539,7 +1075,7 @@ button.more:hover {
 }
 
 .row.header {
-  background: rgb(12 14 19 / 92%);
+  background: rgb(244 247 251 / 96%);
   backdrop-filter: blur(6px);
   font-size: 11px;
   text-transform: uppercase;
@@ -585,30 +1121,129 @@ button.more:hover {
 
 /* ---------- search ---------- */
 
-.searchbar {
+/*
+ * Search: a magnifying glass that widens into a field.
+ *
+ * The field is always in the document rather than being mounted on click, so
+ * the widening is a transition and not a jump, and so what was typed survives
+ * the box closing and opening again.
+ */
+.searchbox {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: 6px;
 }
 
-.searchbar input[type='search'] {
-  flex: 1 1 auto;
+.searchbox input[type='search'] {
+  width: 0;
   min-width: 0;
-  max-width: 480px;
-  padding: 7px 10px;
-  background: var(--bg-sunken);
-  border: 1px solid var(--border-strong);
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 6px;
+  background: var(--bg-raised);
+  opacity: 0;
+  pointer-events: none;
+  transition: width 160ms ease, padding 160ms ease, opacity 120ms ease;
 }
 
-.searchbar input[type='search']:focus {
+.searchbox.open input[type='search'] {
+  width: 230px;
+  padding: 6px 9px;
+  border-color: var(--border-strong);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.searchbox input[type='search']:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.searchbar .spacer {
+.searchbox-summary {
+  font-size: 12px;
+}
+
+/* The filter menu: one button, and everything that narrows the list behind it. */
+.filter-menu {
+  position: relative;
+}
+
+.filter-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+.icon-button.on {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+.filter-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 15;
+  min-width: 232px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.filter-group + .filter-group {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.filter-group-title {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.filter-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.filter-check:hover {
+  background: var(--bg-hover);
+}
+
+.filter-check-label {
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+.filter-foot {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* "Hide passed": a switch drawn over a visually hidden checkbox. */
@@ -686,6 +1321,12 @@ button.more:hover {
   flex-direction: column;
   align-items: flex-start;
   gap: 3px;
+  /* Without both of these a long change line grows the grid column and runs
+     under the action buttons, which is what a `1fr` track does when its
+     content cannot shrink. */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 /* Compact, like the old outcome note under the reason. */
@@ -772,7 +1413,7 @@ button.icon-button:hover:not(:disabled) {
   color: var(--info);
 }
 .badge.neutral {
-  background: #262b35;
+  background: var(--bg-sunken);
   color: var(--text-dim);
 }
 
@@ -896,7 +1537,7 @@ button.expander:hover:not(:disabled) {
 }
 
 .command {
-  background: #0b0d11;
+  background: var(--bg-sunken);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px;
@@ -948,17 +1589,17 @@ button.expander:hover:not(:disabled) {
 }
 
 .settings-nav button:hover:not(:disabled) {
-  background: rgb(255 255 255 / 4%);
+  background: rgb(21 32 46 / 5%);
   border-color: transparent;
   color: var(--text);
 }
 
 .settings-nav button[aria-selected='true'],
 .settings-nav button[aria-selected='true']:hover:not(:disabled) {
-  background: linear-gradient(180deg, #2a2f3d, #222634);
+  background: linear-gradient(180deg, #f7f9fc, #edf2f8);
   border-color: var(--border-strong);
   color: var(--text);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 90%);
 }
 
 .settings-nav .nav-label {
@@ -1711,12 +2352,69 @@ button.expander:hover:not(:disabled) {
   display: grid;
   /* The third column carries "621ms · 1024 MB/s · 356x realtime", which is
      wider than a bare duration ever was. */
-  grid-template-columns: 90px 1fr 225px 84px;
+  grid-template-columns: 84px minmax(0, 1fr) 225px 44px;
   gap: 12px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
+}
+
+/* The film or episode, named the way the library names it. */
+.job-title {
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-row-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* The same hover label the detail panel's icons use, so one action looks the
+   same wherever it appears. */
+.job-actions .icon-button,
+.job-row-actions .icon-button {
+  position: relative;
+}
+
+.job-actions .icon-button::after,
+.job-row-actions .icon-button::after {
+  content: attr(data-label);
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: none;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg-raised);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.job-actions .icon-button:hover::after,
+.job-actions .icon-button:focus-visible::after,
+.job-row-actions .icon-button:hover::after,
+.job-row-actions .icon-button:focus-visible::after {
+  display: block;
+}
+
+/* Stopping a repair mid-flight is the one destructive thing in this list, and
+   red is what the rest of the app reserves for exactly that. */
+.icon-button.danger {
+  color: var(--fail);
+}
+
+.icon-button.danger:hover:not(:disabled) {
+  color: var(--fail);
+  border-color: var(--fail);
+  background: var(--fail-soft);
 }
 
 .job:last-child {
@@ -2105,7 +2803,7 @@ button.expander:hover:not(:disabled) {
   position: fixed;
   inset: 0;
   z-index: 20;
-  background: rgb(0 0 0 / 55%);
+  background: rgb(21 32 46 / 35%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2116,7 +2814,7 @@ button.expander:hover:not(:disabled) {
   background: var(--bg-raised);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+  box-shadow: 0 18px 48px rgb(21 32 46 / 18%);
   padding: 20px 22px;
   max-width: 560px;
   width: 100%;
@@ -2307,7 +3005,7 @@ button.expander:hover:not(:disabled) {
 .timing-bar {
   display: block;
   height: 8px;
-  background: rgb(255 255 255 / 4%);
+  background: rgb(21 32 46 / 5%);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -2315,7 +3013,7 @@ button.expander:hover:not(:disabled) {
 .timing-bar > span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--info), #7fc0ff);
+  background: linear-gradient(90deg, var(--info), #58a6ff);
   border-radius: 999px;
 }
 
@@ -2549,7 +3247,7 @@ button.browser-row:hover:not(:disabled) {
   gap: 2px;
   padding: 8px 10px;
   margin-top: 4px;
-  background: rgb(0 0 0 / 25%);
+  background: rgb(21 32 46 / 6%);
   border-radius: 6px;
   font-size: 11px;
   overflow-wrap: anywhere;
@@ -2607,7 +3305,7 @@ button.browser-row:hover:not(:disabled) {
 .stage-step.active .dot {
   background: var(--accent);
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgb(229 160 13 / 20%);
+  box-shadow: 0 0 0 3px rgb(31 111 235 / 20%);
   animation: stage-pulse 1.6s ease-in-out infinite;
 }
 
@@ -2617,7 +3315,7 @@ button.browser-row:hover:not(:disabled) {
 
 @keyframes stage-pulse {
   50% {
-    box-shadow: 0 0 0 5px rgb(229 160 13 / 8%);
+    box-shadow: 0 0 0 5px rgb(31 111 235 / 8%);
   }
 }
 
@@ -2720,7 +3418,7 @@ button.browser-row:hover:not(:disabled) {
 .bulk-metadata-warn {
   margin-top: 4px;
   font-size: 11.5px;
-  color: var(--warn, #d9a441);
+  color: var(--warn);
 }
 
 .bulk-metadata-ask {
