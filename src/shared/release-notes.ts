@@ -34,7 +34,7 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
-    version: '0.3.3',
+    version: '0.3.4',
     headline: 'Changing a title no longer rewrites the film.',
     changes: [
       {
@@ -45,6 +45,14 @@ export const RELEASE_NOTES: ReleaseNote[] = [
           'PlexFixer now writes tags the way Subler does, through mp4v2, which keeps free space beside the ' +
           'header and moves nothing else. It takes about as long on a 40 GB file as on a 40 MB one. This is ' +
           'for MP4 and M4V; Matroska still goes the long way round.'
+      },
+      {
+        title: 'Intel Macs get the tools every other build has',
+        body:
+          'A download step returned early for the one platform whose binaries are fetched individually rather ' +
+          'than unpacked from an archive \u2014 which is the Intel Mac. It has therefore never shipped with ' +
+          'qt-faststart, so moving an MP4\u2019s index took a full rewrite instead of one pass, with nothing to say ' +
+          'a faster route existed. Both that and the new tag writer are in the Intel build now.'
       },
       {
         title: 'Ollama tells you what it has',
