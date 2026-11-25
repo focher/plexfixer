@@ -8,12 +8,12 @@ import {
   sectionFrom,
   type SettingsSectionId
 } from '@shared/settings-sections.js'
-import { shortenPath } from '../format.js'
+import { formatBytes, shortenPath } from '../format.js'
 import { CHECK_MODULES, REPAIR_MODULES } from '@shared/plex/modules/registry.js'
 import { isModuleEnabled, withModuleEnabled, type ModuleDescription, type ModuleSwitch } from '@shared/plex/modules/framework.js'
 import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/module.js'
 import { readCredential } from '@shared/tmdb.js'
-import { LLM_ENGINES, llmEngine } from '@shared/subtitles/llm.js'
+import { LLM_ENGINES, llmEngine, type LlmModel } from '@shared/subtitles/llm.js'
 import { ASR_SERVICES, asrService } from '@shared/subtitles/asr.js'
 import WhisperBuild from './WhisperBuild.js'
 import WhisperModels from './WhisperModels.js'
@@ -135,6 +135,14 @@ export interface SettingsPanelProps {
   removingBackups?: boolean
   /** False when there is no library to look in. */
   canRemoveBackups: boolean
+  /**
+   * Ask the translation endpoint what models it has.
+   *
+   * Through a prop rather than reached for directly, like everything else this
+   * panel does to the machine: the panel decides what to show and the app
+   * decides how to get it.
+   */
+  onDetectModels: () => Promise<LlmModel[] | { problem: string }>
 }
 
 export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Element {
@@ -514,6 +522,115 @@ function MetadataSection(props: SettingsPanelProps): React.JSX.Element {
  * chat endpoint are different addresses at the same vendor, and the local
  * answers to the two are different programs.
  */
+/**
+ * The model to translate with, and a way to find out what there is.
+ *
+ * Typing a model name is guessing. A local Ollama knows exactly what it has
+ * pulled, and the subtitle screen could already ask it — but only from the
+ * subtitle screen, which is the wrong place to be configuring anything. So the
+ * question is asked here, where the answer is used, and the field becomes a
+ * list of what is actually installed.
+ *
+ * The text box stays. The endpoint may be down, a model may be pulled after
+ * this was last asked, and a name typed by hand has to keep working.
+ */
+function ModelField({
+  settings,
+  defaultModel,
+  onDetect,
+  onChange
+}: {
+  settings: AppSettings
+  defaultModel?: string
+  onDetect: () => Promise<LlmModel[] | { problem: string }>
+  onChange: (model: string) => void
+}): React.JSX.Element {
+  const [state, setState] = useState<
+    { kind: 'idle' } | { kind: 'looking' } | { kind: 'found'; models: LlmModel[] } | { kind: 'failed'; problem: string }
+  >({ kind: 'idle' })
+
+  const detect = (): void => {
+    setState({ kind: 'looking' })
+    void onDetect().then((answer) => {
+      if ('problem' in answer) return setState({ kind: 'failed', problem: answer.problem })
+      if (answer.length === 0) {
+        return setState({
+          kind: 'failed',
+          problem: 'That endpoint answered, and has no models pulled. `ollama pull llama3.1` gives it one.'
+        })
+      }
+      setState({ kind: 'found', models: answer })
+      // Nothing chosen yet, so take the first rather than leaving a list up
+      // with the box still empty.
+      if (settings.subtitleTranslationModel.trim() === '') onChange(answer[0].id)
+    })
+  }
+
+  return (
+    <>
+      <Field
+        label="Model"
+        hint={
+          settings.translationEngine === 'ollama'
+            ? 'Detect asks this Ollama what it has pulled.'
+            : `Blank uses ${defaultModel ?? ''}.`
+        }
+      >
+        <div className="model-field">
+          {state.kind === 'found' ? (
+            <select value={settings.subtitleTranslationModel} onChange={(event) => onChange(event.target.value)}>
+              {/* A model named by hand that this endpoint does not have is
+                  still shown, rather than silently becoming another one. */}
+              {state.models.every((model) => model.id !== settings.subtitleTranslationModel) &&
+              settings.subtitleTranslationModel.trim() !== '' ? (
+                <option value={settings.subtitleTranslationModel}>
+                  {settings.subtitleTranslationModel} (not on this endpoint)
+                </option>
+              ) : null}
+              {state.models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {describeModel(model)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={settings.subtitleTranslationModel}
+              placeholder={defaultModel}
+              spellCheck={false}
+              onChange={(event) => onChange(event.target.value)}
+            />
+          )}
+          <button onClick={detect} disabled={state.kind === 'looking'}>
+            {state.kind === 'looking' ? 'Asking…' : 'Detect'}
+          </button>
+          {state.kind === 'found' ? (
+            <button className="ghost" onClick={() => setState({ kind: 'idle' })} title="Type a model name instead">
+              Type it
+            </button>
+          ) : null}
+        </div>
+      </Field>
+      {state.kind === 'failed' ? <p className="section-hint problem">{state.problem}</p> : null}
+      {state.kind === 'found' ? (
+        <p className="section-hint">
+          {state.models.length} model{state.models.length === 1 ? '' : 's'} on this endpoint.
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+/** A model as a line: its name, and what is worth knowing about it. */
+function describeModel(model: LlmModel): string {
+  const bits = [model.label ?? model.id]
+  if (model.parameters) bits.push(model.parameters)
+  if (model.quantisation) bits.push(model.quantisation)
+  if (model.sizeBytes) bits.push(formatBytes(model.sizeBytes))
+  return bits.join(' · ')
+}
+
 function SubtitlesSection(props: SettingsPanelProps): React.JSX.Element {
   const { settings } = props
   const set = props.onChange
@@ -749,15 +866,12 @@ function SubtitlesSection(props: SettingsPanelProps): React.JSX.Element {
           onChange={(event) => set({ subtitleTranslationEndpoint: event.target.value })}
         />
       </Field>
-      <Field label="Model" hint={settings.translationEngine === 'ollama' ? 'The subtitle screen lists what this Ollama has.' : `Blank uses ${engine?.defaultModel ?? ''}.`}>
-        <input
-          type="text"
-          value={settings.subtitleTranslationModel}
-          placeholder={engine?.defaultModel}
-          spellCheck={false}
-          onChange={(event) => set({ subtitleTranslationModel: event.target.value })}
-        />
-      </Field>
+      <ModelField
+        settings={settings}
+        defaultModel={engine?.defaultModel}
+        onDetect={props.onDetectModels}
+        onChange={(model) => set({ subtitleTranslationModel: model })}
+      />
       <Field
         label="Lines per request"
         hint="Forty is about two minutes of film — long enough that a scene holds together in one request, which is what makes pronouns and register come out right, and short enough that a request to redo is cheap."

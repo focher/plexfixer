@@ -441,6 +441,12 @@ export function installPreviewBridge(): void {
     subtitles: {
       onProgress: never,
       cancel: (): void => undefined,
+      // A believable Ollama, so the Detect button has something to find.
+      models: async () => [
+        { id: 'llama3.1:8b', parameters: '8B', quantisation: 'Q4_K_M', sizeBytes: 4_900_000_000 },
+        { id: 'qwen2.5:14b', parameters: '14B', quantisation: 'Q4_K_M', sizeBytes: 9_000_000_000 },
+        { id: 'gemma2:2b', parameters: '2B', quantisation: 'Q4_0', sizeBytes: 1_600_000_000 }
+      ],
       whisper: {
         catalogue: [],
         directory: async (): Promise<string> => '/preview/models',

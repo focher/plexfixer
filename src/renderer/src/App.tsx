@@ -13,6 +13,7 @@ import type {
   ScanError
 } from '@shared/types.js'
 import { resolveMode } from '@shared/mode.js'
+import { newId } from '@shared/ids.js'
 import { DEFAULT_SORT, nextSort, sortResults, type SortState } from '@shared/sort.js'
 import ResultsTable from './components/ResultsTable.js'
 import FileDetail from './components/FileDetail.js'
@@ -1270,6 +1271,14 @@ export default function App(): React.JSX.Element {
             settings={settings}
             environment={environment}
             overrides={overrides}
+            onDetectModels={async () => {
+              // The same call the subtitle screen makes, against whatever
+              // endpoint Settings currently names — already saved by the time
+              // this button can be pressed, since every field writes as it is
+              // typed.
+              const found = await window.plexfixer.subtitles.models(newId())
+              return 'problem' in found ? { problem: found.problem } : found
+            }}
             canRemoveBackups={libraryRoots.length > 0}
             removingBackups={removingBackups}
             onRemoveAllBackups={() => {

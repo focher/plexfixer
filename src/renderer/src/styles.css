@@ -1164,6 +1164,24 @@ button.more:hover {
   font-size: 12px;
 }
 
+/* The model box and its Detect button, which share a line. */
+.model-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.model-field input,
+.model-field select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.section-hint.problem {
+  color: var(--fail);
+}
+
 /* The filter menu: one button, and everything that narrows the list behind it. */
 .filter-menu {
   position: relative;
