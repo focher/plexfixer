@@ -61,6 +61,12 @@ export interface ExecOptions {
  * have pinned the repair runner to one runtime for the sake of methods it
  * never calls.
  */
+/** One binary in a pipeline, with the arguments to start it. */
+export interface PipelineStage {
+  command: string
+  args: string[]
+}
+
 export interface HostProcess {
   /** UTF-8 chunks of stdout as they arrive. */
   onStdout: (listener: (chunk: string) => void) => void
@@ -98,6 +104,19 @@ export interface ProbeHost {
 export interface RepairHost extends ProbeHost {
   /** Start a binary, streaming its output. */
   spawnProcess: (command: string, args: string[]) => HostProcess
+  /**
+   * Start several binaries with each one's output wired into the next one's
+   * input, watched as a single run.
+   *
+   * There is one job that needs it: a Dolby Vision profile 7 conversion has to
+   * push the film's video stream through `dovi_tool`, and writing that stream
+   * to a file first would cost as much scratch space as the film itself.
+   *
+   * Optional, because a remote host reaches the far end through one `ssh` at a
+   * time and has no way to hold a pipeline open across it. A host without this
+   * does not offer the conversion.
+   */
+  spawnPipeline?: (stages: readonly PipelineStage[]) => HostProcess
   /**
    * Stop a process started with `spawnProcess`, identified by a string that
    * appears in its command line. Killing the local `ssh` does not reliably

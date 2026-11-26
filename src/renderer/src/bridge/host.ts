@@ -67,6 +67,46 @@ function startRouting(): Promise<void> {
  * for what is allowed is not a check.
  */
 export function tauriHost(platform: string): RepairHost {
+  /**
+   * Route one run's output and end back to the caller, however it was started.
+   *
+   * The listener table is keyed by id and nothing else, so a pipeline and a
+   * single process are watched identically — `start` is the only difference
+   * between them, and it is the argument.
+   */
+  function watched(start: (id: string) => Promise<unknown>): HostProcess {
+    const id = newId()
+    const stdout: ((chunk: string) => void)[] = []
+    const stderr: ((chunk: string) => void)[] = []
+
+    outputListeners.set(id, (event) => {
+      for (const listener of event.stream === 'stdout' ? stdout : stderr) listener(event.text)
+    })
+
+    const closed = new Promise<{ code: number | null; signalName?: string }>((resolve, reject) => {
+      endedListeners.set(id, (event) => {
+        outputListeners.delete(id)
+        endedListeners.delete(id)
+        resolve({ code: event.code, signalName: event.signalName })
+      })
+
+      void startRouting()
+        .then(() => start(id))
+        .catch((error: unknown) => {
+          outputListeners.delete(id)
+          endedListeners.delete(id)
+          reject(error instanceof Error ? error : new Error(String(error)))
+        })
+    })
+
+    return {
+      onStdout: (listener) => stdout.push(listener),
+      onStderr: (listener) => stderr.push(listener),
+      closed,
+      terminate: () => void invoke('process_terminate', { id })
+    }
+  }
+
   return {
     kind: 'local',
     label: 'this machine',
@@ -120,38 +160,13 @@ export function tauriHost(platform: string): RepairHost {
       invoke('find_media', { roots, extensions, recursive }),
 
     spawnProcess(command: string, args: string[]): HostProcess {
-      const id = newId()
-      const stdout: ((chunk: string) => void)[] = []
-      const stderr: ((chunk: string) => void)[] = []
+      return watched((id) => invoke('process_start', { id, command, args }))
+    },
 
-      outputListeners.set(id, (event) => {
-        for (const listener of event.stream === 'stdout' ? stdout : stderr) listener(event.text)
-      })
-
-      const closed = new Promise<{ code: number | null; signalName?: string }>((resolve, reject) => {
-        endedListeners.set(id, (event) => {
-          outputListeners.delete(id)
-          endedListeners.delete(id)
-          resolve({ code: event.code, signalName: event.signalName })
-        })
-
-        void startRouting()
-          .then(() =>
-            invoke('process_start', { id, command, args })
-          )
-          .catch((error: unknown) => {
-            outputListeners.delete(id)
-            endedListeners.delete(id)
-            reject(error instanceof Error ? error : new Error(String(error)))
-          })
-      })
-
-      return {
-        onStdout: (listener) => stdout.push(listener),
-        onStderr: (listener) => stderr.push(listener),
-        closed,
-        terminate: () => void invoke('process_terminate', { id })
-      }
+    spawnPipeline(stages: readonly { command: string; args: string[] }[]): HostProcess {
+      // One id for the whole pipeline: the stages share a stderr stream from
+      // the caller's point of view, and stopping it stops all of them.
+      return watched((id) => invoke('process_start_pipeline', { id, stages }))
     },
 
     kill: (marker: string): Promise<void> => invoke('process_kill_matching', { marker })

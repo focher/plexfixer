@@ -49,8 +49,15 @@ pub struct Processes {
 }
 
 struct Running {
-    /// `None` only for a process that had already ended when it was recorded.
-    pid: Option<u32>,
+    /// Every process under this id, youngest first.
+    ///
+    /// A plain run has one. A pipeline has one per stage, and all of them have
+    /// to be stopped: killing only the producer leaves the consumer waiting on
+    /// a pipe that will never close, and killing only the consumer leaves the
+    /// producer writing into one nothing reads.
+    ///
+    /// Empty only for a process that had already ended when it was recorded.
+    pids: Vec<u32>,
     /// The command line, for stopping a process by something it contains.
     line: String,
 }
@@ -62,23 +69,26 @@ impl Processes {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn insert(&self, id: &str, pid: Option<u32>, line: String) {
-        self.table().insert(id.to_string(), Running { pid, line });
+    fn insert(&self, id: &str, pids: Vec<u32>, line: String) {
+        self.table().insert(id.to_string(), Running { pids, line });
     }
 
     fn remove(&self, id: &str) {
         self.table().remove(id);
     }
 
-    fn pid_of(&self, id: &str) -> Option<u32> {
-        self.table().get(id).and_then(|running| running.pid)
+    fn pids_of(&self, id: &str) -> Vec<u32> {
+        self.table()
+            .get(id)
+            .map(|running| running.pids.clone())
+            .unwrap_or_default()
     }
 
     fn pids_matching(&self, marker: &str) -> Vec<u32> {
         self.table()
             .values()
             .filter(|running| running.line.contains(marker))
-            .filter_map(|running| running.pid)
+            .flat_map(|running| running.pids.clone())
             .collect()
     }
 }
@@ -197,7 +207,7 @@ pub async fn process_start(
 
     // Recorded before anything waits on it, and left there until it has
     // ended: this entry is the only way a later request can find the process.
-    processes.insert(&id, child.id(), line);
+    processes.insert(&id, child.id().into_iter().collect(), line);
 
     let handle = app.clone();
     let watched = id.clone();
@@ -242,10 +252,204 @@ pub async fn process_start(
     Ok(())
 }
 
+/// One stage of a pipeline: a binary and its arguments.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stage {
+    pub command: String,
+    pub args: Vec<String>,
+}
+
+/// Start several binaries with their output wired into each other's input.
+///
+/// This exists for one job: converting Dolby Vision profile 7 to 8.1. Only
+/// `dovi_tool` can rewrite the RPU, and it reads an HEVC elementary stream —
+/// which has to come out of the film first. Run as two steps with a file
+/// between them, a 60 GB remux needs 55 GB of scratch for the extracted
+/// stream before the conversion has written a byte. Piped, that file never
+/// exists.
+///
+/// Every stage is checked against the same allow-list as `process_start`:
+/// nothing starts a binary this app did not resolve for itself.
+///
+/// Failure is judged from the last stage, then from the rest. The order
+/// matters because of SIGPIPE: when the consumer finishes first the producer
+/// is killed by the kernel mid-write, and that is the normal end of a healthy
+/// pipeline rather than a fault. A producer that failed for its own reasons
+/// exits with a code instead, and that is reported.
+#[tauri::command]
+pub async fn process_start_pipeline(
+    app: AppHandle,
+    id: String,
+    stages: Vec<Stage>,
+    processes: State<'_, Processes>,
+) -> Result<(), String> {
+    if stages.is_empty() {
+        return Err("a pipeline needs at least one stage".into());
+    }
+    for stage in &stages {
+        if !allowed_binary(&app, &stage.command).await {
+            return Err(format!(
+                "{} is not one of the binaries PlexFixer runs. Only the ffmpeg and ffprobe it resolved are.",
+                stage.command
+            ));
+        }
+    }
+
+    let last = stages.len() - 1;
+    let mut children = Vec::with_capacity(stages.len());
+    let mut carried: Option<Stdio> = None;
+    let mut readers = Vec::new();
+
+    let forward = |stream: &'static str, id: String| {
+        let app = app.clone();
+        move |text: String| {
+            let _ = app.emit(
+                "plexfixer://process-output",
+                Chunk {
+                    id: id.clone(),
+                    stream,
+                    text,
+                },
+            );
+        }
+    };
+
+    for (index, stage) in stages.iter().enumerate() {
+        let mut builder = Command::new(&stage.command);
+        builder
+            .args(&stage.args)
+            .stdin(carried.take().unwrap_or_else(Stdio::null))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        #[cfg(windows)]
+        {
+            builder.creation_flags(0x0800_0000);
+        }
+
+        let mut child = builder.spawn().map_err(|e| {
+            // Whatever started already is killed on drop, so a stage that will
+            // not start does not leave the one before it writing into nothing.
+            format!("{} would not start: {e}", stage.command)
+        })?;
+
+        let stderr = child.stderr.take().ok_or("no stderr")?;
+        readers.push(tokio::spawn(pump(stderr, forward("stderr", id.clone()))));
+
+        let stdout = child.stdout.take().ok_or("no stdout")?;
+        if index == last {
+            readers.push(tokio::spawn(pump(stdout, forward("stdout", id.clone()))));
+        } else {
+            // Into the next stage rather than to the app: this is the film,
+            // not progress output, and it is measured in gigabytes.
+            // `try_into`, not `Stdio::try_from`: tokio implements the
+            // conversion as `TryInto<Stdio> for ChildStdout` rather than the
+            // `TryFrom` the standard library provides for its own handles.
+            let piped: Stdio = stdout
+                .try_into()
+                .map_err(|e| format!("could not pipe stdout: {e}"))?;
+            carried = Some(piped);
+        }
+
+        children.push(child);
+    }
+
+    let line = stages
+        .iter()
+        .map(|stage| {
+            std::iter::once(stage.command.clone())
+                .chain(stage.args.iter().cloned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    processes.insert(&id, children.iter().filter_map(|c| c.id()).collect(), line);
+
+    let handle = app.clone();
+    let watched = id.clone();
+    tokio::spawn(async move {
+        let mut statuses = Vec::with_capacity(children.len());
+        for child in &mut children {
+            statuses.push(child.wait().await);
+        }
+        handle.state::<Processes>().remove(&watched);
+
+        let _ = tokio::time::timeout(DRAIN, async {
+            for reader in readers {
+                let _ = reader.await;
+            }
+        })
+        .await;
+
+        let (code, signal_name) = pipeline_outcome(&statuses);
+
+        let _ = handle.emit(
+            "plexfixer://process-ended",
+            Ended {
+                id: watched,
+                code,
+                signal_name,
+            },
+        );
+    });
+
+    Ok(())
+}
+
+/// What a pipeline's several exits add up to.
+///
+/// The last stage decides it: it is the one that wrote the output, so its
+/// verdict is the pipeline's. Only when it succeeded is the rest consulted,
+/// and then a stage killed by SIGPIPE is passed over — that is what happens to
+/// a producer when the consumer finishes first, and it means nothing went
+/// wrong. Anything else failing means the last stage was fed a truncated
+/// stream and wrote a truncated file while believing it had read to the end.
+fn pipeline_outcome(statuses: &[std::io::Result<std::process::ExitStatus>]) -> (Option<i32>, Option<String>) {
+    fn parts(status: &std::io::Result<std::process::ExitStatus>) -> (Option<i32>, Option<String>) {
+        match status {
+            Ok(status) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    (status.code(), status.signal().map(|s| format!("SIG{s}")))
+                }
+                #[cfg(not(unix))]
+                {
+                    (status.code(), None)
+                }
+            }
+            Err(_) => (None, None),
+        }
+    }
+
+    let Some(final_status) = statuses.last() else {
+        return (None, None);
+    };
+    let last = parts(final_status);
+    if last.0 != Some(0) {
+        return last;
+    }
+
+    for status in &statuses[..statuses.len() - 1] {
+        let (code, signal) = parts(status);
+        if signal.as_deref() == Some("SIG13") {
+            continue;
+        }
+        if code != Some(0) {
+            return (code, signal);
+        }
+    }
+    last
+}
+
 /// Ask a process to stop.
 #[tauri::command]
 pub async fn process_terminate(id: String, processes: State<'_, Processes>) -> Result<(), String> {
-    if let Some(pid) = processes.pid_of(&id) {
+    for pid in processes.pids_of(&id) {
         terminate_pid(pid);
     }
     Ok(())
@@ -297,15 +501,15 @@ mod tests {
         // The bug this guards: the table was emptied as soon as the process
         // started, so stopping one by id found nothing and did nothing.
         let table = Processes::default();
-        table.insert("job-1", Some(4242), "ffmpeg -i in.mkv out.mp4".into());
-        assert_eq!(table.pid_of("job-1"), Some(4242));
+        table.insert("job-1", vec![4242], "ffmpeg -i in.mkv out.mp4".into());
+        assert_eq!(table.pids_of("job-1"), vec![4242]);
     }
 
     #[test]
     fn a_running_process_can_be_found_by_its_command_line() {
         let table = Processes::default();
-        table.insert("job-1", Some(1), "ffmpeg -i a.mkv /m/.plexfixer-abc-a.mp4".into());
-        table.insert("job-2", Some(2), "ffmpeg -i b.mkv /m/.plexfixer-abc-b.mp4".into());
+        table.insert("job-1", vec![1], "ffmpeg -i a.mkv /m/.plexfixer-abc-a.mp4".into());
+        table.insert("job-2", vec![2], "ffmpeg -i b.mkv /m/.plexfixer-abc-b.mp4".into());
         assert_eq!(table.pids_matching("/m/.plexfixer-abc-b.mp4"), vec![2]);
     }
 
@@ -314,15 +518,15 @@ mod tests {
         // A pid is reused by the system once its process is gone, so one that
         // stayed here could later stop something that is not ours.
         let table = Processes::default();
-        table.insert("job-1", Some(4242), "ffmpeg".into());
+        table.insert("job-1", vec![4242], "ffmpeg".into());
         table.remove("job-1");
-        assert_eq!(table.pid_of("job-1"), None);
+        assert!(table.pids_of("job-1").is_empty());
         assert!(table.pids_matching("ffmpeg").is_empty());
     }
 
     #[test]
     fn an_unknown_id_finds_nothing() {
-        assert_eq!(Processes::default().pid_of("nobody"), None);
+        assert!(Processes::default().pids_of("nobody").is_empty());
     }
 
     #[cfg(unix)]
@@ -339,9 +543,11 @@ mod tests {
             .spawn()
             .expect("sleep starts");
         let table = Processes::default();
-        table.insert("job-1", child.id(), "sleep 30".into());
+        table.insert("job-1", child.id().into_iter().collect(), "sleep 30".into());
 
-        terminate_pid(table.pid_of("job-1").expect("in the table while it runs"));
+        for pid in table.pids_of("job-1") {
+            terminate_pid(pid);
+        }
 
         let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
             .await
@@ -383,5 +589,65 @@ mod tests {
         assert_eq!(chunks.len(), 3);
         assert!(chunks.iter().all(|chunk| chunk.len() <= LONGEST_CHUNK as usize));
         assert_eq!(chunks.iter().map(String::len).sum::<usize>(), endless.len());
+    }
+
+    /* --- what a pipeline's several exits add up to -------------------- */
+
+    /// An `ExitStatus` cannot be built by hand, so one is taken from a process
+    /// run for the purpose. `true` and `false` are in every POSIX environment,
+    /// and the signalled case uses a process this test kills itself.
+    #[cfg(unix)]
+    mod pipeline {
+        use super::super::pipeline_outcome;
+        use std::process::{Command, ExitStatus};
+
+        fn exited(code: i32) -> std::io::Result<ExitStatus> {
+            Ok(Command::new("sh")
+                .args(["-c", &format!("exit {code}")])
+                .status()
+                .expect("sh"))
+        }
+
+        fn sigpiped() -> std::io::Result<ExitStatus> {
+            // SIGPIPE is 13; `kill -13 $$` makes a process die of it exactly
+            // as a producer does when its consumer closes the pipe early.
+            Ok(Command::new("sh")
+                .args(["-c", "kill -13 $$"])
+                .status()
+                .expect("sh"))
+        }
+
+        #[test]
+        fn every_stage_succeeding_is_a_success() {
+            assert_eq!(pipeline_outcome(&[exited(0), exited(0)]).0, Some(0));
+        }
+
+        #[test]
+        fn the_last_stage_failing_is_the_pipelines_verdict() {
+            assert_eq!(pipeline_outcome(&[exited(0), exited(3)]).0, Some(3));
+        }
+
+        /// The case this function exists for. When `dovi_tool` finishes first,
+        /// the kernel kills the `ffmpeg` feeding it. Treating that as a
+        /// failure would fail every healthy conversion.
+        #[test]
+        fn a_producer_killed_by_sigpipe_is_not_a_failure() {
+            let outcome = pipeline_outcome(&[sigpiped(), exited(0)]);
+            assert_eq!(outcome.0, Some(0));
+        }
+
+        /// The case that makes the one above dangerous to get wrong the other
+        /// way: ffmpeg failing for its own reasons closes the pipe too, and
+        /// the consumer reads a truncated stream, finds a clean end and exits
+        /// 0 having written a truncated file.
+        #[test]
+        fn a_producer_failing_on_its_own_is_a_failure_even_when_the_rest_succeeded() {
+            assert_eq!(pipeline_outcome(&[exited(1), exited(0)]).0, Some(1));
+        }
+
+        #[test]
+        fn nothing_at_all_is_not_a_crash() {
+            assert_eq!(pipeline_outcome(&[]).0, None);
+        }
     }
 }

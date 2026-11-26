@@ -22,7 +22,7 @@ use tauri::{AppHandle, Manager};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-use crate::locate::{locate, locate_mp4tags, locate_qt_faststart};
+use crate::locate::{locate, locate_dovi_tool, locate_mp4tags, locate_qt_faststart};
 use crate::settings::Store;
 
 /// Directories that never hold library media and cost time to walk.
@@ -119,6 +119,12 @@ pub async fn allowed_binary(app: &AppHandle, command: &str) -> bool {
     // PATH. The caller never names it.
     if let Some(tags) = locate_mp4tags(app, ffmpeg.as_deref()) {
         located.push(tags);
+    }
+    // `dovi_tool`, which is the only thing that converts a Dolby Vision
+    // profile 7 stream. Resolved here, like the rest, so the caller cannot
+    // widen what runs by naming something else.
+    if let Some(dovi) = locate_dovi_tool(app, ffmpeg.as_deref()) {
+        located.push(dovi);
     }
     // A whisper.cpp build this app installed into its own folder, and one
     // already on PATH — a Homebrew install, say, on the platform upstream

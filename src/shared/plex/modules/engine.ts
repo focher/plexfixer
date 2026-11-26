@@ -153,6 +153,7 @@ export function analyzeWithModules(
     const fragment = result.plan
     if (fragment?.videoTranscode) plan.videoTranscode = fragment.videoTranscode
     if (fragment?.addCompatibilityAudio) plan.addCompatibilityAudio = fragment.addCompatibilityAudio
+    if (fragment?.dolbyVision7To81) plan.dolbyVision7To81 = fragment.dolbyVision7To81
     if (fragment?.replaceAudio?.length) {
       plan.replaceAudio = [...(plan.replaceAudio ?? []), ...fragment.replaceAudio]
     }
@@ -214,7 +215,15 @@ export function analyzeWithModules(
     state.targetContainer === 'mp4' && (outputVideoCodec === 'hevc' || outputVideoCodec === 'h265')
       ? plan.videoTranscode
         ? 'hvc1'
-        : preferredHevcTag(media.video[0]?.codecTag)
+        : // A converted profile 7 stream is Dolby Vision 8.1 and has to say so.
+          // `preferredHevcTag` only keeps a tag the file already carried, which
+          // an MKV source does not have one of — so a conversion out of MKV
+          // would land as plain `hvc1`, and every client would read a Dolby
+          // Vision file as ordinary HEVC. The whole point of converting is the
+          // signalling; it is named here rather than inferred.
+          plan.dolbyVision7To81
+          ? 'dvh1'
+          : preferredHevcTag(media.video[0]?.codecTag)
       : undefined
 
   plan.strategy = settled

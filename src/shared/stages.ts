@@ -19,6 +19,7 @@ export const STAGE_ORDER: JobStage[] = [
   'verifying',
   'promoting',
   'subtitles',
+  'dolby-vision',
   'finished'
 ]
 
@@ -31,6 +32,7 @@ export const STAGE_LABEL: Record<JobStage, string> = {
   verifying: 'Verifying',
   promoting: 'Moving',
   subtitles: 'Subtitles',
+  'dolby-vision': 'Dolby Vision',
   finished: 'Done'
 }
 
@@ -44,6 +46,7 @@ export const STAGE_DETAIL: Record<JobStage, string> = {
   verifying: 'Re-probing the output to confirm it has the streams it should',
   promoting: 'Backing up the original and moving the repaired file into place',
   subtitles: 'Checking subtitle timing',
+  'dolby-vision': 'Rewriting the Dolby Vision stream as single-layer profile 8.1',
   finished: 'Finished'
 }
 
@@ -80,6 +83,7 @@ export function stepsFor(job: Job): StageStep[] {
     stages.add('finalising')
   }
   if (job.metrics?.phases.some((phase) => phase.phase === 'subtitles')) stages.add('subtitles')
+  if (job.metrics?.phases.some((phase) => phase.phase === 'dolby-vision')) stages.add('dolby-vision')
 
   const ordered = STAGE_ORDER.filter((stage) => stages.has(stage))
   const finished = job.state !== 'queued' && job.state !== 'running'

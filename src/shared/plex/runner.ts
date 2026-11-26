@@ -61,6 +61,8 @@ export interface RunnerBinaries {
   qtFaststartPath?: string
   /** Writes tags without rewriting the file; optional. */
   mp4tagsPath?: string
+  /** Converts Dolby Vision profile 7 to 8.1; optional. */
+  doviToolPath?: string
 }
 
 export interface EnqueueOptions {
@@ -985,12 +987,21 @@ export class RepairRunner {
     const retimedSubtitles = await this.retimeSubtitles(id, result, settings, signal)
     if (signal.aborted) return
 
+    // Likewise an input: the converted Dolby Vision stream is a file on disk
+    // by the time ffmpeg is asked to mux anything.
+    const convertedVideo = await this.convertDolbyVision7(id, result, signal)
+    if (signal.aborted) {
+      if (convertedVideo) await this.host.remove(convertedVideo.path).catch(() => {})
+      return
+    }
+
     const { args, encoderLabel } = buildRepairCommand({
       result,
       settings,
       caps,
       outputPath,
-      retimedSubtitles
+      retimedSubtitles,
+      convertedVideo
     })
     const temporaryPath = temporaryPathFor(outputPath, this.host)
     const finalArgs = redirectOutput(args, outputPath, temporaryPath)
@@ -1194,6 +1205,14 @@ export class RepairRunner {
               : { at: Date.now(), level: 'info', text: 'Discarded the temporary file; the original is untouched' }
         ]
       })
+    } finally {
+      // The converted Dolby Vision stream is the size of the film's video and
+      // is of no use once the mux has read it. It goes whether the repair
+      // worked, failed or was cancelled — a scratch file this large left
+      // behind after a cancel is its own kind of bug.
+      if (convertedVideo) {
+        await this.host.remove(convertedVideo.path).catch(() => {})
+      }
     }
   }
 
@@ -1525,6 +1544,156 @@ export class RepairRunner {
    * leaves the track exactly as it was and says so in the log. A repair is not
    * worth failing over a subtitle.
    */
+  /**
+   * Rewrite a Dolby Vision profile 7 video stream as single-layer profile 8.1.
+   *
+   * Two programs, wired together: ffmpeg copies the video track out of the
+   * film as a raw HEVC elementary stream, and `dovi_tool` reads that stream,
+   * discards the enhancement layer and rewrites the RPU. The picture is never
+   * decoded by either of them, so this costs one read of the file rather than
+   * the hours a re-encode would.
+   *
+   * They are piped rather than run one after the other, which is the whole
+   * reason `spawnPipeline` exists. With a file between them a 60 GB remux
+   * would need 55 GB of scratch for the extracted stream *before* the
+   * conversion had written anything, on top of the 55 GB the converted stream
+   * takes and the 60 GB the output takes. Piped, the first of those three
+   * never exists.
+   *
+   * Nothing here is fatal, and that is deliberate: the plan that asked for
+   * this also lists the Dolby Vision finding as answered, so a conversion that
+   * cannot run has to stop the repair rather than quietly produce a file that
+   * still has the problem. It therefore throws, and the caller reports it like
+   * any other failure, with the original untouched.
+   */
+  private async convertDolbyVision7(
+    jobId: string,
+    result: AnalysisResult,
+    signal: AbortSignal
+  ): Promise<{ streamIndex: number; path: string; frameRate?: number } | undefined> {
+    const spec = result.plan.dolbyVision7To81
+    if (!spec || signal.aborted) return undefined
+
+    const doviToolPath = this.binaries.doviToolPath
+    if (!doviToolPath) {
+      throw new Error(
+        'Converting Dolby Vision profile 7 needs dovi_tool, which is not available here. ' +
+          'Run "npm run fetch:ffmpeg" in a development checkout, or turn the conversion off under Compatibility.'
+      )
+    }
+    const spawnPipeline = this.host.spawnPipeline
+    if (!spawnPipeline) {
+      throw new Error(
+        `The file is on ${this.host.label}, and converting Dolby Vision profile 7 needs two programs piped ` +
+          'together — which only runs on this machine. Copy the file here, or turn the conversion off ' +
+          'under Compatibility.'
+      )
+    }
+
+    this.setStage(jobId, 'dolby-vision')
+    const started = performance.now()
+
+    const paths = this.host.paths
+    // Beside the file being written rather than beside the film: this is a
+    // working file, and the folder the film is in may be read-only.
+    const converted = paths.join(
+      paths.dirname(result.file.path),
+      `.plexfixer-dovi-${Date.now()}.hevc`
+    )
+
+    this.log(
+      jobId,
+      'info',
+      'Converting the Dolby Vision stream to profile 8.1',
+      'The enhancement layer is discarded and the metadata rewritten. The picture is copied through, not ' +
+        're-encoded.\n\nThis needs scratch space about the size of the film\u2019s video track, beside the ' +
+        'file, for as long as the repair runs.'
+    )
+
+    const stages = [
+      {
+        command: this.binaries.ffmpegPath,
+        args: [
+          '-nostdin',
+          '-v',
+          'error',
+          '-i',
+          result.file.path,
+          '-map',
+          `0:${spec.sourceStreamIndex}`,
+          '-c:v',
+          'copy',
+          // dovi_tool reads Annex B; an MP4 source carries length-prefixed
+          // NAL units, and without this it sees nothing it recognises.
+          '-bsf:v',
+          'hevc_mp4toannexb',
+          '-f',
+          'hevc',
+          '-'
+        ]
+      },
+      {
+        command: doviToolPath,
+        // Mode 2 is "convert the RPU to be profile 8.1 compatible"; --discard
+        // drops the enhancement layer, which is what makes the result single
+        // layer rather than simply relabelled.
+        args: ['-m', '2', 'convert', '--discard', '-', '-o', converted]
+      }
+    ]
+
+    const process = spawnPipeline(stages)
+    const errors: string[] = []
+    process.onStderr((chunk) => {
+      errors.push(chunk)
+      // Only the tail is worth keeping: dovi_tool draws a progress bar.
+      if (errors.length > 40) errors.splice(0, errors.length - 40)
+    })
+
+    const onAbort = (): void => process.terminate()
+    signal.addEventListener('abort', onAbort, { once: true })
+    let ended: { code: number | null; signalName?: string }
+    try {
+      ended = await process.closed
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
+
+    if (signal.aborted) {
+      await this.host.remove(converted).catch(() => {})
+      return undefined
+    }
+
+    if (ended.code !== 0) {
+      await this.host.remove(converted).catch(() => {})
+      const tail = errors.join('').trim()
+      throw new Error(
+        `Converting the Dolby Vision stream failed (exit ${ended.code ?? 'unknown'})` +
+          (tail ? `: ${tail.slice(-800)}` : '.')
+      )
+    }
+
+    // dovi_tool exits 0 on an empty input, so the file is checked rather than
+    // assumed: muxing a zero-byte video track would produce a file with no
+    // picture and ffmpeg would not necessarily complain.
+    const info = await this.host.stat(converted).catch(() => undefined)
+    if (!info || info.sizeBytes === 0) {
+      await this.host.remove(converted).catch(() => {})
+      throw new Error('Converting the Dolby Vision stream produced nothing. The file has not been touched.')
+    }
+
+    const elapsed = performance.now() - started
+    this.addPhase(jobId, 'dolby-vision', elapsed, { bytes: info.sizeBytes })
+    this.log(
+      jobId,
+      'info',
+      `Converted the Dolby Vision stream in ${(elapsed / 1000).toFixed(1)}s`,
+      `${converted}\n${(info.sizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB of single-layer HEVC, muxed back in ` +
+        'place of the original track.'
+    )
+
+    return { streamIndex: spec.sourceStreamIndex, path: converted, frameRate: spec.frameRate }
+  }
+
   private async retimeSubtitles(
     jobId: string,
     result: AnalysisResult,

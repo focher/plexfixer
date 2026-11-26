@@ -67,6 +67,27 @@ The binaries are not committed to this repository. They are downloaded at build
 time by `npm run fetch:ffmpeg`, so a clone of this repository contains no
 GPL-licensed material.
 
+## dovi_tool
+
+PlexFixer bundles `dovi_tool`, which converts a Dolby Vision profile 7 stream
+to profile 8.1 — discarding the enhancement layer and rewriting the RPU. It is
+the only program that does this; nothing in FFmpeg writes Dolby Vision
+metadata. It is run as a subprocess like the others, and the app works without
+it, reporting profile 7 files and leaving them alone.
+
+Source: [quietvoid/dovi_tool](https://github.com/quietvoid/dovi_tool), release
+`2.3.4`, under the **MIT License**. The published binaries are used as they
+come, held to the SHA-256 the release page lists.
+
+| Platform | Asset |
+| --- | --- |
+| macOS arm64 / x64 | `dovi_tool-2.3.4-universal-macOS.zip` |
+| Windows x64 | `dovi_tool-2.3.4-x86_64-pc-windows-msvc.zip` |
+| Linux x64 | `dovi_tool-2.3.4-x86_64-unknown-linux-musl.tar.gz` |
+
+Like the FFmpeg binaries, these are not committed to this repository; they are
+downloaded at build time by `npm run fetch:ffmpeg`.
+
 ## qt-faststart
 
 PlexFixer also bundles `qt-faststart`, which moves an MP4's index to the front

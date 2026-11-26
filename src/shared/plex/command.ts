@@ -177,6 +177,16 @@ export interface BuildCommandOptions {
    * is why the stream index here is the *source* index, not an output ordinal.
    */
   retimedSubtitles?: readonly { streamIndex: number; path: string }[]
+  /**
+   * The video track, taken from a file instead of from the input.
+   *
+   * Written earlier in the run by `dovi_tool`: the same picture, with the
+   * Dolby Vision enhancement layer discarded and the RPU rewritten as profile
+   * 8.1. Like a retimed subtitle, the plan still reasons about the original
+   * track and only its bytes come from elsewhere — so the index here is the
+   * *source* index, not an output ordinal.
+   */
+  convertedVideo?: { streamIndex: number; path: string; frameRate?: number }
 }
 
 export interface BuiltCommand {
@@ -204,6 +214,23 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
   const retimed = new Map((options.retimedSubtitles ?? []).map((entry) => [entry.streamIndex, entry.path]))
   const inputOrdinal = new Map<number, number>()
   const args: string[] = [...vulkan, '-i', file.path]
+
+  /*
+   * The converted Dolby Vision stream, when there is one.
+   *
+   * It is raw HEVC — an elementary stream with no container, and so no timing
+   * of its own. ffmpeg's default for raw HEVC is 25 fps, which would make a
+   * 23.976 film run four per cent fast and walk steadily away from its own
+   * audio over two hours. The rate is therefore stated from the probe, and an
+   * input option has to come before the `-i` it applies to.
+   */
+  const converted = options.convertedVideo
+  if (converted) {
+    inputOrdinal.set(converted.streamIndex, inputOrdinal.size + 1)
+    if (converted.frameRate) args.push('-r', String(converted.frameRate))
+    args.push('-i', converted.path)
+  }
+
   for (const [streamIndex, path] of retimed) {
     inputOrdinal.set(streamIndex, inputOrdinal.size + 1)
     args.push('-i', path)

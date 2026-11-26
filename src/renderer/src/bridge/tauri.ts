@@ -184,7 +184,8 @@ async function ensureRunner(): Promise<RepairRunner> {
     ffmpegPath: environment.ffmpegPath,
     ffprobePath: ready.ffprobePath,
     qtFaststartPath: environment.qtFaststartPath,
-    mp4tagsPath: environment.mp4tagsPath
+    mp4tagsPath: environment.mp4tagsPath,
+    doviToolPath: environment.doviToolPath
   }
 
   if (!runner) {

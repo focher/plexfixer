@@ -297,6 +297,30 @@ export interface CompatibilityAudioSpec {
  * the same track. Only the named tracks are encoded; everything else in the
  * file, the video above all, is still copied.
  */
+/**
+ * Converting a Dolby Vision profile 7 stream to profile 8.1.
+ *
+ * Profile 7 is what a UHD Blu-ray carries: a base layer, an enhancement layer
+ * and an RPU. Profile 8.1 is the single-layer form whose base layer *is*
+ * HDR10, so a client that cannot decode Dolby Vision gets a correct picture
+ * instead of nothing. The conversion discards the enhancement layer, which is
+ * a real loss on a full-enhancement-layer disc and no loss at all on a
+ * minimum-enhancement-layer one — and the base layer, the picture itself, is
+ * copied through untouched either way.
+ */
+export interface DolbyVision7Spec {
+  /** The video track to convert, by its index in the source file. */
+  sourceStreamIndex: number
+  /**
+   * Frames per second, carried from the probe.
+   *
+   * The converted stream comes back as raw HEVC, which holds no timing of its
+   * own. Muxing it without saying the rate makes ffmpeg assume 25, and a
+   * 23.976 film then runs fast and drifts out of step with its own audio.
+   */
+  frameRate?: number
+}
+
 export interface AudioReplacementSpec {
   /** The track to encode, by its index in the source file. */
   sourceStreamIndex: number
@@ -353,6 +377,16 @@ export interface RepairPlan {
   replaceAudio?: AudioReplacementSpec[]
   /** Set when the video stream must be re-encoded. */
   videoTranscode?: VideoTranscodeSpec
+  /**
+   * Set when a Dolby Vision profile 7 stream should be converted to 8.1.
+   *
+   * Not a transcode, which is why it is not one of the fields above: the
+   * picture is copied untouched and only the Dolby Vision metadata changes.
+   * The work happens before ffmpeg is asked to write anything — the video
+   * stream goes through `dovi_tool` and comes back as a file the mux reads in
+   * place of the original track.
+   */
+  dolbyVision7To81?: DolbyVision7Spec
   /** Write the MP4 index to the front of the file. */
   faststart: boolean
   /** Retag the video stream (e.g. HEVC as `hvc1` for Apple clients). */
@@ -581,6 +615,16 @@ export interface AppSettings {
    * come out right on every client instead of only on DV-capable ones.
    */
   dolbyVision5: 'keep' | 'hdr10'
+  /**
+   * What to do with Dolby Vision profile 7, the dual-layer form.
+   *
+   * `profile8` converts to 8.1: the enhancement layer is discarded and the RPU
+   * rewritten, which is a stream rewrite rather than a re-encode — the picture
+   * is not touched and the result is the same HEVC base layer with metadata
+   * every client understands. It needs `dovi_tool`, which ffmpeg cannot
+   * replace. `keep` reports the file and leaves it alone.
+   */
+  dolbyVision7: 'keep' | 'profile8'
 
   /**
    * A key of your own for themoviedb.org, used to look a film up.
@@ -756,6 +800,8 @@ export type JobPhase =
   | 'promote'
   /** Measuring subtitle timing against the audio and correcting it. */
   | 'subtitles'
+  /** Rewriting a Dolby Vision profile 7 stream as single-layer 8.1. */
+  | 'dolby-vision'
   /** Queued to finished. */
   | 'total'
 
@@ -830,6 +876,8 @@ export type JobStage =
   | 'promoting'
   /** Measuring subtitle timing against the audio and correcting it. */
   | 'subtitles'
+  /** Rewriting a Dolby Vision profile 7 stream as single-layer 8.1. */
+  | 'dolby-vision'
   | 'finished'
 
 /** The machine a job is running on, recorded when it starts. */
@@ -972,6 +1020,13 @@ export interface EnvironmentInfo {
    * film to change two words.
    */
   mp4tagsPath?: string
+  /**
+   * Converts a Dolby Vision profile 7 stream to 8.1; optional.
+   *
+   * Nothing in ffmpeg writes a Dolby Vision RPU, so without this the app can
+   * report a profile 7 file and nothing more.
+   */
+  doviToolPath?: string
   ffmpegSource?: 'settings' | 'bundled' | 'path'
   ffprobeSource?: 'settings' | 'bundled' | 'path'
   ffmpegVersion?: string

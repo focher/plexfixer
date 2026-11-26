@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tokio::process::Command;
 
-use crate::locate::{locate, locate_mp4tags, locate_qt_faststart, node_platform};
+use crate::locate::{locate, locate_dovi_tool, locate_mp4tags, locate_qt_faststart, node_platform};
 
 /// Hardware encoders worth asking about, in the order they are reported.
 const HARDWARE_ENCODERS: &[&str] = &[
@@ -59,6 +59,9 @@ pub struct Environment {
     pub qt_faststart_path: Option<String>,
     /// Writes a file's own tags without rewriting it; optional.
     pub mp4tags_path: Option<String>,
+    /// Converts a Dolby Vision profile 7 stream to 8.1; optional.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dovi_tool_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ffmpeg_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -268,12 +271,15 @@ pub async fn resolve(
         locate_qt_faststart(app, &ffmpeg.path).map(|path| path.to_string_lossy().into_owned());
     let mp4tags_path =
         locate_mp4tags(app, Some(&ffmpeg.path)).map(|path| path.to_string_lossy().into_owned());
+    let dovi_tool_path =
+        locate_dovi_tool(app, Some(&ffmpeg.path)).map(|path| path.to_string_lossy().into_owned());
 
     Environment {
         ffmpeg_path: Some(ffmpeg_path),
         ffprobe_path: Some(ffprobe_path),
         qt_faststart_path,
         mp4tags_path,
+        dovi_tool_path,
         ffmpeg_source: Some(ffmpeg.source.to_string()),
         ffprobe_source: Some(ffprobe.source.to_string()),
         ffmpeg_version: Some(version),

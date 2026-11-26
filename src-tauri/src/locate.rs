@@ -1,4 +1,5 @@
-//! Finding the ffmpeg and ffprobe binaries, and the optional qt-faststart.
+//! Finding the ffmpeg and ffprobe binaries, and the optional helpers beside
+//! them: qt-faststart, mp4tags and dovi_tool.
 //!
 //! Packaged builds ship static binaries under `bin/<platform>-<arch>/`; a dev
 //! run uses the repo's `resources/bin/<platform>-<arch>/` if `npm run
@@ -149,6 +150,20 @@ pub fn locate_qt_faststart(app: &AppHandle, ffmpeg: &Path) -> Option<PathBuf> {
 /// through ffmpeg, which copies every byte to change two words. Found the same
 /// way, and for the same reason — a Homebrew mp4v2 is as good as the bundled
 /// one, and somebody who has installed it should not have it ignored.
+/// `dovi_tool`, which converts a Dolby Vision profile 7 stream to 8.1.
+///
+/// Found the same way as `mp4tags`: beside the ffmpeg in use first, because a
+/// bundled build keeps them in one folder, then the bundled location, then
+/// PATH for somebody who installed it themselves. Optional — without it the
+/// app reports a profile 7 file and leaves it alone.
+pub fn locate_dovi_tool(app: &AppHandle, ffmpeg: Option<&Path>) -> Option<PathBuf> {
+    let beside = ffmpeg
+        .and_then(|path| path.parent())
+        .map(|dir| dir.join(exe_name("dovi_tool")))
+        .filter(|candidate| candidate.is_file());
+    beside.or_else(|| locate(app, "dovi_tool", None).map(|found| found.path))
+}
+
 pub fn locate_mp4tags(app: &AppHandle, ffmpeg: Option<&Path>) -> Option<PathBuf> {
     let beside = ffmpeg
         .and_then(|path| path.parent())

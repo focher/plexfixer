@@ -55,6 +55,7 @@ import { dropExtraVideo } from './repairs/drop-extra-video.js'
 import { customRequests } from './repairs/custom-requests.js'
 import { addCompatibilityAudio } from './repairs/add-compatibility-audio.js'
 import { replaceIncompatibleAudio } from './repairs/replace-incompatible-audio.js'
+import { convertDolbyVision7 } from './repairs/convert-dolby-vision-7.js'
 import { convertStyledSubtitles } from './repairs/convert-styled-subtitles.js'
 import { resyncSubtitles } from './repairs/resync-subtitles.js'
 import { fixTrackMetadata } from './repairs/fix-track-metadata.js'
@@ -114,6 +115,7 @@ export const CHECK_MODULES: readonly CheckModule[] = [
  */
 export const REPAIR_MODULES: readonly RepairModule[] = [
   transcodeVideo,
+  convertDolbyVision7,
   rewrapContainer,
   moveIndexToFront,
   retagHevc,

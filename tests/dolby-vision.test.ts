@@ -4,7 +4,7 @@ import { analyzeFile } from '@shared/plex/analyze.js'
 import { isBlocked } from '@shared/plex/blocked.js'
 import type { AppSettings, EncoderCapabilities } from '@shared/types.js'
 import { buildRepairCommand } from '@shared/plex/command.js'
-import { mainAudio, mp4, video } from './fixtures.js'
+import { mainAudio, mkv, mp4, video } from './fixtures.js'
 
 const OUT = '/out/Example (2020).mp4'
 
@@ -131,5 +131,118 @@ describe('the command for a profile 5 conversion', () => {
     const { args } = buildRepairCommand({ result: plain, settings: CONVERT, caps: CAPS, outputPath: OUT })
     expect(args).not.toContain('-init_hw_device')
     expect(filterGraph(args)).not.toContain('libplacebo')
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Profile 7 — converted to 8.1 rather than re-encoded
+ * ------------------------------------------------------------------ */
+
+const TO_81: AppSettings = { ...DEFAULT_SETTINGS, dolbyVision7: 'profile8' }
+
+/** Profile 7, with a frame rate, in the MKV a disc rip actually arrives as. */
+function profile7(frameRate = 23.976) {
+  return mkv([
+    video({
+      codec: 'hevc',
+      profile: 'Main 10',
+      bitDepth: 10,
+      pixFmt: 'yuv420p10le',
+      isHdr: true,
+      dolbyVisionProfile: 7,
+      frameRate
+    }),
+    mainAudio({ index: 1, codec: 'aac' })
+  ])
+}
+
+/** Every `-map` target in order. */
+function maps(args: string[]): string[] {
+  return args.flatMap((arg, index) => (arg === '-map' ? [args[index + 1]] : []))
+}
+
+describe('Dolby Vision profile 7', () => {
+  it('is reported and left alone while the setting is off', () => {
+    const result = analyzeFile(profile7(), DEFAULT_SETTINGS)
+    expect(result.plan.dolbyVision7To81).toBeUndefined()
+    expect(isBlocked(result)).toBe(true)
+  })
+
+  it('plans a conversion, not a re-encode, when the setting is on', () => {
+    const result = analyzeFile(profile7(), TO_81)
+    expect(result.plan.dolbyVision7To81).toEqual({ sourceStreamIndex: 0, frameRate: 23.976 })
+    // The whole point: the picture is copied through.
+    expect(result.plan.videoTranscode).toBeUndefined()
+    expect(result.plan.requiresTranscode).toBe(false)
+    expect(result.plan.strategy).toBe('remux')
+    expect(result.plan.unresolved.map((f) => f.code)).not.toContain('video-dolby-vision-profile')
+  })
+
+  /*
+   * The stream comes back as raw HEVC, which carries no timing. Muxed without
+   * a stated rate, ffmpeg assumes 25 and a 23.976 film runs four per cent fast
+   * — in step at the opening credits and a minute adrift by the end.
+   */
+  it('states the frame rate on the converted input, before the input it applies to', () => {
+    const result = analyzeFile(profile7(), TO_81)
+    const { args } = buildRepairCommand({
+      result,
+      settings: TO_81,
+      outputPath: OUT,
+      convertedVideo: { streamIndex: 0, path: '/scratch/converted.hevc', frameRate: 23.976 }
+    })
+
+    const rate = args.indexOf('-r')
+    expect(rate).toBeGreaterThan(-1)
+    expect(args[rate + 1]).toBe('23.976')
+    expect(args[rate + 2]).toBe('-i')
+    expect(args[rate + 3]).toBe('/scratch/converted.hevc')
+  })
+
+  it('maps the video from the converted file and everything else from the film', () => {
+    const result = analyzeFile(profile7(), TO_81)
+    const { args } = buildRepairCommand({
+      result,
+      settings: TO_81,
+      outputPath: OUT,
+      convertedVideo: { streamIndex: 0, path: '/scratch/converted.hevc', frameRate: 23.976 }
+    })
+
+    // Input 1 is the converted stream, and it holds exactly one track.
+    expect(maps(args)).toEqual(['1:0', '0:1'])
+    expect(valueAfter(args, '-c:v')).toBe('copy')
+  })
+
+  /*
+   * A converted file is Dolby Vision and has to say so. `preferredHevcTag`
+   * only keeps a tag the source already carried, and an MKV source carries
+   * none — so without naming it here, converting out of MKV would produce a
+   * file every client reads as ordinary HEVC, losing the one thing the
+   * conversion was for.
+   */
+  it('tags the converted stream as Dolby Vision even when the source had no tag', () => {
+    const result = analyzeFile(profile7(), TO_81)
+    expect(result.file.container).toBe('matroska')
+    expect(result.plan.videoCodecTag).toBe('dvh1')
+  })
+
+  it('leaves the conversion to the re-encode when the picture has to change anyway', () => {
+    // 4:2:2 forces a real transcode, which owns the video track.
+    const interlaced = mkv([
+      video({
+        codec: 'hevc',
+        profile: 'Main 10',
+        bitDepth: 10,
+        pixFmt: 'yuv420p10le',
+        isHdr: true,
+        dolbyVisionProfile: 7,
+        isInterlaced: true,
+        fieldOrder: 'tt'
+      }),
+      mainAudio({ index: 1, codec: 'aac' })
+    ])
+    const result = analyzeFile(interlaced, TO_81)
+    expect(result.plan.videoTranscode).toBeDefined()
+    expect(result.plan.dolbyVision7To81).toBeUndefined()
   })
 })

@@ -29,6 +29,7 @@ import type {
   AudioReplacementSpec,
   AudioStream,
   CompatibilityAudioSpec,
+  DolbyVision7Spec,
   Finding,
   FindingCode,
   MediaFile,
@@ -124,6 +125,8 @@ export interface ScanState {
   needsPixelFormatChange: boolean
   /** Re-encode through libplacebo, applying the Dolby Vision layer and writing HDR10. */
   convertDolbyVision: boolean
+  /** Profile 7 should be converted to 8.1, which is a stream rewrite, not an encode. */
+  convertDolbyVision7: boolean
   /** Downscale to this height during a re-encode. */
   scaleHeight?: number
   /** Relabel the H.264 level to this, losslessly, when the video is being copied. */
@@ -176,6 +179,7 @@ export interface ScanSignals {
   needsDeinterlace?: boolean
   needsPixelFormatChange?: boolean
   convertDolbyVision?: boolean
+  convertDolbyVision7?: boolean
   scaleHeight?: number
   relabelLevel?: number
   needsTagFix?: boolean
@@ -282,6 +286,7 @@ export interface PlanFragment {
   videoTranscode?: VideoTranscodeSpec
   addCompatibilityAudio?: CompatibilityAudioSpec
   replaceAudio?: AudioReplacementSpec[]
+  dolbyVision7To81?: DolbyVision7Spec
   resyncSubtitles?: RepairPlan['resyncSubtitles']
   videoLevel?: number
 }
@@ -349,6 +354,7 @@ export function initialState(settings: AppSettings): ScanState {
     needsDeinterlace: false,
     needsPixelFormatChange: false,
     convertDolbyVision: false,
+    convertDolbyVision7: false,
     needsTagFix: false,
     incompatibleAudio: [],
     needsCompatibilityAudio: false,
@@ -376,6 +382,7 @@ export function mergeSignals(state: ScanState, signals: ScanSignals | undefined)
   if (signals.needsDeinterlace) next.needsDeinterlace = true
   if (signals.needsPixelFormatChange) next.needsPixelFormatChange = true
   if (signals.convertDolbyVision) next.convertDolbyVision = true
+  if (signals.convertDolbyVision7) next.convertDolbyVision7 = true
   if (signals.needsTagFix) next.needsTagFix = true
   if (signals.needsCompatibilityAudio) next.needsCompatibilityAudio = true
   if (signals.needsAudioReplacement) next.needsAudioReplacement = true

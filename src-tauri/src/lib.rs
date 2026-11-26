@@ -286,6 +286,7 @@ pub fn run() {
             host::known_hosts_append,
             host::known_hosts_location,
             process::process_start,
+            process::process_start_pipeline,
             process::process_terminate,
             process::process_kill_matching,
             menu::file_context_menu,

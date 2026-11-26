@@ -56,6 +56,7 @@ import { assertChecksum, hashingTap } from './lib/checksum.mjs'
 import { licenseOf } from './lib/ffmpeg-license.mjs'
 import { ensureQtFaststart } from './lib/qt-faststart.mjs'
 import { ensureMp4Tags } from './lib/mp4tags.mjs'
+import { ensureDoviTool } from './lib/dovi-tool.mjs'
 
 const execFileAsync = promisify(execFile)
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -330,6 +331,30 @@ async function addMp4Tags(platformKey, outputDir, workDir, force) {
   }
 }
 
+/**
+ * Put `dovi_tool` in the platform folder, and say what happened.
+ *
+ * Never throws, for the same reason the other two do not: without it a Dolby
+ * Vision profile 7 file is reported and left alone, which is what the app did
+ * before this existed.
+ */
+async function addDoviTool(platformKey, outputDir, workDir, force) {
+  const result = await ensureDoviTool({
+    platformKey,
+    outputDir,
+    workDir: join(workDir, 'dovi_tool'),
+    force,
+    download,
+    extract,
+  })
+  if (result.state === 'fetched') {
+    console.log(`  → dovi_tool ${result.version}`)
+  } else if (result.state === 'skipped') {
+    console.log(`  no dovi_tool: ${result.reason}`)
+    console.log('    Dolby Vision profile 7 files will be reported and left alone.')
+  }
+}
+
 async function fetchTarget(platformKey, { force, allowNonfree }) {
   const target = TARGETS[platformKey]
   if (!target) {
@@ -360,6 +385,7 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
     if (haveFfmpeg) {
       await addQtFaststart(platformKey, outputDir, workDir, force)
       await addMp4Tags(platformKey, outputDir, workDir, force)
+      await addDoviTool(platformKey, outputDir, workDir, force)
       return
     }
     if (target.kind === 'files') {
@@ -382,6 +408,7 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
       // since it was added, and would have shipped without mp4tags too.
       await addQtFaststart(platformKey, outputDir, workDir, force)
       await addMp4Tags(platformKey, outputDir, workDir, force)
+      await addDoviTool(platformKey, outputDir, workDir, force)
       return
     }
 
@@ -422,6 +449,7 @@ async function fetchTarget(platformKey, { force, allowNonfree }) {
 
     await addQtFaststart(platformKey, outputDir, workDir, force)
     await addMp4Tags(platformKey, outputDir, workDir, force)
+    await addDoviTool(platformKey, outputDir, workDir, force)
   } finally {
     // Retries for the same reason `move` has them: a scanner still holding one
     // of the files it just unpacked would otherwise fail a fetch that worked.

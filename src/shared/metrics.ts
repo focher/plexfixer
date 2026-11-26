@@ -17,6 +17,7 @@ export const PHASE_LABEL: Record<JobPhase, string> = {
   verify: 'Re-probed the output',
   promote: 'Moved into place',
   subtitles: 'Checked subtitle timing',
+  'dolby-vision': 'Converted the Dolby Vision stream',
   total: 'Total'
 }
 

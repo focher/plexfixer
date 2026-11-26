@@ -51,6 +51,7 @@ import { fileURLToPath } from 'node:url'
 import { loadEnv } from './lib/env.mjs'
 import { repository } from './lib/github.mjs'
 import { UNAVAILABLE, qtFaststartName, qtFaststartPending } from './lib/qt-faststart.mjs'
+import { ASSETS as DOVI_ASSETS, toolName as doviToolName } from './lib/dovi-tool.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -230,6 +231,14 @@ function ensureFfmpeg(target) {
     // only settles the question while it still describes how this builds
     // today. Deciding that here from the note's own text is what lets a build
     // carrying a fix retry what the note was complaining about.
+    // Same story again for dovi_tool, which arrived later still: a folder
+    // filled in before 0.3.7 has ffmpeg and no dovi_tool, and an installer
+    // built from it would ship without the one program that converts Dolby
+    // Vision profile 7 — silently, because the app treats it as optional.
+    // There is no note to consult here: this one is downloaded rather than
+    // compiled, so it is either present or it is worth asking for again.
+    if (DOVI_ASSETS[folder] && !existsSync(join(dir, doviToolName(folder)))) return true
+
     const marker = join(dir, UNAVAILABLE)
     return qtFaststartPending({
       hasBinary: existsSync(join(dir, qtFaststartName(folder))),

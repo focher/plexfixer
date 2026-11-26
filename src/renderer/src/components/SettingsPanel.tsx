@@ -1094,6 +1094,31 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
         ) : null}
       </Field>
 
+      <Field
+        label="Dolby Vision profile 7"
+        hint="The dual-layer form a UHD Blu-ray carries. Converting to 8.1 discards the enhancement layer and rewrites the metadata; the picture is copied, not re-encoded."
+      >
+        <select
+          value={settings.dolbyVision7}
+          onChange={(event) => set({ dolbyVision7: event.target.value as AppSettings['dolbyVision7'] })}
+        >
+          <option value="keep">Keep it — report it and leave the file alone</option>
+          <option value="profile8">Convert to profile 8.1 — one pass, no re-encode</option>
+        </select>
+        {settings.dolbyVision7 === 'profile8' && environment && !environment.doviToolPath ? (
+          <span className="muted">
+            This needs dovi_tool, which is not available here — nothing in ffmpeg can rewrite a Dolby Vision
+            RPU. Files will be reported and left alone until it is.
+          </span>
+        ) : settings.dolbyVision7 === 'profile8' ? (
+          <span className="muted">
+            Needs scratch space about the size of the film&rsquo;s video track while it runs. On a
+            full-enhancement-layer disc the discarded layer carries real detail; on a minimum-enhancement-layer
+            one it carries nothing the base layer does not already have.
+          </span>
+        ) : null}
+      </Field>
+
       <Field label="Maximum H.264 level" hint="Older Apple TVs, Rokus and smart TVs commonly cap at 4.1.">
         <select value={settings.maxH264Level} onChange={(event) => set({ maxH264Level: Number(event.target.value) })}>
           <option value={40}>Level 4.0</option>

@@ -48,9 +48,15 @@ const DOLBY_VISION_5: Explanation = {
   youCan: 'Set Dolby Vision profile 5 to "Convert to HDR10" under Compatibility if it is not already on, then repair the file in Force transcode; it needs an ffmpeg with a working libplacebo, which Settings will tell you about. Otherwise keep the file and accept that only Dolby Vision clients render it correctly.'
 }
 
+const DOLBY_VISION_7: Explanation = {
+  why: 'Profile 7 carries a second enhancement layer on top of the base picture. Nothing in ffmpeg reads that layer or writes the metadata beside it, so Force transcode re-encodes the base layer and throws the Dolby Vision away — which is not a repair. Converting to HDR10 is a profile 5 setting and does not apply here.',
+  youCan: 'Set Dolby Vision profile 7 to "Convert to profile 8.1" under Compatibility, then repair the file. The enhancement layer is discarded and the metadata rewritten; the picture itself is copied, not re-encoded, so it costs one pass over the file rather than hours. It needs the bundled dovi_tool, which Settings will tell you about.'
+}
+
+/** Profile 8.2, and anything else that is neither 5 nor 7. */
 const DOLBY_VISION_OTHER: Explanation = {
-  why: 'This profile carries a second enhancement layer on top of the base picture. Reading that layer is not something ffmpeg does, so there is nothing to re-encode from — Force transcode on this file re-encodes the base layer and throws the Dolby Vision away, which is not a repair. Converting to HDR10 is a profile 5 setting and does not apply here.',
-  youCan: 'Nothing inside PlexFixer. Either keep the file as it is — Dolby Vision clients play it correctly, and the rest get the base layer — or replace it with a profile 8.1 copy, which falls back to HDR10 cleanly. Converting profile 7 needs a dedicated tool (dovi_tool and friends), not a transcoder.'
+  why: 'This profile carries Dolby Vision metadata that not every client reads, and it is not one of the two forms PlexFixer knows how to convert. Profiles 8.1 and 8.4 degrade cleanly; this one does not.',
+  youCan: 'Nothing inside PlexFixer. Either keep the file as it is, or replace it with a profile 8.1 copy, which falls back to HDR10 cleanly.'
 }
 
 const BY_CODE: Partial<Record<FindingCode, Explain>> = {
@@ -62,8 +68,11 @@ const BY_CODE: Partial<Record<FindingCode, Explain>> = {
     why: 'No video stream was found, so there is no video repair to plan. Everything PlexFixer does assumes a video file.',
     youCan: 'Check the file plays at all. If it is audio-only, it does not belong in a video library; if it does not play, it is damaged.'
   },
-  'video-dolby-vision-profile': (result) =>
-    videoStreams(result.file)[0]?.dolbyVisionProfile === 5 ? DOLBY_VISION_5 : DOLBY_VISION_OTHER,
+  'video-dolby-vision-profile': (result) => {
+    const profile = videoStreams(result.file)[0]?.dolbyVisionProfile
+    if (profile === 5) return DOLBY_VISION_5
+    return profile === 7 ? DOLBY_VISION_7 : DOLBY_VISION_OTHER
+  },
   'video-resolution-high': {
     why: 'The only way to change this is to re-encode the picture smaller, which throws away detail permanently. PlexFixer will not do that to chase a bandwidth warning, and Force transcode will not either — the plan for this file is a stream copy.',
     youCan: 'Raise the height ceiling in Settings if your clients and your upload can handle it, or keep a separate smaller copy for remote viewing.'

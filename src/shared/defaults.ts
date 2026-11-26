@@ -68,6 +68,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Vision layer away, and that is a choice to make deliberately rather than
   // one to find already made.
   dolbyVision5: 'keep',
+  dolbyVision7: 'keep',
 
   // Empty until somebody pastes in a key of their own.
   tmdbCredential: '',
