@@ -19,6 +19,7 @@ export type SettingsSectionId =
   | 'compatibility'
   | 'modules'
   | 'metadata'
+  | 'services'
   | 'subtitles'
   | 'output'
   | 'transcoding'
@@ -38,7 +39,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'modes', label: 'Repair modes', hint: 'What a repair may do, per folder and file' },
   { id: 'compatibility', label: 'Compatibility', hint: 'What counts as good enough to direct play' },
   { id: 'modules', label: 'Checks & repairs', hint: 'Every rule, what it does, and whether it runs' },
-  { id: 'metadata', label: 'Metadata', hint: 'Looking titles up on themoviedb.org' },
+  { id: 'metadata', label: 'Metadata', hint: 'Where titles and episodes are looked up' },
+  { id: 'services', label: 'Services', hint: 'Radarr, Sonarr and Bazarr, if you run them' },
   { id: 'subtitles', label: 'Subtitles', hint: 'Finding them, timing them, writing them from the audio' },
   { id: 'output', label: 'Output', hint: 'Where repaired files go, and backups' },
   { id: 'transcoding', label: 'Transcoding', hint: 'Encoder and quality, when a re-encode is needed' },

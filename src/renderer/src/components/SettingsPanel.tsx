@@ -193,6 +193,7 @@ export default function SettingsPanel(props: SettingsPanelProps): React.JSX.Elem
         {section === 'compatibility' ? <CompatibilitySection {...props} /> : null}
         {section === 'modules' ? <ModulesSection {...props} /> : null}
         {section === 'metadata' ? <MetadataSection {...props} /> : null}
+        {section === 'services' ? <ServicesSection {...props} /> : null}
         {section === 'subtitles' ? <SubtitlesSection {...props} /> : null}
         {section === 'output' ? <OutputSection {...props} /> : null}
         {section === 'transcoding' ? <TranscodingSection {...props} /> : null}
@@ -465,6 +466,151 @@ function ModulesSection(props: SettingsPanelProps): React.JSX.Element {
           onCancel={() => setEditing(undefined)}
         />
       ) : null}
+    </section>
+  )
+}
+
+/**
+ * One service of one's own: an address, a key, and whether to ask it.
+ *
+ * The three are the same shape, so they are one component. The address is the
+ * part that matters for more than convenience — a service is reachable at all
+ * only because a field here names it, and the network layer reads that from
+ * the saved settings rather than from whatever asked for the request.
+ */
+function ServiceFields(props: {
+  name: string
+  hint: string
+  where: string
+  /** The port this service is usually on, so the example is its own. */
+  example: string
+  url: string
+  apiKey: string
+  enabled: boolean
+  onUrl: (value: string) => void
+  onApiKey: (value: string) => void
+  onEnabled: (value: boolean) => void
+}): React.JSX.Element {
+  const configured = props.url.trim() !== '' && props.apiKey.trim() !== ''
+
+  return (
+    <>
+      <Field label={props.name} hint={props.hint}>
+        <input
+          type="url"
+          value={props.url}
+          placeholder={props.example}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => props.onUrl(event.target.value)}
+        />
+        <input
+          type="password"
+          value={props.apiKey}
+          placeholder="API key"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => props.onApiKey(event.target.value)}
+        />
+        <label className={`toggle${props.enabled ? ' on' : ''}`}>
+          <input
+            type="checkbox"
+            checked={props.enabled}
+            disabled={!configured}
+            onChange={(event) => props.onEnabled(event.target.checked)}
+          />
+          <span className="switch" aria-hidden="true" />
+          Ask it about files
+        </label>
+      </Field>
+      <p className="section-hint">
+        {configured
+          ? props.where
+          : `Both the address and the key are needed before ${props.name} can be asked anything. ${props.where}`}
+      </p>
+    </>
+  )
+}
+
+function ServicesSection(props: SettingsPanelProps): React.JSX.Element {
+  const { settings } = props
+  const set = props.onChange
+
+  /** Switch a provider on or off in the list, keeping the rest as they were. */
+  const setProvider = (id: string, on: boolean): void => {
+    const without = settings.metadataProviders.filter((entry) => entry !== id)
+    set({ metadataProviders: on ? [...without, id] : without })
+  }
+
+  return (
+    <section>
+      <h3>Services</h3>
+      <p className="section-hint">
+        If you run Radarr or Sonarr, they already know what every file in your library is — they put it there.
+        That is a better answer than the one PlexFixer gets by reading a title out of a file name, and it is
+        why these are asked first when they are switched on. Nothing here is required; without them, titles are
+        looked up on themoviedb.org as before.
+      </p>
+
+      <ServiceFields
+        name="Radarr"
+        example="http://nas:7878"
+        hint="Films. The address you open it at, and the key from Settings → General → Security inside Radarr."
+        where="Radarr identifies a film by where the file is, so it is right even when the file name is not."
+        url={settings.radarrUrl}
+        apiKey={settings.radarrApiKey}
+        enabled={settings.metadataProviders.includes('radarr')}
+        onUrl={(radarrUrl) => set({ radarrUrl })}
+        onApiKey={(radarrApiKey) => set({ radarrApiKey })}
+        onEnabled={(on) => setProvider('radarr', on)}
+      />
+
+      <ServiceFields
+        name="Sonarr"
+        example="http://nas:8989"
+        hint="Series. The address you open it at, and the key from Settings → General → Security inside Sonarr."
+        where="Sonarr knows which episode a file is because it imported it — which beats the numbers in the name whenever a release is numbered differently from the series itself."
+        url={settings.sonarrUrl}
+        apiKey={settings.sonarrApiKey}
+        enabled={settings.metadataProviders.includes('sonarr')}
+        onUrl={(sonarrUrl) => set({ sonarrUrl })}
+        onApiKey={(sonarrApiKey) => set({ sonarrApiKey })}
+        onEnabled={(on) => setProvider('sonarr', on)}
+      />
+
+      <Field
+        label="Bazarr"
+        hint="Subtitles. The address you open it at, and the key from Settings → General inside Bazarr."
+      >
+        <input
+          type="url"
+          value={settings.bazarrUrl}
+          placeholder="http://nas:6767"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => set({ bazarrUrl: event.target.value })}
+        />
+        <input
+          type="password"
+          value={settings.bazarrApiKey}
+          placeholder="API key"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => set({ bazarrApiKey: event.target.value })}
+        />
+      </Field>
+      <p className="section-hint">
+        Recorded, and not yet used. Bazarr does not hand a subtitle back the way the other services do — it
+        fetches the file into the film&rsquo;s own folder and answers with nothing. That is a different shape
+        from &ldquo;ask for a subtitle and receive one&rdquo;, and wiring it in as though it were the same
+        would mean PlexFixer reporting a subtitle it had never seen.
+      </p>
+
+      <p className="section-hint">
+        Addresses typed here are the only outside addresses PlexFixer will reach besides the ones built into
+        it. They are read from your saved settings when a request is made, never passed in alongside one — so
+        naming Radarr on one port does not let anything reach a different service on another.
+      </p>
     </section>
   )
 }
