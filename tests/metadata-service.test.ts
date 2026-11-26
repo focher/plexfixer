@@ -62,12 +62,15 @@ const TMDB_SEARCH = {
   results: [{ id: 593, title: 'Solaris', release_date: '1972-03-20', overview: 'A psychologist is sent up.' }]
 }
 
-function transport(table: Record<string, unknown>): MetadataNet & { asked: string[] } {
+function transport(table: Record<string, unknown>): MetadataNet & { asked: string[]; posted: unknown[] } {
   const asked: string[] = []
+  const posted: unknown[] = []
   return {
     asked,
+    posted,
     fetch: async (request: HttpRequest): Promise<HttpReply> => {
       asked.push(request.url)
+      if (request.body !== undefined) posted.push(JSON.parse(request.body) as unknown)
       const key = Object.keys(table).find((candidate) => request.url.includes(candidate))
       if (key === undefined) return { status: 404, text: 'no such saved reply' }
       return { status: 200, text: JSON.stringify(table[key]) }
@@ -214,5 +217,80 @@ describe('filling in what the search did not say', () => {
     const full = await session.fillIn(answer.matches[0])
     expect(isProblem(full)).toBe(false)
     expect(net.asked).toHaveLength(1)
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Telling the library manager the file has been replaced
+ * ------------------------------------------------------------------ */
+
+describe('telling the library a file has been replaced', () => {
+  /** What Radarr answers a command with. */
+  const ACCEPTED = { id: 901, name: 'RescanMovie', status: 'queued' }
+
+  it('names the film by the path the service still knows, and asks for a rescan', async () => {
+    const net = transport({ '/api/v3/movie': RADARR, '/api/v3/command': ACCEPTED })
+    const session = metadataSession(net, EVERYTHING)
+
+    /*
+     * The source path, not the repaired one. Radarr's record still points at
+     * the `.mkv` that has just been replaced, so that is the only path it can
+     * be found by; after the rescan it will know about the `.mp4`.
+     */
+    const told = await session.tellTheLibrary('movie', FILM)
+    if (told === undefined || isProblem(told)) throw new Error('expected an announcement')
+
+    expect(told).toEqual({ service: 'radarr', name: 'Radarr', title: 'Solaris' })
+    expect(net.posted).toEqual([{ name: 'RescanMovie', movieId: 11 }])
+  })
+
+  it('asks Sonarr about an episode, by the series the file is under', async () => {
+    const net = transport({ '/api/v3/series': SONARR_SERIES, '/api/v3/command': { id: 902, status: 'queued' } })
+    const told = await metadataSession(net, EVERYTHING).tellTheLibrary('tv', EPISODE)
+    if (told === undefined || isProblem(told)) throw new Error('expected an announcement')
+
+    expect(told.service).toBe('sonarr')
+    expect(net.posted).toEqual([{ name: 'RescanSeries', seriesId: 7 }])
+  })
+
+  it('says nothing, and writes nothing, for a file no manager has heard of', async () => {
+    const net = transport({ '/api/v3/movie': RADARR })
+    const told = await metadataSession(net, EVERYTHING).tellTheLibrary('movie', '/elsewhere/Solaris.mkv')
+
+    // Not a failure: a file imported by hand is an ordinary thing to have.
+    expect(told).toBeUndefined()
+    expect(net.posted).toEqual([])
+  })
+
+  it('never acts on a database match, which is a guess at a name', async () => {
+    /*
+     * A rescan is a write. themoviedb.org can say a film of roughly this name
+     * exists; it cannot say which film is on this disk, and its id would mean
+     * nothing to Radarr anyway. Three things stop it and any one would do: it
+     * cannot match a path, it is never handed a title here to match on
+     * instead, and it has no rescan command for the compiler to accept. What
+     * is asserted is the outcome — nothing is asked and nothing is written.
+     */
+    const net = transport({ 'themoviedb.org': TMDB_SEARCH, '/api/v3/command': ACCEPTED })
+    const onlyTmdb = { ...EVERYTHING, metadataProviders: ['tmdb'] }
+    expect(await metadataSession(net, onlyTmdb).tellTheLibrary('movie', FILM)).toBeUndefined()
+    expect(net.asked).toEqual([])
+  })
+
+  it('reports a refusal rather than swallowing it', async () => {
+    // A library quietly left out of date is the thing this exists to prevent,
+    // so a command that was not accepted has to be worth saying out loud.
+    const net = transport({ '/api/v3/movie': RADARR })
+    const told = await metadataSession(net, EVERYTHING).tellTheLibrary('movie', FILM)
+    expect(told !== undefined && isProblem(told) && told.problem).toContain('404')
+  })
+
+  it('reuses the library listing a lookup already fetched', async () => {
+    const net = transport({ '/api/v3/movie': RADARR, '/api/v3/command': ACCEPTED })
+    const session = metadataSession(net, EVERYTHING)
+
+    await session.lookUp({ kind: 'movie', filePath: FILM })
+    await session.tellTheLibrary('movie', FILM)
+    expect(net.asked.filter((url) => url.includes('/api/v3/movie'))).toHaveLength(1)
   })
 })

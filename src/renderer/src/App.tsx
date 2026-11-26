@@ -23,6 +23,10 @@ import MenuButton from './components/MenuButton.js'
 import BulkMetadataDialog from './components/BulkMetadataDialog.js'
 import RepairDialog from './components/RepairDialog.js'
 import { summarizeRepair, type RepairSummary } from '@shared/bulk.js'
+import { looksLikeEpisode } from '@shared/plex/naming.js'
+import { tagsOf } from '@shared/plex/metadata.js'
+import { anythingAskable, metadataSession, type MetadataSession } from '@shared/metadata/service.js'
+import { isProblem, type HttpRequest } from '@shared/metadata/providers/types.js'
 import type { FileStatus, ResultFacet } from '@shared/plex/facets.js'
 import { countFacets, countStatuses, fileStatus, filterResults, matchesStatus } from '@shared/plex/facets.js'
 import AboutDialog from './components/AboutDialog.js'
@@ -191,6 +195,19 @@ export default function App(): React.JSX.Element {
   // Read inside `repair`, created once, to say what a bulk repair will do.
   const resultsByPathRef = useRef<Map<string, AnalysisResult>>(new Map())
 
+  /*
+   * Telling Radarr and Sonarr that a file they own has been replaced.
+   *
+   * One session for a run of repairs rather than one per file: a library
+   * manager's only way to match a path is to hand back everything it has, and
+   * forty files would be forty copies of it. It is thrown away once the queue
+   * is empty, so a film added to Radarr while the app sits open is still found
+   * the next time something is repaired.
+   */
+  const announcerRef = useRef<MetadataSession>(undefined)
+  const announcedRef = useRef<Set<string>>(new Set())
+  const jobsRef = useRef<Job[]>([])
+
   // The About menu item, which the main process routes here rather than to
   // the native panel — that one can show a version and nothing else.
   useEffect(() => window.plexfixer.app.onShowAbout(() => setAboutOpen(true)), [])
@@ -285,17 +302,81 @@ export default function App(): React.JSX.Element {
     const offJob = window.plexfixer.jobs.onUpdate((job) => {
       setJobs((previous) => {
         const index = previous.findIndex((entry) => entry.id === job.id)
-        if (index < 0) return [...previous, job]
-        const next = [...previous]
-        next[index] = job
+        const next = index < 0 ? [...previous, job] : previous.with(index, job)
+        jobsRef.current = next
         return next
       })
+      void announceRepair(job)
     })
     return () => {
       flush()
       offProgress()
       offComplete()
       offJob()
+    }
+  }, [])
+
+  /**
+   * Tell the library manager that a repaired file is not where it was.
+   *
+   * PlexFixer repairs `Dune (2021).mkv` into `Dune (2021).mp4` and moves the
+   * original into the backup folder. Radarr's record still points at the
+   * `.mkv`: the film reads as missing, and on its next search Radarr downloads
+   * a replacement for a film sitting exactly where it left it. One rescan
+   * command fixes that, and it is the same thing "Manual Import" runs.
+   *
+   * Asked with the *source* path, because that is the one the service still
+   * knows. Asked only once per job, because a job reports itself many times
+   * and a rescan is a write. Silent when nothing is set up, which is the usual
+   * case and not a failure — but a refusal from a service that *is* set up is
+   * written into the job's log, since a library quietly left out of date is
+   * exactly the thing this exists to prevent.
+   */
+  const announceRepair = useCallback(async (job: Job): Promise<void> => {
+    if (job.state !== 'done') return
+    if (job.outcome !== 'repaired' && job.outcome !== 'renamed') return
+    if (announcedRef.current.has(job.id)) return
+
+    const settings = settingsRef.current
+    const entry = libraryRef.current.get(job.sourcePath)
+    if (!settings || !entry) return
+
+    const kind = looksLikeEpisode(tagsOf(entry.file), entry.file.fileName) ? 'tv' : 'movie'
+    if (!anythingAskable(settings, kind)) return
+
+    // Marked before the request, not after: a second update for the same job
+    // arrives while this one is still in flight.
+    announcedRef.current.add(job.id)
+
+    announcerRef.current ??= metadataSession(
+      { fetch: (request: HttpRequest) => window.plexfixer.metadata.fetch(request) },
+      settings
+    )
+
+    try {
+      const told = await announcerRef.current.tellTheLibrary(kind, job.sourcePath)
+      if (told === undefined) return
+      setJobs((previous) => {
+        const index = previous.findIndex((entry) => entry.id === job.id)
+        if (index < 0) return previous
+        const existing = previous[index]
+        const text = isProblem(told)
+          ? `Could not tell the library manager about this: ${told.problem}`
+          : `${told.name} told to look at ${told.title} again`
+        const next = previous.with(index, {
+          ...existing,
+          log: [...existing.log, { at: Date.now(), level: isProblem(told) ? 'warn' : 'info', text }]
+        })
+        jobsRef.current = next
+        return next
+      })
+    } finally {
+      // Once nothing is left to repair, the library listing this was answered
+      // from is no longer the freshest thing available.
+      if (!jobsRef.current.some((entry) => entry.state === 'queued' || entry.state === 'running')) {
+        announcerRef.current?.forget()
+        announcerRef.current = undefined
+      }
     }
   }, [])
 

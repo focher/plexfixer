@@ -35,6 +35,7 @@ import type {
   ServiceCredential
 } from './providers/types.js'
 import { isProblem } from './providers/types.js'
+import { readRescan, rescanRequest, type RescanService } from './rescan.js'
 
 /** The transport, which is a Tauri command on the other side of this. */
 export interface MetadataNet {
@@ -110,11 +111,27 @@ function named(name: string, id: string, problem: string): string {
     : `${name}: ${problem}`
 }
 
-export function metadataSession(net: MetadataNet, settings: AppSettings): {
+/** What was told to whom, for the one line a job's log gets. */
+export interface Announced {
+  service: RescanService
+  /** The service's name, for saying so on screen. */
+  name: string
+  /** What the service calls the film or series it is going to look at again. */
+  title: string
+}
+
+export interface MetadataSession {
   lookUp: (query: MetadataQuery) => Promise<Answer | ProviderProblem>
   fillIn: (match: MetadataMatch) => Promise<MetadataMatch | ProviderProblem>
+  /** See `tellTheLibrary` on the returned object. */
+  tellTheLibrary: (
+    kind: MetadataQuery['kind'],
+    filePath: string
+  ) => Promise<Announced | ProviderProblem | undefined>
   forget: () => void
-} {
+}
+
+export function metadataSession(net: MetadataNet, settings: AppSettings): MetadataSession {
   const inFlight = new Map<string, Promise<HttpReply>>()
 
   const fetch = (request: HttpRequest): Promise<HttpReply> => {
@@ -189,5 +206,60 @@ export function metadataSession(net: MetadataNet, settings: AppSettings): {
     return provider.readDetails(await fetch(request), match)
   }
 
-  return { lookUp, fillIn, forget: () => inFlight.clear() }
+  /**
+   * Tell the library manager that the file it owns has been replaced.
+   *
+   * The integration that matters most and is least visible. PlexFixer repairs
+   * `Dune (2021).mkv` into `Dune (2021).mp4` and moves the original into the
+   * backup folder. Radarr's database still says the film is the `.mkv`: it
+   * reports the film as missing, and on its next search it downloads a
+   * replacement for a film sitting right where it left it.
+   *
+   * It is asked with the *source* path, not the repaired one, and that is the
+   * point: Radarr's record still points at the old file, so matching on the
+   * path it knows is what finds the film at all. After the rescan it will know
+   * about the new one.
+   *
+   * Only a provider that matched the file itself is told, because only that
+   * one has an id that means this film. A database match is a guess at a name
+   * and a rescan is a write; a guess is not grounds for one.
+   *
+   * `undefined` means there was nothing to tell — no library manager is set up
+   * for this kind of file, or none of them has heard of it. That is the usual
+   * case for somebody who runs neither, and is not a failure.
+   */
+  async function tellTheLibrary(
+    kind: MetadataQuery['kind'],
+    filePath: string
+  ): Promise<Announced | ProviderProblem | undefined> {
+    for (const provider of preferred(kind, askable(settings))) {
+      // The two that have a rescan command, which is also the two that know
+      // where a file is. A database has neither.
+      if (provider.id !== 'radarr' && provider.id !== 'sonarr') continue
+
+      const answer = await ask(provider, { kind, filePath })
+      if (isProblem(answer)) continue
+
+      /*
+       * Only the match made against the file itself. Both of these already
+       * answer with just that one when they are asked by path — this is the
+       * line that keeps the rule true if either of them ever stops.
+       */
+      const match = answer.matches.find((one) => one.pathMatch)
+      const id = Number(match?.id)
+      if (!match || !Number.isInteger(id)) continue
+
+      const credential = credentialFor(provider, settings)
+      const request = rescanRequest(provider.id, credential, id)
+      if (isProblem(request)) return request
+
+      const started = readRescan(await net.fetch(request), provider.id)
+      if (isProblem(started)) return started
+      return { service: provider.id, name: provider.name, title: match.title }
+    }
+
+    return undefined
+  }
+
+  return { lookUp, fillIn, tellTheLibrary, forget: () => inFlight.clear() }
 }
