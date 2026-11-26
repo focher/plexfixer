@@ -86,6 +86,39 @@ function stateOf(instance: RepairRunner, id: string): Job['state'] | undefined {
   return instance.list().find((job) => job.id === id)?.state
 }
 
+/**
+ * Wait for a repair to reach a state, rather than sleeping and hoping.
+ *
+ * Three awaited steps run before a job is marked `running` — a tags-only
+ * attempt, an in-place attempt, and a look at the subtitles — and each touches
+ * the disk. A fixed pause that is generous here is nothing on a loaded CI
+ * runner. The queue-order tests failed exactly this way and were fixed exactly
+ * this way; these had the same pattern and had not failed yet.
+ */
+async function reaches(instance: RepairRunner, id: string, want: Job['state'], timeoutMs = 20_000): Promise<void> {
+  const started = Date.now()
+  for (;;) {
+    const state = stateOf(instance, id)
+    if (state === want) return
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`waited ${timeoutMs}ms for ${id} to be ${want}; it is ${state ?? 'not in the list'}`)
+    }
+    await settle(20)
+  }
+}
+
+/** Wait for a job to leave the list entirely, as a cancelled one does. */
+async function leaves(instance: RepairRunner, id: string, timeoutMs = 20_000): Promise<void> {
+  const started = Date.now()
+  for (;;) {
+    if (stateOf(instance, id) === undefined) return
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`waited ${timeoutMs}ms for ${id} to leave the list; it is ${stateOf(instance, id)}`)
+    }
+    await settle(20)
+  }
+}
+
 describe('adding a batch to an idle queue', () => {
   it('leaves every repair waiting until the batch is finished', async () => {
     const { instance } = await runner()
@@ -101,10 +134,9 @@ describe('adding a batch to an idle queue', () => {
     expect(stateOf(instance, second.id)).toBe('queued')
 
     batch.finish()
-    await settle()
-    expect(stateOf(instance, first.id)).toBe('running')
-    expect(stateOf(instance, second.id)).toBe('running')
-  })
+    await reaches(instance, first.id, 'running')
+    await reaches(instance, second.id, 'running')
+  }, 30_000)
 
   it('still honours the limit once the batch is in', async () => {
     const { instance } = await runner(1)
@@ -113,10 +145,9 @@ describe('adding a batch to an idle queue', () => {
     const second = queue(instance, 'B')
 
     batch.finish()
-    await settle()
-    expect(stateOf(instance, first.id)).toBe('running')
+    await reaches(instance, first.id, 'running')
     expect(stateOf(instance, second.id)).toBe('queued')
-  })
+  }, 30_000)
 
   it('releases the hold even when the batch was cancelled part-way', async () => {
     const { instance } = await runner()
@@ -126,14 +157,12 @@ describe('adding a batch to an idle queue', () => {
     // What "Cancel all" does to a batch still arriving.
     instance.cancelAll()
     batch.finish()
-    await settle()
+    await leaves(instance, first.id)
 
     // The hold is gone, so a later repair is not stranded behind it.
-    expect(stateOf(instance, first.id)).toBeUndefined()
     const later = queue(instance, 'B')
-    await settle()
-    expect(stateOf(instance, later.id)).toBe('running')
-  })
+    await reaches(instance, later.id, 'running')
+  }, 30_000)
 })
 
 describe('adding a batch to a queue that is already working', () => {
@@ -141,15 +170,13 @@ describe('adding a batch to a queue that is already working', () => {
     const { instance } = await runner(2)
 
     const running = queue(instance, 'A')
-    await settle()
-    expect(stateOf(instance, running.id)).toBe('running')
+    await reaches(instance, running.id, 'running')
 
     // A second batch arrives while that one works; the free slot is used
     // rather than held open until this batch finishes arriving.
     const batch = instance.beginBatch()
     const added = queue(instance, 'B')
-    await settle()
-    expect(stateOf(instance, added.id)).toBe('running')
+    await reaches(instance, added.id, 'running')
     batch.finish()
-  })
+  }, 30_000)
 })

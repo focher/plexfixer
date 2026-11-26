@@ -684,9 +684,15 @@ Artifacts land in `release/`:
 | --- | --- |
 | `PlexFixer_<version>_aarch64.dmg` | macOS, Apple Silicon |
 | `PlexFixer_<version>_x64.dmg` | macOS, Intel |
-| `PlexFixer_<version>_x64-setup.exe` | Windows x64 |
+| `PlexFixer_<version>_x64-setup.exe` | Windows x64, NSIS installer |
+| `PlexFixer_<version>_x64_en-US.msi` | Windows x64, MSI installer |
 | `PlexFixer_<version>_<arch>.app.tar.gz` + `.sig` | macOS update packages |
-| `PlexFixer_<version>_x64-setup.nsis.zip` + `.sig` | Windows update package |
+| `PlexFixer_<version>_x64-setup.exe` + `.sig` | Windows update package (NSIS) |
+| `PlexFixer_<version>_x64_en-US.msi` + `.sig` | Windows update package (MSI) |
+
+The Windows installer *is* its own update package — the updater downloads and
+runs the same `.exe` or `.msi` a person would, which is why those rows name
+the same file twice. Only the `.sig` beside it is extra.
 
 The ffmpeg binaries for the target are downloaded if they are not already
 there, so no separate fetch step is needed; `npm run fetch:ffmpeg -- --all`
