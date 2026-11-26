@@ -49,6 +49,7 @@ import { TaskQueue } from './queue.js'
 import { REFUSAL_REASON, inPlaceVerdict } from './inplace.js'
 import { explainProblem } from './naming.js'
 import { tagsOf } from './metadata.js'
+import { blockingFindings } from './blocked.js'
 import type { BackupRecord } from '../backups.js'
 import { languageForContainer, sameLanguage } from '../languages.js'
 import { applyPatches, packLanguage, readMp4Tracks, revertPatches, type BytePatch } from './mp4-patch.js'
@@ -458,12 +459,16 @@ export class RepairRunner {
       // byte of it changes — so it is worth doing and must not cost what a
       // repair costs.
       if (!onlyTheName(settings, result.file.path, outputPath)) {
+        const nothing = nothingToDo(result)
         const job: Job = {
           ...base,
           stage: 'finished',
           state: 'skipped',
-          message: 'Already Plex-ready — nothing to change',
-          log: [...base.log, { at: Date.now(), level: 'info', text: 'Skipped: already Plex-ready' }]
+          message: nothing.message,
+          log: [
+            ...base.log,
+            { at: Date.now(), level: 'info', text: `Skipped: ${nothing.text}`, detail: nothing.detail }
+          ]
         }
         this.update(job)
         return job
@@ -1738,6 +1743,42 @@ const BACKUP_LABEL = '.plexfixer-backups'
  */
 function onlyTheName(settings: AppSettings, sourcePath: string, outputPath: string): boolean {
   return settings.outputPlacement === 'in-place' && outputPath !== sourcePath
+}
+
+/**
+ * Why a file with no plan is being put down untouched.
+ *
+ * "Already Plex-ready" is only one of the reasons, and it is the wrong one for
+ * a file whose scan found a blocker — a Dolby Vision profile 7 file came back
+ * from Force transcode saying it was already Plex-ready, directly underneath
+ * the blocker that says it is not. The queue is where that claim is read, so
+ * the queue is where it has to be true.
+ */
+function nothingToDo(result: AnalysisResult): { message: string; text: string; detail?: string } {
+  const blocking = blockingFindings(result)
+  if (blocking.length > 0) {
+    const lead = blocking[0]
+    const rest = blocking.length > 1 ? ` (and ${blocking.length - 1} more)` : ''
+    return {
+      message: `No repair fixes this — ${lead.title}${rest}`,
+      text: `nothing here is automatically repairable — ${lead.title}${rest}`,
+      detail:
+        blocking.map((finding) => `${finding.title}\n    ${finding.detail}`).join('\n\n') +
+        '\n\nThe file was not touched. Open its row in the library for what you can do about this.'
+    }
+  }
+
+  if (result.findings.length > 0) {
+    return {
+      message: 'Nothing to change — the notes on this file need no repair',
+      text: 'nothing to change',
+      detail:
+        `${result.findings.length} note${result.findings.length === 1 ? '' : 's'} were recorded for this file, ` +
+        'none of which call for the file to be rewritten.'
+    }
+  }
+
+  return { message: 'Already Plex-ready — nothing to change', text: 'already Plex-ready' }
 }
 
 /** Whether a job has reached a state it will not move out of. */

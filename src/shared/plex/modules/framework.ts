@@ -260,6 +260,16 @@ export interface RepairContext extends MediaContext {
    * as one.
    */
   readonly strategy: PlanStrategy
+  /**
+   * The track changes as they stand, with every withdrawal so far applied.
+   *
+   * `state.trackChanges` is what the *checks* decided and never moves. This is
+   * the live list, and it is the one to describe to the user: a module that
+   * announces "fix 1 default flag" from the check's list announces a repair a
+   * later module has already withdrawn, and the file is then skipped with a
+   * plan that still promises it.
+   */
+  readonly trackChanges: readonly TrackPlanChange[]
 }
 
 /** The pieces of a repair plan a module can contribute. */

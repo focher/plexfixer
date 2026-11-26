@@ -817,7 +817,7 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
  */
 .row {
   display: grid;
-  grid-template-columns: 24px 88px 84px minmax(0, 1.1fr) minmax(0, 1.15fr) minmax(0, 1fr) 124px;
+  grid-template-columns: 24px 88px 84px minmax(0, 1.1fr) minmax(0, 1.15fr) minmax(0, 1fr) 156px;
   gap: 10px;
   align-items: center;
   padding: 5px 12px;
@@ -827,7 +827,7 @@ button.stat[aria-pressed='true']:hover:not(:disabled) {
 
 @media (max-width: 1120px) {
   .row {
-    grid-template-columns: 22px 80px 72px minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.9fr) 118px;
+    grid-template-columns: 22px 80px 72px minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.9fr) 150px;
     gap: 8px;
   }
 }

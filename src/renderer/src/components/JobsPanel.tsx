@@ -7,6 +7,7 @@ import { countCompleted, visibleJobs } from '@shared/jobs.js'
 import { CopyIcon, FolderIcon, GripIcon, StopIcon } from './icons.js'
 import { mediaTitle } from '@shared/plex/title.js'
 import { readPref, writePref } from '../prefs.js'
+import { thisPlatform } from '../platform.js'
 import MenuButton from './MenuButton.js'
 
 const TONE: Record<Job['state'], string> = {
@@ -230,11 +231,7 @@ export default function JobsPanel({
       return next
     })
 
-  const platform = navigator.userAgent.includes('Mac')
-    ? 'macOS'
-    : navigator.userAgent.includes('Win')
-      ? 'Windows'
-      : 'Linux'
+  const platform = thisPlatform()
 
   const reportFor = useCallback(
     (job: Job): string =>

@@ -133,7 +133,8 @@ export function analyzeWithModules(
       ...media,
       state,
       findings,
-      strategy: strongerStrategy(strategy, trackChanges.length > 0 ? 'remux' : 'none')
+      strategy: strongerStrategy(strategy, trackChanges.length > 0 ? 'remux' : 'none'),
+      trackChanges
     }
     const result = module.run(context)
 

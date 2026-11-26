@@ -147,3 +147,58 @@ describe('buildFileReport', () => {
     expect(() => buildFileReport({ result })).not.toThrow()
   })
 })
+
+describe('buildFileReport, the parts that answer the follow-up question', () => {
+  const tagged = analyzeFile(
+    mp4([video({ language: 'eng' }), mainAudio({ index: 1, language: 'eng' })], {
+      faststart: true,
+      tags: { title: 'Beverly Hills Cop', date: '1984-12-05T12:00:00Z' }
+    }),
+    DEFAULT_SETTINGS
+  )
+  const settings = { ...DEFAULT_SETTINGS, movieTemplate: '{title} ({date})' }
+
+  it('prints the tags, which is where a wrong file name comes from', () => {
+    const text = buildFileReport({ result: tagged, settings })
+    expect(text).toContain('## Tags the file carries')
+    expect(text).toContain('1984-12-05T12:00:00Z')
+  })
+
+  it('says what the naming pattern would call the file', () => {
+    const text = buildFileReport({ result: tagged, settings })
+    expect(text).toContain('## Naming')
+    expect(text).toContain('{title} ({date})')
+    expect(text).toContain('Beverly Hills Cop (1984-12-05)')
+  })
+
+  it('says so plainly when no pattern is set, rather than leaving it out', () => {
+    const text = buildFileReport({ result: tagged, settings: DEFAULT_SETTINGS })
+    expect(text).toContain('no naming pattern set')
+  })
+
+  it('carries the queue entry, so one paste covers the repair as well', () => {
+    const text = buildFileReport({
+      result: tagged,
+      settings,
+      job: job({ state: 'skipped', message: 'No repair fixes this — Dolby Vision profile 7' })
+    })
+    expect(text).toContain('## What the queue did with it')
+    expect(text).toContain('state      skipped')
+    expect(text).toContain('No repair fixes this')
+    // The job's own log, not just its headline.
+    expect(text).toContain('Queued remux (stream copy)')
+  })
+
+  it('leaves the queue section out when the file has never been through it', () => {
+    expect(buildFileReport({ result: tagged, settings })).not.toContain('## What the queue did with it')
+  })
+
+  it('names the checks the user has switched off', () => {
+    const text = buildFileReport({
+      result: tagged,
+      settings: { ...settings, disabledModules: ['check.video-dolby-vision'] }
+    })
+    expect(text).toContain('## Checks and repairs not at their defaults')
+    expect(text).toContain('check.video-dolby-vision')
+  })
+})

@@ -33,10 +33,12 @@ export const fixTrackMetadata: RepairModule = {
     'forced-subtitle-not-flagged'
   ],
 
-  run({ primary, state }) {
-    // Counted from what the checks produced, before any later repair withdrew
-    // one of them.
-    const changes = state.trackChanges
+  run({ primary, state, trackChanges }) {
+    // The live list, not `state.trackChanges`. The subtitle-default repair
+    // withdraws itself on MP4, and counting the check's original list meant a
+    // file with nothing left to do still listed "Fix 1 default/forced flag" in
+    // its plan and was then skipped as already Plex-ready.
+    const changes = trackChanges
     if (changes.length === 0) return {}
 
     const languageFixes = changes.filter((c) => c.setLanguage).length
@@ -44,6 +46,9 @@ export const fixTrackMetadata: RepairModule = {
     const parts: string[] = []
     if (languageFixes > 0) parts.push(`${languageFixes} language tag${languageFixes === 1 ? '' : 's'}`)
     if (flagFixes > 0) parts.push(`${flagFixes} default/forced flag${flagFixes === 1 ? '' : 's'}`)
+    // Changes that only drop a track are another module's line to write, and
+    // "Fix " on its own is not a sentence.
+    if (parts.length === 0) return {}
 
     return {
       actions: [

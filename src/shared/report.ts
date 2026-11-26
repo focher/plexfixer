@@ -19,6 +19,8 @@ import type {
 } from './types.js'
 import { buildAboutText } from './about.js'
 import { blockedReasons } from './plex/blocked.js'
+import { explainProblem, nameFor, templateFor } from './plex/naming.js'
+import { tagsOf } from './plex/metadata.js'
 import { diagnoseMetrics, formatBytes, formatMs, metricsLines, phase, summarizeMetrics } from './metrics.js'
 
 export interface ReportContext {
@@ -139,10 +141,91 @@ function describeSettings(settings: AppSettings): string[] {
   ]
 }
 
+
+/** Everything the file says about itself, which is what a naming pattern reads. */
+function describeTags(result: AnalysisResult): string[] {
+  const entries = Object.entries(result.file.tags)
+  if (entries.length === 0) return ['(none)']
+  const width = Math.max(...entries.map(([key]) => key.length))
+  return entries
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, value]) => `${key.padEnd(width)}  ${value}`)
+}
+
+/**
+ * What the naming pattern would call this file, and why it might not rename.
+ *
+ * A rename is the one change that happens to a file with nothing else wrong
+ * with it, so it is also the one nobody expects — and when a pattern produces
+ * a name nobody would type, this is the block that shows which tag did it.
+ */
+function describeNaming(result: AnalysisResult, settings: AppSettings): string[] {
+  const templates = { movie: settings.movieTemplate, episode: settings.episodeTemplate }
+  if (templates.movie.trim() === '' && templates.episode.trim() === '') {
+    return ['(no naming pattern set — files keep the names they have)']
+  }
+  const tags = tagsOf(result.file)
+  const stem = result.file.fileName.replace(/\.[^.]*$/, '')
+  const template = templateFor(templates, tags, result.file.fileName)
+  const named = nameFor(template, tags, stem)
+  const out = [
+    `movie pattern     ${templates.movie || '(not set)'}`,
+    `episode pattern   ${templates.episode || '(not set)'}`,
+    `applied           ${template || '(none)'}`,
+    `current name      ${stem}`,
+    `would be named    ${named.stem}${named.stem === stem ? '  (unchanged)' : ''}`
+  ]
+  if (named.problem) out.push(`kept its name     ${explainProblem(named.problem)}`)
+  return out
+}
+
+/** The checks and repairs that are not running, which explains a silent pass. */
+function describeSwitchedOff(settings: AppSettings): string[] {
+  const off = [...settings.disabledModules].sort()
+  const on = [...settings.enabledModules].sort()
+  const out: string[] = []
+  if (off.length > 0) out.push(`switched off   ${off.join(', ')}`)
+  if (on.length > 0) out.push(`switched on    ${on.join(', ')}`)
+  return out
+}
+
+/** What the queue made of this file, if it has been through it. */
+function describeJob(job: Job): string[] {
+  const out = [
+    `state      ${job.state}`,
+    `stage      ${job.stage}`,
+    `strategy   ${job.strategy}`,
+    `mode       ${job.mode}`,
+    `output     ${job.outputPath}`
+  ]
+  if (job.message) out.push(`message    ${job.message}`)
+  if (job.command) {
+    out.push('', 'Command:')
+    out.push(job.command.map((part) => (/[\s"\'$`\\]/.test(part) ? JSON.stringify(part) : part)).join(' '))
+  }
+  if (job.log.length > 0) {
+    out.push('', 'Log:')
+    const start = job.log[0]?.at ?? job.startedAt ?? Date.now()
+    for (const entry of job.log) {
+      out.push(stamp(entry, start))
+      if (entry.detail) for (const line of entry.detail.split('\n')) out.push(`         ${line}`)
+    }
+  }
+  return out
+}
+
 export interface FileReportContext {
   result: AnalysisResult
   environment?: EnvironmentInfo
   settings?: AppSettings
+  /**
+   * The queue entry for this file, when there is one.
+   *
+   * The report is most often reached for after a repair did something
+   * unexpected, and "what did the queue say?" is the first question back. With
+   * it in here the paste answers itself.
+   */
+  job?: Job
   /** The mode this file would repair in, and where that came from. */
   mode?: RepairMode
   modeSource?: string
@@ -182,7 +265,36 @@ export function buildFileReport(context: FileReportContext): string {
     out.push(...describeSettings(settings))
   }
 
+  if (settings) {
+    const off = describeSwitchedOff(settings)
+    if (off.length > 0) {
+      out.push(section('Checks and repairs not at their defaults'))
+      out.push(...off)
+    }
+  }
+
   out.push(...describeAnalysis(result))
+
+  out.push(section('Tags the file carries'))
+  out.push(...describeTags(result))
+
+  if (settings) {
+    out.push(section('Naming'))
+    out.push(...describeNaming(result, settings))
+  }
+
+  if (result.plan.trackChanges.length > 0) {
+    out.push(section('Track changes the repair would write'))
+    for (const change of result.plan.trackChanges) {
+      const parts: string[] = []
+      if (change.setLanguage) parts.push(`language -> ${change.setLanguage}`)
+      if (change.setDefault != null) parts.push(`default -> ${change.setDefault}`)
+      if (change.setForced != null) parts.push(`forced -> ${change.setForced}`)
+      if (change.drop) parts.push('dropped')
+      out.push(`  #${change.streamIndex} ${change.kind.padEnd(9)} ${parts.join(', ') || 'no change'}`)
+      if (change.reason) out.push(`      ${change.reason}`)
+    }
+  }
 
   if (result.plan.unresolved.length > 0) {
     out.push(section('Nothing in the plan addresses these'))
@@ -199,6 +311,11 @@ export function buildFileReport(context: FileReportContext): string {
       out.push(`    why          ${reason.why}`)
       out.push(`    what you can ${reason.youCan}`)
     }
+  }
+
+  if (context.job) {
+    out.push(section('What the queue did with it'))
+    out.push(...describeJob(context.job))
   }
 
   return out.join('\n')

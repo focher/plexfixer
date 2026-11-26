@@ -14,8 +14,12 @@ import { describeProgress } from '@shared/stages.js'
 import type { SortKey, SortState } from '@shared/sort.js'
 import { formatAudioCodec, formatBytes, formatVideoCodec, parentDirectory } from '../format.js'
 import { defaultAudioStream, videoStreams } from '@shared/plex/tracks.js'
-import { BoltIcon, InfoIcon, RefreshIcon, TagIcon, WrenchIcon } from './icons.js'
+import { BoltIcon, CheckIcon, CopyIcon, InfoIcon, RefreshIcon, TagIcon, WrenchIcon } from './icons.js'
 import { mediaKindLabel, mediaTitle } from '@shared/plex/title.js'
+import { buildFileReport } from '@shared/report.js'
+import { blockingFindings } from '@shared/plex/blocked.js'
+import { useState } from 'react'
+import { thisPlatform } from '../platform.js'
 
 /** How an overridden mode shows in the row. */
 const MODE_TONE: Record<RepairMode, string> = {
@@ -190,6 +194,66 @@ function countedReasons(changes: readonly { reason: string }[]): { reason: strin
   return [...counts].map(([reason, times]) => ({ reason, times }))
 }
 
+/**
+ * The button that puts this row's whole story on the clipboard.
+ *
+ * Not just the issues: the streams, the tags, the settings that decided the
+ * verdict, what the plan would write, why anything unfixable is unfixable, and
+ * what the queue made of it if it has been through. The question that reaches
+ * a maintainer is never "what does this row say" — it is "why does it say
+ * that", and every answer to that is in here.
+ */
+function CopyReportButton({
+  result,
+  job,
+  settings,
+  environment,
+  appVersion,
+  mode
+}: {
+  result: AnalysisResult
+  job?: Job
+  settings?: AppSettings
+  environment?: EnvironmentInfo
+  appVersion?: string
+  mode: { mode: RepairMode; source: string; from?: string }
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+
+  return (
+    <button
+      className="icon-button"
+      aria-label={`Copy a diagnostic report for ${result.file.fileName}`}
+      title={
+        copied
+          ? 'Copied'
+          : 'Copy a full report for this file — streams, findings, plan, settings and queue history'
+      }
+      onClick={() => {
+        const text = buildFileReport({
+          result,
+          job,
+          settings,
+          environment,
+          appVersion,
+          mode: mode.mode,
+          modeSource: mode.source === 'default' ? 'the default' : `set on ${mode.from}`,
+          platform: thisPlatform()
+        })
+        void navigator.clipboard.writeText(text).then(
+          () => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1800)
+          },
+          () => setCopied(false)
+        )
+      }}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
+  )
+}
+
 export default function ResultsTable(props: ResultsTableProps): React.JSX.Element {
   const allSelected = props.results.length > 0 && props.results.every((r) => props.selected.has(r.file.path))
 
@@ -215,6 +279,12 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
         const job = props.jobs.get(path)
         const jobActive = job?.state === 'queued' || job?.state === 'running'
         const nothingToDo = result.plan.strategy === 'none'
+        // A file whose only problems have no automatic fix is not "already
+        // Plex-ready", and saying so directly under its own blocker is how a
+        // Dolby Vision profile 7 file came back from Force transcode claiming
+        // to be fine. `nothingToDo` in the runner says the same in the queue.
+        const stuck = nothingToDo ? blockingFindings(result)[0] : undefined
+        const idleHint = stuck ? `No repair fixes this — ${stuck.title}` : 'Already Plex-ready'
         const open = props.activePath === path
         const reason = summarizeReason(result)
         const title = mediaTitle(result.file)
@@ -348,6 +418,14 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 ) : null}
               </span>
               <span className="actions">
+                <CopyReportButton
+                  result={result}
+                  job={job}
+                  settings={props.settings}
+                  environment={props.environment}
+                  appVersion={props.appVersion}
+                  mode={mode}
+                />
                 <button
                   className="icon-button"
                   onClick={() => props.onRefresh(path)}
@@ -389,7 +467,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                       aria-label={`Safe remux ${result.file.fileName}`}
                       title={
                         nothingToDo
-                          ? 'Already Plex-ready'
+                          ? idleHint
                           : reportOnly
                             ? 'This file is in report-only mode — change it in the details'
                             : result.plan.requiresTranscode
@@ -406,7 +484,7 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                       aria-label={`Force transcode ${result.file.fileName}`}
                       title={
                         nothingToDo
-                          ? 'Already Plex-ready'
+                          ? idleHint
                           : reportOnly
                             ? 'This file is in report-only mode — change it in the details'
                             : 'Force transcode — fix everything, re-encoding video if needed'

@@ -10,6 +10,7 @@ import type {
   RepairMode
 } from '@shared/types.js'
 import { buildFileReport } from '@shared/report.js'
+import { thisPlatform } from '../platform.js'
 import { languageName } from '@shared/languages.js'
 import { newId } from '@shared/ids.js'
 import { MODE_LABEL, findOverrideKey, resolveMode, type ResolvedMode } from '@shared/mode.js'
@@ -225,11 +226,7 @@ export default function FileDetail({
       appVersion,
       mode: mode.mode,
       modeSource: mode.source === 'default' ? 'the default' : `set on ${mode.from}`,
-      platform: navigator.userAgent.includes('Mac')
-        ? 'macOS'
-        : navigator.userAgent.includes('Win')
-          ? 'Windows'
-          : 'Linux'
+      platform: thisPlatform()
     })
     try {
       await navigator.clipboard.writeText(text)
