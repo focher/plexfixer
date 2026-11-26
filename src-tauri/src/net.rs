@@ -61,6 +61,14 @@ const DOWNLOAD_HOSTS: &[&str] = &["opensubtitles.com", "opensubtitles.org"];
 const ENDPOINT_KEYS: &[&str] = &[
     "subtitleTranslationEndpoint",
     "subtitleTranscriptionEndpoint",
+    // Radarr, Sonarr and Bazarr. Each lives wherever the person running it put
+    // it, which is the whole reason they are here rather than in FIXED: there
+    // is no address to write into the binary. Read from the saved settings,
+    // never from the caller, so the app cannot be told to reach somewhere by
+    // anything other than the person who typed it in.
+    "radarrUrl",
+    "sonarrUrl",
+    "bazarrUrl",
 ];
 
 /// Enough for any reply here. A subtitle is kilobytes and a model's answer is
@@ -582,5 +590,36 @@ mod tests {
     #[test]
     fn a_client_can_be_built() {
         client().expect("a client should build once the cipher suites are in place");
+    }
+
+    /* --- a library manager of one's own ------------------------------ */
+
+    /// A Radarr on the far side of the house is reachable because Settings
+    /// says where it is, and for no other reason.
+    #[test]
+    fn a_service_named_in_settings_is_reachable_under_its_own_path() {
+        let configured = vec!["http://nas:7878".to_owned()];
+        assert!(is_allowed("http://nas:7878/api/v3/movie", &configured, false));
+        assert!(is_allowed("http://nas:7878/api/v3/command", &configured, false));
+    }
+
+    #[test]
+    fn a_service_not_named_in_settings_is_not_reachable() {
+        assert!(!is_allowed("http://nas:7878/api/v3/movie", &[], false));
+    }
+
+    /// The port is part of the origin: Sonarr next door on 8989 is not the
+    /// Radarr that was allowed, even though it is the same machine.
+    #[test]
+    fn naming_one_service_does_not_allow_another_on_the_same_host() {
+        let configured = vec!["http://nas:7878".to_owned()];
+        assert!(!is_allowed("http://nas:8989/api/v3/series", &configured, false));
+    }
+
+    #[test]
+    fn a_lookalike_host_is_not_the_service_that_was_named() {
+        let configured = vec!["http://nas:7878".to_owned()];
+        assert!(!is_allowed("http://nas.evil.example:7878/api/v3/movie", &configured, false));
+        assert!(!is_allowed("http://nas:7878@evil.example/api/v3/movie", &configured, false));
     }
 }

@@ -115,6 +115,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
   disabledModules: [],
   enabledModules: [],
 
+  // TMDB alone until somebody says where their own services are. A library
+  // manager is better at this than a database, but only for the person who
+  // runs one, and a provider switched on with nowhere to reach is only an
+  // error waiting to be reported.
+  metadataProviders: ['tmdb'],
+
+  radarrUrl: '',
+  radarrApiKey: '',
+  sonarrUrl: '',
+  sonarrApiKey: '',
+  bazarrUrl: '',
+  bazarrApiKey: '',
+
   // No rules of your own until you write one.
   userModules: []
 }

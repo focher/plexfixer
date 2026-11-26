@@ -636,6 +636,36 @@ export interface AppSettings {
    */
   tmdbCredential: string
 
+  /**
+   * Which metadata services to ask, by provider id.
+   *
+   * In the order the registry prefers rather than the order of this list: a
+   * service that identifies a file by where it is answers before one that has
+   * to guess from the name, whatever order they were switched on in.
+   */
+  metadataProviders: string[]
+
+  /* ---------------------------------------------------------------- *
+   * Services of your own
+   *
+   * Radarr, Sonarr and Bazarr live wherever the person running them put them,
+   * so unlike every other address this app uses, these are not known at build
+   * time. Each is a field here, which is what makes it reachable at all: the
+   * network layer allows an address because *Settings* names it, read from
+   * the saved settings rather than handed over beside the request it would be
+   * vouching for.
+   * ---------------------------------------------------------------- */
+
+  /** e.g. `http://nas:7878`. Empty means not configured. */
+  radarrUrl: string
+  radarrApiKey: string
+  /** e.g. `http://nas:8989`. */
+  sonarrUrl: string
+  sonarrApiKey: string
+  /** e.g. `http://nas:6767`. */
+  bazarrUrl: string
+  bazarrApiKey: string
+
   /* ---------------------------------------------------------------- *
    * Subtitles
    * ---------------------------------------------------------------- */
