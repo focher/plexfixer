@@ -3,7 +3,7 @@ import type { AboutInfo, AnalysisResult, AppSettings, EnvironmentInfo, Job, JobL
 import { buildDiagnosticsReport, buildJobReport } from '@shared/report.js'
 import { PHASE_LABEL, diagnoseMetrics, formatMs, phase, rankedPhases, summarizeMetrics } from '@shared/metrics.js'
 import { STAGE_DETAIL, describeProgress, stalledSeconds, stepsFor } from '@shared/stages.js'
-import { countCompleted, visibleJobs } from '@shared/jobs.js'
+import { countCompleted, settledCount, summarizeOutcomes, visibleJobs } from '@shared/jobs.js'
 import { CopyIcon, FolderIcon, GripIcon, StopIcon } from './icons.js'
 import { mediaTitle } from '@shared/plex/title.js'
 import { readPref, writePref } from '../prefs.js'
@@ -222,6 +222,9 @@ export default function JobsPanel({
   const [copied, setCopied] = useState<string>()
   const [saved, setSaved] = useState<string>()
   const [hideCompleted, setHideCompleted] = useState(() => readPref('hideCompleted'))
+  // Which outcome group the list is narrowed to, if any. Not a preference:
+  // it describes this run, and a run is over by the next time the app opens.
+  const [focus, setFocus] = useState<string | undefined>(undefined)
 
   const toggle = (id: string): void =>
     setExpanded((previous) => {
@@ -289,7 +292,18 @@ export default function JobsPanel({
   */
   const queuedIndex = new Map(queued.map((job, index) => [job.id, index]))
   const completed = countCompleted(jobs)
-  const visible = visibleJobs(jobs, hideCompleted)
+
+  /*
+   * What this run came to, and the one group of it being looked at.
+   *
+   * The focus is not stored: it is a way of reading the list that has just
+   * been drawn, and keeping it across sessions would mean opening the queue to
+   * a filtered view with no memory of why.
+   */
+  const outcomes = summarizeOutcomes(jobs)
+  const settled = settledCount(jobs)
+  const focused = outcomes.find((group) => group.key === focus)
+  const visible = visibleJobs(jobs, hideCompleted).filter((job) => !focused || focused.matches(job))
 
   /**
    * The same switch the library has over "Hide passed", and there for the same
@@ -421,8 +435,36 @@ export default function JobsPanel({
         </button>
       </div>
 
+      {outcomes.length > 0 ? (
+        <div className="outcomes">
+          <span className="muted nowrap">
+            {settled} of {jobs.length} finished
+          </span>
+          {outcomes.map((group) => (
+            <button
+              key={group.key}
+              type="button"
+              className={`outcome ${group.tone}${focus === group.key ? ' on' : ''}`}
+              title={
+                focus === group.key
+                  ? 'Showing only these. Press again for the whole queue.'
+                  : [group.hint, 'Press to show only these.'].filter(Boolean).join(' ')
+              }
+              aria-pressed={focus === group.key}
+              onClick={() => setFocus(focus === group.key ? undefined : group.key)}
+            >
+              <span className="n">{group.count}</span> {group.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {hideCompleted && visible.length === 0 ? (
         <div className="empty">Every repair here succeeded. Turn off Hide completed to see them.</div>
+      ) : null}
+
+      {focus && visible.length === 0 ? (
+        <div className="empty">Nothing here matches that any more.</div>
       ) : null}
 
       <div className="results">

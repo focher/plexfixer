@@ -2549,6 +2549,84 @@ button.expander:hover:not(:disabled) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * What a run of repairs came to, above the list it summarises
+ * ------------------------------------------------------------------ */
+
+.outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.outcomes .muted {
+  margin-right: 4px;
+  font-size: 12px;
+}
+
+.outcome {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 9px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.outcome .n {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.outcome:hover {
+  border-color: var(--text-faint);
+}
+
+/* The tone carries the meaning, so it is on the number and the border rather
+   than on a fill — a row of solid pills reads as seven alerts. */
+.outcome.ok .n {
+  color: var(--ok);
+}
+
+.outcome.warn .n {
+  color: var(--warn);
+}
+
+.outcome.fail .n {
+  color: var(--fail);
+}
+
+.outcome.on {
+  border-color: currentcolor;
+  color: var(--text);
+}
+
+.outcome.ok.on {
+  background: var(--ok-soft);
+}
+
+.outcome.warn.on {
+  background: var(--warn-soft);
+}
+
+.outcome.fail.on {
+  background: var(--fail-soft);
+}
+
+.outcome.neutral.on {
+  background: var(--bg-hover);
+}
+
 .empty {
   color: var(--text-faint);
   text-align: center;

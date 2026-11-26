@@ -12,6 +12,7 @@ import type {
   AppSettings,
   EncoderCapabilities,
   Job,
+  JobOutcome,
   JobLogLevel,
   JobMetrics,
   JobPhase,
@@ -448,6 +449,7 @@ export class RepairRunner {
         ...base,
         stage: 'finished',
         state: 'skipped',
+        outcome: 'report-only',
         message: 'Report-only mode — nothing was written',
         log: [...base.log, { at: Date.now(), level: 'info', text: 'Skipped: report-only mode' }]
       }
@@ -466,6 +468,7 @@ export class RepairRunner {
           ...base,
           stage: 'finished',
           state: 'skipped',
+          outcome: nothing.outcome,
           message: nothing.message,
           log: [
             ...base.log,
@@ -491,6 +494,7 @@ export class RepairRunner {
         ...base,
         stage: 'finished',
         state: 'skipped',
+        outcome: 'needs-transcode',
         message: 'Needs a video re-encode, which safe remux will not do. Set this file or folder to Force transcode.',
         log: [
           ...base.log,
@@ -581,6 +585,7 @@ export class RepairRunner {
       this.update({
         ...finished,
         state: 'done',
+        outcome: 'renamed',
         stage: 'finished',
         outputPath: finalPath,
         progress: { ...finished.progress, fraction: 1 },
@@ -821,6 +826,7 @@ export class RepairRunner {
       this.update({
         ...finished,
         state: 'done',
+        outcome: 'repaired',
         stage: 'finished',
         outputPath: finalPath,
         progress: { ...finished.progress, fraction: 1 },
@@ -938,6 +944,7 @@ export class RepairRunner {
       this.update({
         ...finished,
         state: 'done',
+        outcome: 'repaired',
         stage: 'finished',
         outputPath: result.file.path,
         progress: { ...finished.progress, fraction: 1 },
@@ -1148,6 +1155,7 @@ export class RepairRunner {
         this.update({
           ...job,
           state: 'done',
+          outcome: 'repaired',
           stage: 'finished',
           outputPath: finalPath,
           progress: { ...job.progress, fraction: 1 },
@@ -1923,12 +1931,18 @@ function onlyTheName(settings: AppSettings, sourcePath: string, outputPath: stri
  * the blocker that says it is not. The queue is where that claim is read, so
  * the queue is where it has to be true.
  */
-function nothingToDo(result: AnalysisResult): { message: string; text: string; detail?: string } {
+function nothingToDo(result: AnalysisResult): {
+  message: string
+  text: string
+  detail?: string
+  outcome: JobOutcome
+} {
   const blocking = blockingFindings(result)
   if (blocking.length > 0) {
     const lead = blocking[0]
     const rest = blocking.length > 1 ? ` (and ${blocking.length - 1} more)` : ''
     return {
+      outcome: 'blocked',
       message: `No repair fixes this — ${lead.title}${rest}`,
       text: `nothing here is automatically repairable — ${lead.title}${rest}`,
       detail:
@@ -1939,6 +1953,7 @@ function nothingToDo(result: AnalysisResult): { message: string; text: string; d
 
   if (result.findings.length > 0) {
     return {
+      outcome: 'already-right',
       message: 'Nothing to change — the notes on this file need no repair',
       text: 'nothing to change',
       detail:
@@ -1947,7 +1962,7 @@ function nothingToDo(result: AnalysisResult): { message: string; text: string; d
     }
   }
 
-  return { message: 'Already Plex-ready — nothing to change', text: 'already Plex-ready' }
+  return { outcome: 'already-right', message: 'Already Plex-ready — nothing to change', text: 'already Plex-ready' }
 }
 
 /** Whether a job has reached a state it will not move out of. */

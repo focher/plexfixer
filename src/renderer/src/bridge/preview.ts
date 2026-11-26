@@ -261,6 +261,7 @@ function queue(): Job[] {
       strategy: 'remux',
       mode: 'safe-remux',
       state: 'done',
+      outcome: 'repaired',
       stage: 'finished',
       progress: { fraction: 1 },
       startedAt: now - 22 * 60_000,
@@ -288,9 +289,58 @@ function queue(): Job[] {
       strategy: 'none',
       mode: 'safe-remux',
       state: 'skipped',
+      outcome: 'needs-transcode',
       progress: { fraction: 0 },
       finishedAt: now - 60 * 60_000,
       message: 'Needs a re-encode, and this run was a safe remux',
+      log: []
+    },
+    /*
+     * The two skips that are not the one above.
+     *
+     * They are in the sample for the same reason the summary exists: all three
+     * draw the word "skipped", and a harness that only ever shows one of them
+     * cannot show whether the line that tells them apart is doing its job.
+     */
+    {
+      id: 'preview-skipped-fine',
+      sourcePath: `${root}/Severance/Season 1/Severance - S1E01 - Good News About Hell.mp4`,
+      outputPath: `${root}/Severance/Season 1/Severance - S1E01 - Good News About Hell.mp4`,
+      strategy: 'none',
+      mode: 'safe-remux',
+      state: 'skipped',
+      outcome: 'already-right',
+      progress: { fraction: 0 },
+      finishedAt: now - 58 * 60_000,
+      message: 'Already Plex-ready — nothing to change',
+      log: []
+    },
+    {
+      id: 'preview-skipped-blocked',
+      sourcePath: `${root}/Dune Part Two (2024)/Dune Part Two (2024).mkv`,
+      outputPath: `${root}/Dune Part Two (2024)/Dune Part Two (2024).mp4`,
+      strategy: 'none',
+      mode: 'force-transcode',
+      state: 'skipped',
+      outcome: 'blocked',
+      progress: { fraction: 0 },
+      finishedAt: now - 57 * 60_000,
+      message: 'No repair fixes this — Dolby Vision profile 7 without an HDR10 fallback',
+      log: []
+    },
+    {
+      id: 'preview-renamed',
+      sourcePath: `${root}/Blade Runner (1982)/blade.runner.1982.2160p.mp4`,
+      outputPath: `${root}/Blade Runner (1982)/Blade Runner (1982).mp4`,
+      strategy: 'none',
+      mode: 'safe-remux',
+      state: 'done',
+      outcome: 'renamed',
+      stage: 'finished',
+      progress: { fraction: 1 },
+      startedAt: now - 56 * 60_000,
+      finishedAt: now - 56 * 60_000,
+      message: 'renamed to Blade Runner (1982).mp4 — nothing copied',
       log: []
     }
   ]

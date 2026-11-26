@@ -880,6 +880,30 @@ export type JobStage =
   | 'dolby-vision'
   | 'finished'
 
+/**
+ * What a finished job actually did, as against what state it ended in.
+ *
+ * `state` answers "did it work", which is the wrong question for a run of
+ * forty files: a hundred rows all saying `skipped` cover a file that was
+ * already perfect, a file nothing can fix, and a file whose repair this mode
+ * declines to run — three different things, needing three different answers
+ * from the person reading. The message said which, in prose, one row at a
+ * time. This says it in a form that can be counted.
+ */
+export type JobOutcome =
+  /** Something in the file changed. */
+  | 'repaired'
+  /** Only the name changed; not a byte of the file was copied. */
+  | 'renamed'
+  /** Nothing to do, and nothing wrong — the file was already right. */
+  | 'already-right'
+  /** Something is wrong and no repair this app has addresses it. */
+  | 'blocked'
+  /** A repair exists, but this file's mode will not run it. */
+  | 'needs-transcode'
+  /** The mode forbade writing anything. */
+  | 'report-only'
+
 /** The machine a job is running on, recorded when it starts. */
 export interface JobHost {
   kind: 'local' | 'remote'
@@ -890,6 +914,8 @@ export interface JobHost {
 export interface Job {
   id: string
   sourcePath: string
+  /** What it did, once it has finished doing it. */
+  outcome?: JobOutcome
   outputPath: string
   strategy: PlanStrategy
   mode: RepairMode
