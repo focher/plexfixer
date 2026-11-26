@@ -15,6 +15,7 @@ import { newUserModuleId, readUserModules } from '@shared/plex/modules/script/mo
 import { readCredential } from '@shared/tmdb.js'
 import { LLM_ENGINES, llmEngine, type LlmModel } from '@shared/subtitles/llm.js'
 import { ASR_SERVICES, asrService } from '@shared/subtitles/asr.js'
+import { BAZARR_ID, OPENSUBTITLES_ID } from '@shared/subtitles/providers/index.js'
 import WhisperBuild from './WhisperBuild.js'
 import WhisperModels from './WhisperModels.js'
 import {
@@ -487,6 +488,8 @@ function ServiceFields(props: {
   url: string
   apiKey: string
   enabled: boolean
+  /** What switching it on means, where "ask it about files" does not say it. */
+  toggleLabel?: string
   onUrl: (value: string) => void
   onApiKey: (value: string) => void
   onEnabled: (value: boolean) => void
@@ -520,7 +523,7 @@ function ServiceFields(props: {
             onChange={(event) => props.onEnabled(event.target.checked)}
           />
           <span className="switch" aria-hidden="true" />
-          Ask it about files
+          {props.toggleLabel ?? 'Ask it about files'}
         </label>
       </Field>
       <p className="section-hint">
@@ -548,8 +551,9 @@ function ServicesSection(props: SettingsPanelProps): React.JSX.Element {
       <p className="section-hint">
         If you run Radarr or Sonarr, they already know what every file in your library is — they put it there.
         That is a better answer than the one PlexFixer gets by reading a title out of a file name, and it is
-        why these are asked first when they are switched on. Nothing here is required; without them, titles are
-        looked up on themoviedb.org as before.
+        why these are asked first when they are switched on. Bazarr is the same idea for subtitles: it already
+        has your accounts, your languages and your scoring. Nothing here is required; without any of them,
+        titles come from themoviedb.org and subtitles from OpenSubtitles, as before.
       </p>
 
       <ServiceFields
@@ -578,33 +582,19 @@ function ServicesSection(props: SettingsPanelProps): React.JSX.Element {
         onEnabled={(on) => setProvider('sonarr', on)}
       />
 
-      <Field
-        label="Bazarr"
+      <ServiceFields
+        name="Bazarr"
+        example="http://nas:6767"
         hint="Subtitles. The address you open it at, and the key from Settings → General inside Bazarr."
-      >
-        <input
-          type="url"
-          value={settings.bazarrUrl}
-          placeholder="http://nas:6767"
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => set({ bazarrUrl: event.target.value })}
-        />
-        <input
-          type="password"
-          value={settings.bazarrApiKey}
-          placeholder="API key"
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => set({ bazarrApiKey: event.target.value })}
-        />
-      </Field>
-      <p className="section-hint">
-        Recorded, and not yet used. Bazarr does not hand a subtitle back the way the other services do — it
-        fetches the file into the film&rsquo;s own folder and answers with nothing. That is a different shape
-        from &ldquo;ask for a subtitle and receive one&rdquo;, and wiring it in as though it were the same
-        would mean PlexFixer reporting a subtitle it had never seen.
-      </p>
+        where="Asking Bazarr is asking every provider you have set up in it, under your own languages and scoring, instead of asking OpenSubtitles directly. It saves the subtitle into the film’s own folder and answers with nothing, so PlexFixer waits for the file to appear and reads what actually arrived — up to a minute, and it says so if nothing does."
+        toggleLabel="Look for subtitles here instead"
+        url={settings.bazarrUrl}
+        apiKey={settings.bazarrApiKey}
+        enabled={settings.subtitleProvider === BAZARR_ID}
+        onUrl={(bazarrUrl) => set({ bazarrUrl })}
+        onApiKey={(bazarrApiKey) => set({ bazarrApiKey })}
+        onEnabled={(on) => set({ subtitleProvider: on ? BAZARR_ID : OPENSUBTITLES_ID })}
+      />
 
       <p className="section-hint">
         Addresses typed here are the only outside addresses PlexFixer will reach besides the ones built into
@@ -793,6 +783,13 @@ function SubtitlesSection(props: SettingsPanelProps): React.JSX.Element {
       </p>
 
       <h4>Finding them</h4>
+      {settings.subtitleProvider === BAZARR_ID ? (
+        <p className="section-hint">
+          Subtitles are being looked for through <strong>Bazarr</strong>, set up under Services. These
+          OpenSubtitles fields are kept and are not being used; turning Bazarr off under Services brings them
+          back into play.
+        </p>
+      ) : null}
       <Field
         label="OpenSubtitles API key"
         hint="Your own, like the TMDB one and for the same reason: they give these away for the asking and ask that they not be passed around, which rules out shipping one inside a program anybody can open."

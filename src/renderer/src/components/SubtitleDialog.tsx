@@ -276,7 +276,7 @@ export default function SubtitleDialog({
 
   const download = (candidate: SubtitleCandidate): void => {
     void (async () => {
-      const got = await run('Fetching it', (opId) => api.fetch(opId, candidate))
+      const got = await run('Fetching it', (opId) => api.fetch(opId, candidate, file.path))
       if (got) {
         setLoaded({
           cues: got.cues,

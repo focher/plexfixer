@@ -38,9 +38,10 @@ import {
 import { decodeSubtitleBytes, formatSrt, parseCues, type Cue } from './cues.js'
 import { movieHash } from './hash.js'
 import { chatRequest, llmEngine, modelsRequest, readChat, readModels, type LlmModel, type LlmTarget } from './llm.js'
-import { providerById, type SubtitleProvider } from './providers/index.js'
+import { BAZARR_ID, providerById, type SubtitleProvider } from './providers/index.js'
 import {
   isProblem,
+  isStep,
   type HttpReply,
   type HttpRequest,
   type ProviderCredential,
@@ -139,6 +140,9 @@ export function searchLanguages(settings: AppSettings): string[] {
  * ------------------------------------------------------------------ */
 
 function credentialFor(provider: SubtitleProvider, settings: AppSettings): ProviderCredential {
+  if (provider.id === BAZARR_ID) {
+    return { url: settings.bazarrUrl.trim() || undefined, apiKey: settings.bazarrApiKey.trim() || undefined }
+  }
   if (provider.id !== 'opensubtitles') return {}
   return {
     apiKey: settings.openSubtitlesKey.trim() || undefined,
@@ -171,6 +175,9 @@ export function queryFor(result: AnalysisResult, settings: AppSettings, movieHas
     // The file's own name is what a service matches a release against, and is
     // far more often right than a title guessed out of it.
     fileName: result.file.fileName,
+    // And where it is, which is how a service on this network knows it: Bazarr
+    // was told by Radarr exactly where this film went.
+    filePath: result.file.path,
     title: tags.title || tags.show || undefined,
     year: Number.isFinite(year) && year > 1880 ? year : undefined,
     season: Number.isFinite(season) ? season : undefined,
@@ -178,6 +185,15 @@ export function queryFor(result: AnalysisResult, settings: AppSettings, movieHas
     languages: searchLanguages(settings)
   }
 }
+
+/**
+ * How many follow-up requests a search may take before something is wrong.
+ *
+ * Bazarr's longest chain is three — the series, then the episode, then the
+ * subtitles — so four is one more than anything here needs and a hard stop on
+ * a provider that answered with a step forever.
+ */
+const MAX_SEARCH_STEPS = 4
 
 export async function findSubtitles(
   shop: Workshop,
@@ -187,18 +203,47 @@ export async function findSubtitles(
   const provider = providerById(shop.settings.subtitleProvider)
   if (!provider) return { problem: `${shop.settings.subtitleProvider} is not a service this version knows about.` }
 
-  report({ step: 'Working out the file’s fingerprint' })
-  // Two reads of 64 KB, which identifies this exact encode. Worth doing even
-  // across a share: it is the difference between a subtitle timed against this
-  // file and one timed against a film of the same name.
-  const hash = await movieHash(result.file.path, shop.host).catch(() => undefined)
+  /*
+   * The hash is only worth two reads to a service that can use one. Bazarr
+   * identifies the file by its path and never sees a hash, and the two reads
+   * are over SSH for a remote library.
+   */
+  let hash: string | undefined
+  if (provider.id !== BAZARR_ID) {
+    report({ step: 'Working out the file’s fingerprint' })
+    // Two reads of 64 KB, which identifies this exact encode. Worth doing even
+    // across a share: it is the difference between a subtitle timed against
+    // this file and one timed against a film of the same name.
+    hash = await movieHash(result.file.path, shop.host).catch(() => undefined)
+  }
 
-  const request = provider.search(queryFor(result, shop.settings, hash), credentialFor(provider, shop.settings))
+  const credential = credentialFor(provider, shop.settings)
+  const query = queryFor(result, shop.settings, hash)
+
+  const request = provider.search(query, credential)
   if (isProblem(request)) return request
 
   report({ step: `Asking ${provider.name}` })
-  const reply = await shop.net.fetch(request)
-  return provider.readSearch(reply, queryFor(result, shop.settings, hash))
+
+  /*
+   * Most services answer in one request. A library manager takes several —
+   * which of my films is this, then which subtitles are there for it — and
+   * says where it has got to in a `step` only it reads. Nothing here knows or
+   * needs to know what the steps are; it follows them until candidates come
+   * back, and refuses to follow forever.
+   */
+  let reply = await shop.net.fetch(request)
+  let step: string | undefined
+
+  for (let taken = 0; taken < MAX_SEARCH_STEPS; taken += 1) {
+    const answer = provider.readSearch(reply, query, step, credential)
+    if (isProblem(answer)) return answer
+    if (!isStep(answer)) return answer
+    step = answer.step
+    reply = await shop.net.fetch(answer.follow)
+  }
+
+  return { problem: `${provider.name} kept asking for one more request and never answered.` }
 }
 
 /**
@@ -211,12 +256,29 @@ export async function findSubtitles(
 export async function fetchSubtitle(
   shop: Workshop,
   candidate: SubtitleCandidate,
-  report: Report = noReport
+  mediaPath?: string,
+  report: Report = noReport,
+  signal?: AbortSignal
 ): Promise<{ cues: Cue[]; text: string } | ProviderProblem> {
   const provider = providerById(candidate.provider)
   if (!provider) return { problem: `${candidate.provider} is not a service this version knows about.` }
 
   let credential = credentialFor(provider, shop.settings)
+
+  /*
+   * What is already beside the film, noted before anything is downloaded.
+   *
+   * A service that fetches into the folder answers with nothing, so the only
+   * way to know its download arrived is that something is there which was not
+   * there a moment ago. A film that already had an English subtitle would
+   * otherwise hand back the old one instantly and call it the new one.
+   */
+  let before: string[] | undefined
+  if (provider.delivers === 'to-the-folder') {
+    const already = await askWhatIsSaved(shop, provider, candidate, credential)
+    if (isProblem(already)) return already
+    before = already.map(fingerprint)
+  }
 
   const attempt = async (): Promise<HttpReply | ProviderProblem> => {
     const request = provider.download(candidate, credential)
@@ -243,7 +305,14 @@ export async function fetchSubtitle(
   const next = provider.readDownload(first)
   if (isProblem(next)) return next
 
-  const bytes = 'bytes' in next ? next.bytes : (await shop.net.fetch(next.follow, true)).bytes
+  let bytes: Uint8Array | undefined
+  if ('bytes' in next) bytes = next.bytes
+  else if ('follow' in next) bytes = (await shop.net.fetch(next.follow, true)).bytes
+  else {
+    const collected = await collectFromFolder(shop, provider, candidate, credential, mediaPath, report, before, signal)
+    if (isProblem(collected)) return collected
+    bytes = collected.bytes
+  }
   if (!bytes || bytes.length === 0) return { problem: 'The subtitle came back empty.' }
 
   // The language the service said it is, used as the hint for which legacy
@@ -262,6 +331,139 @@ export async function fetchSubtitle(
   }
 
   return { cues: parsed.cues, text }
+}
+
+/* ------------------------------------------------------------------ *
+ * Waiting for a service that fetches into the folder itself
+ * ------------------------------------------------------------------ */
+
+/**
+ * How long to keep looking for a subtitle Bazarr said it would fetch.
+ *
+ * The reply to the download is a 204 with nothing in it: the work is on a
+ * queue, and how long it takes is however long the provider behind Bazarr
+ * takes. A minute is longer than that is ever worth waiting, and the delays
+ * widen so that the usual case — a few seconds — is not paid for with a long
+ * first sleep.
+ */
+const COLLECT_DELAYS_MS = [700, 1_000, 1_500, 2_000, 3_000, 4_000, 5_000, 5_000, 5_000, 5_000, 5_000, 5_000, 5_000, 5_000]
+
+const wait = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    // Checked before the listener is added: `addEventListener('abort', …)` on
+    // a signal that has already fired never calls back, so a cancellation
+    // that arrived while the previous request was in flight would otherwise
+    // be paid for with the whole of this sleep.
+    if (signal?.aborted) {
+      resolve()
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+
+/** What a saved subtitle is, for telling an old one from a new one. */
+const fingerprint = (saved: { path: string; sizeBytes?: number }): string => `${saved.path}|${saved.sizeBytes ?? ''}`
+
+async function askWhatIsSaved(
+  shop: Workshop,
+  provider: SubtitleProvider,
+  candidate: SubtitleCandidate,
+  credential: ProviderCredential
+): Promise<{ path: string; sizeBytes?: number }[] | ProviderProblem> {
+  if (!provider.collect || !provider.readCollect) {
+    return { problem: `${provider.name} fetches into the folder but cannot say where.` }
+  }
+  const request = provider.collect(candidate, credential)
+  if (isProblem(request)) return request
+  const collected = provider.readCollect(await shop.net.fetch(request), candidate)
+  if (isProblem(collected)) return collected
+  return collected.saved
+}
+
+/**
+ * Read a subtitle a service fetched into the film's own folder.
+ *
+ * Three things have to be true before anything is read, and each of them is a
+ * way this could quietly return the wrong file:
+ *
+ * - **It has to be new.** A film may already have had a subtitle in this
+ *   language. So what is there is noted *before* the download, and only
+ *   something not in that list counts.
+ * - **It has to be on this machine.** The path comes back in the service's own
+ *   namespace — `/movies/Dune (2021)/Dune (2021).en.srt` inside a container
+ *   where this machine says `/Volumes/media/Films/…`. The path is tried as
+ *   given, and then the name it ends in, beside the film this is all about.
+ * - **It has to arrive.** The download is queued, so the first look is
+ *   normally too early and a minute of looking is the honest cost of it.
+ */
+async function collectFromFolder(
+  shop: Workshop,
+  provider: SubtitleProvider,
+  candidate: SubtitleCandidate,
+  credential: ProviderCredential,
+  mediaPath: string | undefined,
+  report: Report,
+  before?: readonly string[],
+  signal?: AbortSignal
+): Promise<{ bytes: Uint8Array } | ProviderProblem> {
+  if (!mediaPath) {
+    return { problem: `${provider.name} saves the subtitle beside the film, and nothing said which film.` }
+  }
+  const known = new Set(before ?? [])
+
+  for (const [attempt, delay] of COLLECT_DELAYS_MS.entries()) {
+    await wait(delay, signal)
+    if (signal?.aborted) return { problem: 'Stopped.' }
+
+    report({
+      step: `Waiting for ${provider.name} to fetch it`,
+      fraction: (attempt + 1) / COLLECT_DELAYS_MS.length
+    })
+
+    const saved = await askWhatIsSaved(shop, provider, candidate, credential)
+    if (isProblem(saved)) return saved
+
+    for (const one of saved) {
+      if (known.has(fingerprint(one))) continue
+      const bytes = await readFromEitherPath(shop, one.path, mediaPath)
+      if (bytes) return { bytes }
+    }
+  }
+
+  return {
+    problem: `${provider.name} did not save a subtitle within a minute.`,
+    hint: 'It may still be working — look at its own history page, and at whether the provider it uses is throttled.'
+  }
+}
+
+/**
+ * The file, found under the service's path or under ours.
+ *
+ * A library manager in a container is almost always looking at the same disk
+ * through a different root, so the name it ends in, beside the film, is the
+ * part both agree on.
+ */
+async function readFromEitherPath(
+  shop: Workshop,
+  reported: string,
+  mediaPath: string
+): Promise<Uint8Array | undefined> {
+  const name = reported.replace(/\\/g, '/').split('/').filter(Boolean).pop()
+  const beside = name ? shop.host.paths.join(shop.host.paths.dirname(mediaPath), name) : undefined
+
+  for (const path of [reported, beside]) {
+    if (!path) continue
+    const stat = await shop.host.stat(path).catch(() => undefined)
+    if (!stat || stat.isDirectory || stat.sizeBytes === 0) continue
+    // A subtitle is kilobytes; the cap is only here so a wrong path cannot
+    // pull something enormous into the page.
+    return shop.host.readRange(path, 0, Math.min(stat.sizeBytes, 16 * 1024 * 1024)).catch(() => undefined)
+  }
+  return undefined
 }
 
 /**

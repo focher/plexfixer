@@ -45,6 +45,14 @@ export interface HttpReply {
 
 /** Whatever a service needs to be talked to. */
 export interface ProviderCredential {
+  /**
+   * The service's own address, for one that is not at a fixed one.
+   *
+   * A database lives at an address written into this app. A library manager —
+   * Radarr, Sonarr, Bazarr — lives wherever the person running it put it, so
+   * its address is part of what it takes to talk to it at all.
+   */
+  url?: string
   apiKey?: string
   username?: string
   password?: string

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { openSubtitles, serviceLanguages, remainingDownloads } from '@shared/subtitles/providers/opensubtitles.js'
-import { isProblem, type HttpReply, type SubtitleQuery } from '@shared/subtitles/providers/types.js'
+import {
+  isProblem,
+  isStep,
+  type HttpReply,
+  type ProviderProblem,
+  type SubtitleCandidate,
+  type SubtitleQuery,
+  type SubtitleStep
+} from '@shared/subtitles/providers/types.js'
 import { PROVIDERS, providerById } from '@shared/subtitles/providers/index.js'
 
 const KEY = { apiKey: 'a-key-of-your-own' }
@@ -15,6 +23,17 @@ function request(query: Partial<SubtitleQuery>, credential = KEY): URL {
 
 function reply(body: unknown, status = 200): HttpReply {
   return { status, text: typeof body === 'string' ? body : JSON.stringify(body) }
+}
+
+/**
+ * The candidates, or a failure that says which of the other two answers came
+ * back instead. A search may now answer with another request to make, which is
+ * never what a OpenSubtitles test is asking for.
+ */
+function candidates(found: SubtitleCandidate[] | SubtitleStep | ProviderProblem): SubtitleCandidate[] {
+  if (isProblem(found)) throw new Error(found.problem)
+  if (isStep(found)) throw new Error(`wanted candidates, got a follow-up to ${found.follow.url}`)
+  return found
 }
 
 describe('the registry', () => {
@@ -157,8 +176,7 @@ describe('reading a search reply', () => {
   const query: SubtitleQuery = { languages: ['eng', 'rus'] }
 
   it('reads what matters off each candidate', () => {
-    const found = openSubtitles.readSearch(reply(SEARCH_REPLY), query)
-    if (isProblem(found)) throw new Error(found.problem)
+    const found = candidates(openSubtitles.readSearch(reply(SEARCH_REPLY), query))
 
     expect(found).toHaveLength(2)
     expect(found[0]).toEqual({
@@ -180,30 +198,25 @@ describe('reading a search reply', () => {
   })
 
   it('counts a subtitle split across discs so the UI can warn about it', () => {
-    const found = openSubtitles.readSearch(reply(SEARCH_REPLY), query)
-    if (isProblem(found)) throw new Error(found.problem)
+    const found = candidates(openSubtitles.readSearch(reply(SEARCH_REPLY), query))
     expect(found[1].parts).toBe(2)
     expect(found[1].id).toBe('990002')
   })
 
   it('treats an AI translation as machine translated, whichever flag says so', () => {
-    const found = openSubtitles.readSearch(reply(SEARCH_REPLY), query)
-    if (isProblem(found)) throw new Error(found.problem)
+    const found = candidates(openSubtitles.readSearch(reply(SEARCH_REPLY), query))
     expect(found[1].machineTranslated).toBe(true)
   })
 
   it('drops a language nobody asked for', () => {
-    const found = openSubtitles.readSearch(reply(SEARCH_REPLY), { languages: ['rus'] })
-    if (isProblem(found)) throw new Error(found.problem)
+    const found = candidates(openSubtitles.readSearch(reply(SEARCH_REPLY), { languages: ['rus'] }))
     expect(found.map((c) => c.language)).toEqual(['rus'])
   })
 
   it('skips a row with no file to download rather than losing the rest', () => {
-    const found = openSubtitles.readSearch(
-      reply({ data: [{ attributes: { language: 'en', files: [] } }, ...SEARCH_REPLY.data] }),
-      query
+    const found = candidates(
+      openSubtitles.readSearch(reply({ data: [{ attributes: { language: 'en', files: [] } }, ...SEARCH_REPLY.data] }), query)
     )
-    if (isProblem(found)) throw new Error(found.problem)
     expect(found).toHaveLength(2)
   })
 

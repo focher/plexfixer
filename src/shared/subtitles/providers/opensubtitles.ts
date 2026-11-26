@@ -120,6 +120,7 @@ export const openSubtitles: SubtitleProvider = {
   name: 'OpenSubtitles',
   site: 'https://www.opensubtitles.com/en/consumers',
   needs: 'api-key-and-login',
+  delivers: 'bytes',
   summary:
     'The largest of them, and the only one here that matches on the file itself. Needs an API key, and a ' +
     'username and password to download: the key identifies the app, the account carries the daily allowance.',

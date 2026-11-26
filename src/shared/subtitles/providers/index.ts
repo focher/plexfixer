@@ -1,14 +1,21 @@
 /**
  * Every subtitle service, and what is known about each of them.
  *
- * One at the moment, which wants saying plainly rather than hidden behind a
- * plural. The interface in `types.ts` exists so that adding another is a file
- * beside this one and a line in the list, and the reason there is not a second
- * already is not architecture: it is that a provider written against a guessed
- * wire format is worse than no provider. OpenSubtitles' is documented and was
- * checked. Two others were looked at and are not here — Podnapisi, whose
- * remaining interface is an XML endpoint its own users report as unreliable
- * for downloads, and SubDL, whose documentation refuses to be read by anything
+ * Two, and they answer different questions. OpenSubtitles is a place subtitles
+ * come from: it will tell anybody about any film, and it matches on the file's
+ * own hash, which is the best identification there is. Bazarr is not a place
+ * subtitles come from at all — it is the thing that already has an account at
+ * every such place, with your providers, your languages and your scoring set
+ * up once. Asking it is asking all of them under rules you already decided on,
+ * and it is only useful to somebody who runs it.
+ *
+ * The bar for a third is the one this list has always set: a provider written
+ * against a guessed wire format is worse than no provider. OpenSubtitles'
+ * format is documented; Bazarr's was read out of its own source, and it
+ * publishes the same thing at `/api/swaggerui` on any running instance. Two
+ * others were looked at and are not here — Podnapisi, whose remaining
+ * interface is an XML endpoint its own users report as unreliable for
+ * downloads, and SubDL, whose documentation refuses to be read by anything
  * that is not a browser. Either would take about an hour with an account and a
  * network log, and neither should be guessed at.
  *
@@ -17,14 +24,15 @@
  * and the answer belongs in the same list.
  */
 
+import { bazarr, BAZARR_ID } from './bazarr.js'
 import { openSubtitles, OPENSUBTITLES_ID } from './opensubtitles.js'
 import type { SubtitleProvider } from './types.js'
 
-export const PROVIDERS: readonly SubtitleProvider[] = [openSubtitles]
+export const PROVIDERS: readonly SubtitleProvider[] = [openSubtitles, bazarr]
 
 export function providerById(id: string): SubtitleProvider | undefined {
   return PROVIDERS.find((provider) => provider.id === id)
 }
 
-export { OPENSUBTITLES_ID, openSubtitles }
+export { BAZARR_ID, bazarr, OPENSUBTITLES_ID, openSubtitles }
 export * from './types.js'

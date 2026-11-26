@@ -124,16 +124,13 @@ export interface MetadataProvider {
 }
 
 /**
- * Whatever a service needs to be reachable, beyond a credential.
+ * Whatever a service needs to be reachable.
  *
- * A database lives at an address written into this app. A library manager
- * lives wherever the person running it put it, so its address is part of what
- * it takes to talk to it at all.
+ * The same thing a subtitle provider is handed — `url` moved into
+ * `ProviderCredential` itself once Bazarr needed it too — and kept under this
+ * name because every provider in this folder is written against it.
  */
-export interface ServiceCredential extends ProviderCredential {
-  /** The service's own address, for one that is not at a fixed one. */
-  url?: string
-}
+export type ServiceCredential = ProviderCredential
 
 /**
  * Trim a base URL to something requests can be built on.

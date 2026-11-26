@@ -490,8 +490,13 @@ function buildApi() {
       search: (opId: string, result: AnalysisResult) =>
         subtitleRun(opId, (shop, report) => findSubtitles(shop, result, report)),
 
-      fetch: (opId: string, candidate: SubtitleCandidate) =>
-        subtitleRun(opId, (shop, report) => fetchSubtitle(shop, candidate, report)),
+      /**
+       * `mediaPath` is not decoration. A service that fetches the subtitle
+       * into the film's own folder hands nothing back, so the only way to read
+       * what it fetched is to know which film it was fetched for.
+       */
+      fetch: (opId: string, candidate: SubtitleCandidate, mediaPath: string) =>
+        subtitleRun(opId, (shop, report, signal) => fetchSubtitle(shop, candidate, mediaPath, report, signal)),
 
       /** An .srt the user picked, read as cues so it can go into the film. */
       readFile: (opId: string, path: string) => subtitleRun(opId, (shop) => readSubtitleFile(shop, path)),
