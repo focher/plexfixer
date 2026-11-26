@@ -18,24 +18,16 @@ import type { AnalysisResult, AppSettings, MetadataEdit, TrackEdit } from '@shar
 import { EDITABLE_TAGS, changesAnything, episodeFieldsFor, isEmptyEdit, tagsOf } from '@shared/plex/metadata.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
 import { languageOptions } from '@shared/languages.js'
-import {
-  authHeader,
-  detailsUrl,
-  episodeTags,
-  episodeUrl,
-  guessEpisode,
-  guessTitle,
-  parseDetails,
-  parseEpisode,
-  parseSearch,
-  readCredential,
-  searchUrl,
-  tagsFromMatch,
-  type TmdbKind,
-  type TmdbMatch
-} from '@shared/tmdb.js'
+import { guessEpisode, guessTitle, type TmdbKind } from '@shared/tmdb.js'
+import { anythingAskable, metadataSession } from '@shared/metadata/service.js'
+import { tagsFor } from '@shared/metadata/tags.js'
+import { isProblem, type MetadataMatch, type MetadataProvider } from '@shared/metadata/providers/types.js'
 
-type Lookup = { state: 'idle' } | { state: 'looking' } | { state: 'failed'; message: string } | { state: 'found'; matches: TmdbMatch[] }
+type Lookup =
+  | { state: 'idle' }
+  | { state: 'looking' }
+  | { state: 'failed'; message: string }
+  | { state: 'found'; provider: MetadataProvider; matches: MetadataMatch[] }
 
 const KIND_LABEL: Record<TmdbKind, string> = { movie: 'Film', tv: 'Series' }
 
@@ -125,90 +117,74 @@ export default function MetadataDialog({
     return set === undefined ? fallback : set
   }
 
-  const credential = useMemo(() => readCredential(settings.tmdbCredential), [settings.tmdbCredential])
-
-  async function lookItUp(): Promise<void> {
-    if (!credential) {
-      setLookup({
-        state: 'failed',
-        message: 'Nothing from themoviedb.org yet — paste your API key, or your read access token, into Settings → Metadata.'
-      })
-      return
-    }
-    setLookup({ state: 'looking' })
-    try {
-      const body = await window.plexfixer.tmdb.get(
-        searchUrl(credential, kind, query.trim(), year.trim()),
-        authHeader(credential)
-      )
-      const matches = parseSearch(body, kind)
-      setLookup(
-        matches.length > 0
-          ? { state: 'found', matches }
-          : { state: 'failed', message: `Nothing on themoviedb.org matched that${year.trim() ? ' in that year' : ''}.` }
-      )
-    } catch (error) {
-      setLookup({ state: 'failed', message: error instanceof Error ? error.message : String(error) })
-    }
-  }
+  /*
+   * One session for as long as this dialog is open.
+   *
+   * It holds what it has already fetched, which matters here for the same
+   * reason it matters in bulk: Radarr's only way to match a path is to hand
+   * back the whole library, and searching twice in a row should not ask for it
+   * twice.
+   */
+  const session = useMemo(
+    () => metadataSession({ fetch: (request) => window.plexfixer.metadata.fetch(request) }, settings),
+    [settings]
+  )
+  const canAsk = anythingAskable(settings, kind)
 
   const wantsEpisode = kind === 'tv' && /^\d+$/.test(season.trim()) && /^\d+$/.test(episodeNumber.trim())
 
+  async function lookItUp(): Promise<void> {
+    setLookup({ state: 'looking' })
+    /*
+     * The path goes with the question, and is the whole reason Radarr and
+     * Sonarr can answer at all: they know this film because they put the file
+     * there. A database is handed the title instead, which is a guess, and is
+     * asked second for exactly that reason.
+     */
+    const answer = await session.lookUp({
+      kind,
+      filePath: file.path,
+      title: query.trim() || undefined,
+      year: year.trim() || undefined,
+      season: wantsEpisode ? Number(season) : undefined,
+      episode: wantsEpisode ? Number(episodeNumber) : undefined
+    })
+
+    if (isProblem(answer)) {
+      setLookup({ state: 'failed', message: answer.hint ? `${answer.problem} ${answer.hint}` : answer.problem })
+      return
+    }
+    setLookup({ state: 'found', provider: answer.provider, matches: answer.matches })
+  }
+
   /**
-   * Take a match, and fill in the genres it did not come with.
+   * Take a match, and fill in what the search did not say.
    *
    * With a season and an episode filled in, the series picked here is only
    * the way to the episode: what gets written is the episode's own name and
    * air date, with the series in its own field. Writing the series name as
    * the file's title would leave a season of files all called the same thing.
    */
-  async function take(match: TmdbMatch): Promise<void> {
-    if (!credential) return
-
-    const genres = async (): Promise<string[] | undefined> => {
-      try {
-        const body = await window.plexfixer.tmdb.get(
-          detailsUrl(credential, match.kind, match.id),
-          authHeader(credential)
-        )
-        return parseDetails(body, match.kind)?.genres
-      } catch {
-        // The search already gave a title, a year and a summary. Losing the
-        // genres is not a reason to refuse the rest of it.
-        return undefined
-      }
+  async function take(match: MetadataMatch): Promise<void> {
+    const asked: MetadataMatch = {
+      ...match,
+      filePath: file.path,
+      season: wantsEpisode ? Number(season) : match.season,
+      episode: wantsEpisode ? Number(episodeNumber) : match.episode
     }
 
-    if (wantsEpisode) {
-      try {
-        const body = await window.plexfixer.tmdb.get(
-          episodeUrl(credential, match.id, Number(season), Number(episodeNumber)),
-          authHeader(credential)
-        )
-        const read = parseEpisode(body)
-        if (!read) throw new Error('no such episode')
-        const written = episodeTags({
-          series: match,
-          season: Number(season),
-          number: Number(episodeNumber),
-          title: read.title,
-          date: read.date,
-          overview: read.overview,
-          genres: await genres()
-        })
-        setTags((previous) => ({ ...previous, ...written }))
-        setLookup({ state: 'idle' })
-      } catch {
-        setLookup({
-          state: 'failed',
-          message: `“${match.title}” has no season ${season} episode ${episodeNumber}. Check the numbers, or clear them to write the series itself.`
-        })
-      }
+    const full = await session.fillIn(asked)
+    if (isProblem(full)) {
+      setLookup({
+        state: 'failed',
+        message: wantsEpisode
+          ? `${full.problem} Check the numbers, or clear them to write the series itself.`
+          : full.problem
+      })
       return
     }
 
-    const found = await genres()
-    setTags((previous) => ({ ...previous, ...tagsFromMatch(found ? { ...match, genres: found } : match) }))
+    setTags((previous) => ({ ...previous, ...tagsFor(full) }))
     setLookup({ state: 'idle' })
   }
 
@@ -255,7 +231,7 @@ export default function MetadataDialog({
           </section>
 
           <section className="metadata-lookup">
-            <h4 className="block-heading">Look it up on themoviedb.org</h4>
+            <h4 className="block-heading">Look it up</h4>
             <div className="metadata-search">
               <select
                 value={kind}
@@ -311,25 +287,37 @@ export default function MetadataDialog({
                 placeholder="Year"
                 onChange={(event) => setYear(event.target.value)}
               />
-              <button onClick={() => void lookItUp()} disabled={query.trim() === '' || lookup.state === 'looking'}>
+              <button onClick={() => void lookItUp()} disabled={!canAsk || lookup.state === 'looking'}>
                 {lookup.state === 'looking' ? 'Looking…' : 'Search'}
               </button>
             </div>
 
             {lookup.state === 'failed' ? <p className="metadata-problem">{lookup.message}</p> : null}
             {lookup.state === 'found' ? (
-              <ul className="metadata-matches">
-                {lookup.matches.slice(0, 8).map((match) => (
-                  <li key={`${match.kind}-${match.id}`}>
-                    <button onClick={() => void take(match)}>
-                      <span className="metadata-match-title">
-                        {match.title} {match.year ? <span className="muted">({match.year})</span> : null}
-                      </span>
-                      <span className="metadata-match-overview">{match.overview || 'No summary.'}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <p className="block-note">
+                  {lookup.matches.some((match) => match.pathMatch) ? (
+                    <>
+                      <strong>{lookup.provider.name}</strong> identified this file by where it is, so this is
+                      not a guess at the name.
+                    </>
+                  ) : (
+                    <>Answered by {lookup.provider.name}, matching on the title rather than on the file.</>
+                  )}
+                </p>
+                <ul className="metadata-matches">
+                  {lookup.matches.slice(0, 8).map((match) => (
+                    <li key={`${match.provider}-${match.kind}-${match.id}`}>
+                      <button onClick={() => void take(match)}>
+                        <span className="metadata-match-title">
+                          {match.title} {match.year ? <span className="muted">({match.year})</span> : null}
+                        </span>
+                        <span className="metadata-match-overview">{match.overview || 'No summary.'}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
             ) : null}
             <p className="block-note">
               {kind === 'tv'
@@ -339,7 +327,9 @@ export default function MetadataDialog({
                 : null}
             </p>
             <p className="block-note">
-              The title you searched for is sent to themoviedb.org. Nothing else about the file is.
+              {canAsk
+                ? 'Radarr and Sonarr, where they are switched on, are asked first and are told the file’s path — that is how they know which film it is. themoviedb.org is sent the title you searched for and nothing else about the file.'
+                : 'Nothing is set up to look this up. Paste a themoviedb.org key under Settings → Metadata, or switch on Radarr or Sonarr under Settings → Services.'}
             </p>
           </section>
 

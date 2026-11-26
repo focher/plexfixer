@@ -908,7 +908,7 @@ export default function App(): React.JSX.Element {
                     {
                       key: 'metadata',
                       label: 'Metadata lookup',
-                      hint: 'Search themoviedb.org for each file and review the answers before writing',
+                      hint: 'Ask Radarr or Sonarr where they know the file, themoviedb.org otherwise, and review the answers before writing',
                       disabled: !settings || settings.tmdbCredential.trim() === '',
                       disabledHint: 'Add your themoviedb.org key under Settings → Metadata first',
                       onSelect: () => setLookingUp(selectedPaths)

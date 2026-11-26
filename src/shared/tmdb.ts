@@ -9,7 +9,14 @@
  * The key belongs to whoever is running the app. TMDB gives one away for the
  * asking and asks that it not be shared, which rules out shipping one in a
  * binary that anybody can open.
+ *
+ * What a result *writes* is no longer here. A file has a title, a date, a
+ * description and a genre whichever service answered, so that lives in
+ * `metadata/tags.ts` and the two functions at the end of this file hand
+ * TMDB's own shapes to it.
  */
+
+import { tagsFor } from './metadata/tags.js'
 
 /** What a search turned up, or what a details call filled in. */
 export interface TmdbMatch {
@@ -204,28 +211,34 @@ export function parseEpisode(
  * in its own field, which is where a player looks for it.
  */
 export function episodeTags(episode: TmdbEpisode): Record<string, string> {
-  const tags: Record<string, string> = {
-    title: episode.title,
-    show: episode.series.title,
-    season_number: String(episode.season),
-    episode_id: String(episode.number)
-  }
-  if (episode.date) tags.date = episode.date
-  if (episode.overview) tags.description = episode.overview
-  if (episode.genres?.length) tags.genre = episode.genres.join(', ')
-  return tags
+  return tagsFor({
+    provider: 'tmdb',
+    id: String(episode.series.id),
+    kind: 'tv',
+    title: episode.series.title,
+    episodeTitle: episode.title,
+    season: episode.season,
+    episode: episode.number,
+    date: episode.date,
+    overview: episode.overview,
+    genres: episode.genres,
+    pathMatch: false
+  })
 }
 
 /** What a match would write into the file. */
 export function tagsFromMatch(match: TmdbMatch): Record<string, string> {
-  const tags: Record<string, string> = { title: match.title }
-  // The full date where there is one — a player that wants only the year will
-  // take the first four characters, and one that wants the date has it.
-  if (match.date) tags.date = match.date
-  else if (match.year) tags.date = match.year
-  if (match.overview) tags.description = match.overview
-  if (match.genres?.length) tags.genre = match.genres.join(', ')
-  return tags
+  return tagsFor({
+    provider: 'tmdb',
+    id: String(match.id),
+    kind: match.kind,
+    title: match.title,
+    year: match.year,
+    date: match.date,
+    overview: match.overview,
+    genres: match.genres,
+    pathMatch: false
+  })
 }
 
 /* ------------------------------------------------------------------ *

@@ -20,27 +20,33 @@ import {
   whatIsMissing,
   type AskedFor
 } from '@shared/plex/bulk-metadata.js'
-import type { TmdbEpisode, TmdbMatch } from '@shared/tmdb.js'
+import type { MetadataMatch } from '@shared/metadata/providers/types.js'
 import { mainAudio, mkv, video } from './fixtures.js'
 
-const match = (title: string, year?: string, id = 1): TmdbMatch => ({
-  id,
+/** A database answer: a title that was searched for, matched on its name. */
+const match = (title: string, year?: string, id = 1): MetadataMatch => ({
+  provider: 'tmdb',
+  id: String(id),
   kind: 'movie',
   title,
   year,
-  overview: 'A summary.'
+  overview: 'A summary.',
+  pathMatch: false
 })
 
-const series = (title: string, year?: string, id = 1): TmdbMatch => ({ ...match(title, year, id), kind: 'tv' })
+const series = (title: string, year?: string, id = 1): MetadataMatch => ({ ...match(title, year, id), kind: 'tv' })
 
-const anEpisode = (title: string): TmdbEpisode => ({
-  series: series('Breaking Bad', '2008'),
+const anEpisode = (title: string): MetadataMatch => ({
+  ...series('Breaking Bad', '2008'),
   season: 5,
-  number: 14,
-  title,
+  episode: 14,
+  episodeTitle: title,
   date: '2013-09-15',
   overview: 'Everything comes apart.'
 })
+
+/** A library manager's answer: this exact file, identified by where it is. */
+const byPath = (one: MetadataMatch): MetadataMatch => ({ ...one, provider: 'radarr', pathMatch: true })
 
 const file = (fileName: string) => mkv([video(), mainAudio()], { fileName, path: `/m/${fileName}` })
 
@@ -152,13 +158,32 @@ describe('movieProposal', () => {
 
   it('keeps the other answers to pick from instead', () => {
     const rows = movieProposal(file('Heat.mkv'), movie('Heat'), [match('Heat', '1995', 1), match('Heat', '1986', 2)])
-    expect(rows.alternatives.map((option) => option.id)).toEqual([1, 2])
+    expect(rows.alternatives.map((option) => option.id)).toEqual(['1', '2'])
   })
 
   it('says plainly when nothing matched', () => {
     const none = movieProposal(file('Zzz.mkv'), movie('Zzz'), [])
     expect(none.take).toBe(false)
-    expect(none.problem).toContain('Nothing on themoviedb.org')
+    expect(none.problem).toContain('Nothing matched')
+  })
+
+  it('does not doubt a film the service matched by where the file is', () => {
+    /*
+     * The file name says 2006 and Radarr says 1967. With a guess that would be
+     * a reason to leave the row unticked; from Radarr it is a fact about the
+     * file name, because Radarr is the thing that put the file there. Doubting
+     * it would leave a whole library unticked for the one reason that cannot
+     * be wrong.
+     */
+    const row = movieProposal(file('a.mkv'), movie('Casino Royale', '2006'), [byPath(match('Casino Royale', '1967'))])
+    expect(row.confidence.level).toBe('certain')
+    expect(row.take).toBe(true)
+  })
+
+  it('still doubts a title match, however little it resembles the question', () => {
+    const row = movieProposal(file('a.mkv'), movie('Casino Royale', '2006'), [match('Casino Royale', '1967')])
+    expect(row.confidence.level).toBe('check')
+    expect(row.take).toBe(false)
   })
 })
 
@@ -208,6 +233,26 @@ describe('episodeProposal', () => {
       anEpisode('Rose')
     )
     expect(row.take).toBe(true)
+  })
+
+  it('takes the episode the service matched the file to, numbers or no numbers', () => {
+    /*
+     * The case nothing but a library manager can get right. The file is called
+     * S05E14 and Sonarr imported it as the series' fifteenth episode, because
+     * the release was numbered differently from the series itself. Sonarr
+     * recorded which file it put where, so the episode it names is the one
+     * this file is — and the two ambiguous series stop mattering.
+     */
+    const imported = { ...anEpisode('Ozymandias'), provider: 'sonarr', pathMatch: true, episode: 15 }
+    const row = episodeProposal(
+      file('bb.mkv'),
+      asked,
+      [series('Breaking Bad', '2008', 1), series('Breaking Bad', '2010', 2)],
+      imported
+    )
+    expect(row.confidence.level).toBe('certain')
+    expect(row.take).toBe(true)
+    expect(row.found?.tags.episode_id).toBe('15')
   })
 })
 

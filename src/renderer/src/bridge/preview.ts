@@ -528,6 +528,14 @@ export function installPreviewBridge(): void {
       fileMenu: async (): Promise<void> => undefined,
       openExternal: async (): Promise<void> => undefined
     },
+    /** The preview has no outside world; a lookup says so rather than hanging. */
+    metadata: {
+      fetch: async (): Promise<{ status: number; text: string }> => ({
+        status: 503,
+        text: 'The preview does not reach the network.'
+      })
+    },
+
     subtitles: {
       onProgress: never,
       cancel: (): void => undefined,

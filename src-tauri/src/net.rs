@@ -43,6 +43,14 @@ const FIXED: &[&str] = &[
     "https://api.openai.com/v1/",
     "https://api.anthropic.com/v1/",
     "https://api.groq.com/openai/v1/",
+    // The same prefix `tmdb.rs` has always allowed, and for the same one
+    // command. It is here as well because the metadata providers describe
+    // requests the way the subtitle providers do, and sending two of the three
+    // through this door and the third through another would mean the chain
+    // that asks Radarr first and themoviedb.org second could not be one chain.
+    // No reach is added by this: it is a prefix this process could already
+    // fetch, written down in a second place.
+    "https://api.themoviedb.org/3/",
 ];
 
 /// Hosts a subtitle download may come from.

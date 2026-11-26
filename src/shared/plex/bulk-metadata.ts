@@ -18,19 +18,19 @@
  * only thing that identifies an episode at all: two series have the same
  * episode names, and half the episodes in a library have no name in the file
  * at all.
+ *
+ * None of this knows which service answered. A proposal is built out of a
+ * `MetadataMatch`, and whether that came from Radarr, which knows where the
+ * file is, or from themoviedb.org, which was handed a guess at its name, is
+ * the asking side's business. What does belong here is how much a proposal
+ * deserves to be trusted — and a match made against the file itself is the one
+ * kind that deserves it outright.
  */
 
 import type { MediaFile } from '../types.js'
-import {
-  episodeTags,
-  guessEpisode,
-  guessTitle,
-  tagsFromMatch,
-  type TmdbEpisode,
-  type TmdbKind,
-  type TmdbMatch
-} from '../tmdb.js'
-import { bareNumber } from './metadata.js'
+import { guessEpisode, guessTitle, type TmdbKind } from '../tmdb.js'
+import { labelFor, tagsFor } from '../metadata/tags.js'
+import type { MetadataMatch } from '../metadata/providers/types.js'
 
 /** The terms a row is searched on, which a person may correct. */
 export type AskedFor =
@@ -39,6 +39,8 @@ export type AskedFor =
 
 /** How much a proposal should be trusted, and why. */
 export type Confidence =
+  /** The service matched the file itself; there is nothing left to doubt. */
+  | { level: 'certain'; why: string }
   /** The year matches the file name, or there was only ever one answer. */
   | { level: 'good' }
   /** Worth a glance: several answers, or a title that drifted. */
@@ -46,19 +48,21 @@ export type Confidence =
 
 /** What a row would write, and what to call it on screen. */
 export interface Found {
-  /** The film, or the series an episode belongs to: what a details call needs. */
-  id: number
+  /**
+   * The match itself, kept whole.
+   *
+   * Apply fills in what the search did not say — a film's genres, an
+   * episode's own name — and the provider's `details` call needs the match it
+   * came from, not just an id dug out of it.
+   */
+  match: MetadataMatch
   label: string
   tags: Record<string, string>
 }
 
-/** A film result, turned into what the row would write. */
-export function foundFrom(match: TmdbMatch): Found {
-  return {
-    id: match.id,
-    label: `${match.title}${match.year ? ` (${match.year})` : ''}`,
-    tags: tagsFromMatch(match)
-  }
+/** A result, turned into what the row would write. */
+export function foundFrom(match: MetadataMatch): Found {
+  return { match, label: labelFor(match), tags: tagsFor(match) }
 }
 
 export interface Proposal {
@@ -68,7 +72,7 @@ export interface Proposal {
   asked: AskedFor
   found?: Found
   /** Other answers already in hand. Films only: an episode is found by number. */
-  alternatives: TmdbMatch[]
+  alternatives: MetadataMatch[]
   confidence: Confidence
   /** Why there is no proposal, when there is none. */
   problem?: string
@@ -133,9 +137,18 @@ export function whatIsMissing(asked: AskedFor): string {
  * more often than they share a title and a year — so a year that agrees is
  * worth more than any amount of title similarity.
  */
-export function judge(guessedYear: string, query: string, matches: readonly TmdbMatch[]): Confidence {
+export function judge(guessedYear: string, query: string, matches: readonly MetadataMatch[]): Confidence {
   const best = matches[0]
   if (!best) return { level: 'check', why: 'nothing found' }
+
+  /*
+   * A path match is not a better guess; it is not a guess. The service was
+   * told to put the file where it is and recorded which film it was. None of
+   * the reasoning below applies — the file name's year disagreeing with the
+   * film's is a fact about the file name.
+   */
+  if (best.pathMatch) return { level: 'certain', why: 'matched by where the file is, not by its name' }
+
   const year = guessedYear.trim()
 
   if (year && best.year && year !== best.year) {
@@ -167,7 +180,7 @@ export function judge(guessedYear: string, query: string, matches: readonly Tmdb
 export function movieProposal(
   file: MediaFile,
   asked: Extract<AskedFor, { kind: 'movie' }>,
-  matches: readonly TmdbMatch[]
+  matches: readonly MetadataMatch[]
 ): Proposal {
   const base = { path: file.path, fileName: file.fileName, asked, alternatives: matches.slice(0, 6) }
   const best = matches[0]
@@ -175,7 +188,7 @@ export function movieProposal(
     return {
       ...base,
       confidence: { level: 'check', why: 'nothing found' },
-      problem: `Nothing on themoviedb.org matched “${asked.query}”.`,
+      problem: `Nothing matched “${asked.query}”.`,
       take: false
     }
   }
@@ -188,7 +201,7 @@ export function movieProposal(
     ...base,
     found: foundFrom(best),
     confidence,
-    take: confidence.level === 'good'
+    take: confidence.level !== 'check'
   }
 }
 
@@ -204,17 +217,17 @@ export function movieProposal(
 export function episodeProposal(
   file: MediaFile,
   asked: Extract<AskedFor, { kind: 'tv' }>,
-  series: readonly TmdbMatch[],
-  episode: TmdbEpisode | undefined
+  series: readonly MetadataMatch[],
+  episode: MetadataMatch | undefined
 ): Proposal {
-  const base = { path: file.path, fileName: file.fileName, asked, alternatives: [] as TmdbMatch[] }
+  const base = { path: file.path, fileName: file.fileName, asked, alternatives: [] as MetadataMatch[] }
   const best = series[0]
 
   if (!best) {
     return {
       ...base,
       confidence: { level: 'check', why: 'nothing found' },
-      problem: `No series on themoviedb.org matched “${asked.show}”.`,
+      problem: `No series matched “${asked.show}”.`,
       take: false
     }
   }
@@ -228,6 +241,18 @@ export function episodeProposal(
     }
   }
 
+  if (episode.pathMatch) {
+    // Sonarr imported this exact file and recorded which episode it is, which
+    // beats the numbers in the name whenever a release is numbered differently
+    // from the series itself.
+    return {
+      ...base,
+      found: foundFrom(episode),
+      confidence: { level: 'certain', why: 'matched by where the file is, not by its name' },
+      take: true
+    }
+  }
+
   const several =
     series.length > 1 && asked.year.trim() === ''
       ? `more than one series is called “${asked.show}” — this is the ${best.year ?? 'one listed first'} one`
@@ -236,13 +261,9 @@ export function episodeProposal(
   const confidence: Confidence = several ? { level: 'check', why: several } : { level: 'good' }
   return {
     ...base,
-    found: {
-      id: best.id,
-      // The same numbers the file will be named with, so the row predicts
-      // the rename rather than contradicting it.
-      label: `${best.title} — S${bareNumber(asked.season)}E${bareNumber(asked.episode)} — ${episode.title}`,
-      tags: episodeTags(episode)
-    },
+    // The same numbers the file will be named with, so the row predicts the
+    // rename rather than contradicting it.
+    found: foundFrom(episode),
     confidence,
     take: confidence.level === 'good'
   }

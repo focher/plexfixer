@@ -11,7 +11,7 @@
  * an episode it is often missing the only part that matters.
  */
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSettings, MediaFile, MetadataEdit } from '@shared/types.js'
 import {
   askFor,
@@ -24,20 +24,9 @@ import {
   type AskedFor,
   type Proposal
 } from '@shared/plex/bulk-metadata.js'
-import {
-  authHeader,
-  detailsUrl,
-  episodeUrl,
-  parseDetails,
-  parseEpisode,
-  parseSearch,
-  readCredential,
-  searchUrl,
-  type TmdbCredential,
-  type TmdbEpisode,
-  type TmdbKind,
-  type TmdbMatch
-} from '@shared/tmdb.js'
+import type { TmdbKind } from '@shared/tmdb.js'
+import { anythingAskable, metadataSession } from '@shared/metadata/service.js'
+import { isProblem, type MetadataMatch } from '@shared/metadata/providers/types.js'
 
 type Phase =
   | { state: 'searching'; done: number; total: number }
@@ -97,33 +86,74 @@ export default function BulkMetadataDialog({
    * A season of twenty-four episodes is one series and twenty-four episode
    * calls, not twenty-four identical series searches.
    */
-  const seriesCache = useRef(new Map<string, TmdbMatch[]>())
+  const seriesCache = useRef(new Map<string, MetadataMatch[]>())
 
-  const credential = readCredential(settings.tmdbCredential)
+  /*
+   * One session for the whole run.
+   *
+   * It remembers the replies it has already had, which is what makes asking a
+   * library manager affordable at all: Radarr's only way to match a path is to
+   * hand back every film it has, and eighty files would otherwise be eighty
+   * copies of the library.
+   */
+  const session = useMemo(
+    () => metadataSession({ fetch: (request) => window.plexfixer.metadata.fetch(request) }, settings),
+    [settings]
+  )
   const byPath = useRef(new Map(files.map((file) => [file.path, file])))
+
+  /*
+   * Give up on the searches when this closes — and only then.
+   *
+   * These used to be one effect keyed on the callback prop. Parents pass that
+   * as an inline arrow, so it is a new function on every render of the parent,
+   * so the effect re-ran on every render of the parent — and its cleanup set
+   * `cancelled`, which nothing ever sets back. The result was a lookup over a
+   * selection that stopped partway and sat on "Searching… 4 of 6" forever,
+   * with no error and no way forward but Cancel. The same mistake was found
+   * and fixed in `MetadataDialog`, where it moved the caret instead.
+   *
+   * The listener still needs the current callback. The cancelling does not, so
+   * the two are separate effects and the cancelling runs on unmount alone.
+   */
+  useEffect(() => {
+    /*
+     * Set false on the way in as well as true on the way out.
+     *
+     * A ref that only ever latches is wrong wherever an effect can run twice,
+     * and one does: React's StrictMode mounts, unmounts and remounts every
+     * component in development, so the cleanup fired before the opening sweep
+     * had finished and the dialog sat on "Searching… 4 of 6" — four being the
+     * number of searches in flight when it did.
+     */
+    cancelled.current = false
+    closeButton.current?.focus({ preventScroll: true })
+    return () => {
+      cancelled.current = true
+    }
+  }, [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
-    closeButton.current?.focus({ preventScroll: true })
-    return () => {
-      cancelled.current = true
-      window.removeEventListener('keydown', onKey)
-    }
+    return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const get = async (address: string): Promise<string> =>
-    window.plexfixer.tmdb.get(address, authHeader(credential as TmdbCredential))
-
-  /** The series behind a name, searched once and remembered. */
-  async function seriesFor(show: string, year: string): Promise<TmdbMatch[]> {
-    const key = `${show.trim().toLowerCase()}|${year.trim()}`
+  /**
+   * The series behind a name, searched once and remembered.
+   *
+   * Keyed by the file as well as the name, because a service that matches by
+   * path answers about *this* file: two files of the same series are the same
+   * search to themoviedb.org and two different answers from Sonarr.
+   */
+  async function seriesFor(show: string, year: string, filePath: string): Promise<MetadataMatch[]> {
+    const key = `${show.trim().toLowerCase()}|${year.trim()}|${filePath}`
     const known = seriesCache.current.get(key)
     if (known) return known
-    const body = await get(searchUrl(credential as TmdbCredential, 'tv', show.trim(), year.trim()))
-    const found = parseSearch(body, 'tv')
+    const answer = await session.lookUp({ kind: 'tv', filePath, title: show.trim() || undefined, year: year.trim() || undefined })
+    const found = isProblem(answer) ? [] : answer.matches
     seriesCache.current.set(key, found)
     return found
   }
@@ -139,37 +169,36 @@ export default function BulkMetadataDialog({
 
     try {
       if (asked.kind === 'movie') {
-        const body = await get(
-          searchUrl(credential as TmdbCredential, 'movie', asked.query.trim(), asked.year.trim())
-        )
-        return movieProposal(file, asked, parseSearch(body, 'movie'))
+        const answer = await session.lookUp({
+          kind: 'movie',
+          // The path goes with every question: it is what a library manager
+          // identifies the file by, and it is ignored by a database.
+          filePath: file.path,
+          title: asked.query.trim() || undefined,
+          year: asked.year.trim() || undefined
+        })
+        if (isProblem(answer)) return { ...unaskable(file, asked), problem: answer.problem }
+        return movieProposal(file, asked, answer.matches)
       }
 
-      const series = await seriesFor(asked.show, asked.year)
+      const series = await seriesFor(asked.show, asked.year, file.path)
       const best = series[0]
       if (!best) return episodeProposal(file, asked, series, undefined)
 
-      let episode: TmdbEpisode | undefined
-      try {
-        const body = await get(
-          episodeUrl(credential as TmdbCredential, best.id, Number(asked.season), Number(asked.episode))
-        )
-        const read = parseEpisode(body)
-        if (read) {
-          episode = {
-            series: best,
-            season: Number(asked.season),
-            number: Number(asked.episode),
-            title: read.title,
-            date: read.date,
-            overview: read.overview
-          }
-        }
-      } catch {
-        // TMDB answers a missing episode with an error, which is an answer:
-        // the series has no such episode. Said plainly by the proposal.
-      }
-      return episodeProposal(file, asked, series, episode)
+      /*
+       * The episode, asked of whichever service found the series. Sonarr is
+       * handed the file and answers with the episode it imported it as;
+       * themoviedb.org is handed the numbers and answers with the episode of
+       * that name. A refusal is an answer — the series has no such episode —
+       * and the proposal says so plainly.
+       */
+      const full = await session.fillIn({
+        ...best,
+        filePath: file.path,
+        season: Number(asked.season),
+        episode: Number(asked.episode)
+      })
+      return episodeProposal(file, asked, series, isProblem(full) ? undefined : full)
     } catch (error) {
       // One file that could not be reached is not a reason to lose the
       // seventy-nine that could.
@@ -182,11 +211,13 @@ export default function BulkMetadataDialog({
 
   /** Search for every file, then show what came back. */
   async function lookEverythingUp(searchKind: TmdbKind): Promise<void> {
-    if (!credential) {
+    if (!anythingAskable(settings, searchKind)) {
       setPhase({
         state: 'failed',
         message:
-          'Nothing from themoviedb.org yet — paste your API key, or your read access token, into Settings → Metadata.'
+          searchKind === 'tv'
+            ? 'Nothing is set up to look episodes up. Paste a themoviedb.org key under Settings → Metadata, or switch on Sonarr under Settings → Services.'
+            : 'Nothing is set up to look films up. Paste a themoviedb.org key under Settings → Metadata, or switch on Radarr under Settings → Services.'
       })
       return
     }
@@ -222,7 +253,7 @@ export default function BulkMetadataDialog({
   /** Re-run one row against whatever its terms now say. */
   async function lookUpAgain(row: Proposal): Promise<void> {
     const file = byPath.current.get(row.path)
-    if (!file || !credential) return
+    if (!file) return
     setBusyRows((previous) => new Set(previous).add(row.path))
     // A corrected question deserves a fresh answer, not one remembered from
     // the name that was wrong.
@@ -253,20 +284,21 @@ export default function BulkMetadataDialog({
    */
   async function apply(): Promise<void> {
     const taking = proposals.filter((row) => row.take && row.found)
-    if (taking.length === 0 || !credential) return
+    if (taking.length === 0) return
 
     setPhase({ state: 'applying', done: 0, total: taking.length })
     const edits = await eachInTurn(
       taking,
       async (row): Promise<{ path: string; edit: MetadataEdit }> => {
-        const found = row.found as { id: number; tags: Record<string, string> }
+        const found = row.found as NonNullable<Proposal['found']>
         const tags = { ...found.tags }
         try {
           // For a film that is the film; for an episode it is the series,
-          // which is where an episode's genres come from.
-          const body = await get(detailsUrl(credential, row.asked.kind, found.id))
-          const full = parseDetails(body, row.asked.kind)
-          if (full?.genres?.length) tags.genre = full.genres.join(', ')
+          // which is where an episode's genres come from. An episode row has
+          // already been filled in, and the session remembers the reply, so
+          // this costs a request only where one is actually needed.
+          const full = await session.fillIn(found.match)
+          if (!isProblem(full) && full.genres?.length) tags.genre = full.genres.join(', ')
         } catch {
           /* genres are a nicety; the title and the date are already here */
         }
@@ -311,8 +343,8 @@ export default function BulkMetadataDialog({
           </select>
           <span className="block-note">
             {kind === 'tv'
-              ? 'Found by series, season and number — not by the episode’s title.'
-              : 'Found by title and year.'}
+              ? 'Sonarr, where it knows the file; otherwise by series, season and number — never by the episode’s title.'
+              : 'Radarr, where it knows the file; otherwise by title and year.'}
           </span>
           <span className="spacer" />
           {phase.state === 'reviewing' && answered.length > 0 ? (
@@ -464,7 +496,7 @@ function BulkRow({
           <select
             className="bulk-metadata-found"
             aria-label={`Which film ${row.fileName} is`}
-            value={String(row.found.id)}
+            value={row.found.match.id}
             onChange={(event) => {
               const picked = row.alternatives.find((option) => String(option.id) === event.target.value)
               // Picking by hand is a decision, so the row ticks itself.

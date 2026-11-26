@@ -480,6 +480,20 @@ function buildApi() {
       get: (url: string, bearer?: string): Promise<string> => invoke('tmdb_get', { url, bearer })
     },
 
+    /**
+     * The door the metadata providers describe requests through.
+     *
+     * The same one the subtitle providers use, and for the same reason: the
+     * page is allowed to talk to this app and to nothing else, so every
+     * request leaves from Rust against an address either written into the
+     * binary or named in Settings. A provider cannot be pointed anywhere its
+     * own module does not already name, and naming Radarr on one port does not
+     * let anything reach a different service on another.
+     */
+    metadata: {
+      fetch: (request: HttpRequest): Promise<HttpReply> => invoke<HttpReply>('net_fetch', { request })
+    },
+
     subtitles: {
       /** Progress for every operation, tagged with the id it was started under. */
       onProgress: subtitleProgress.on,
