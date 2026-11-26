@@ -669,3 +669,43 @@ describe('buildRepairCommand — muxer selection', () => {
     expect(valueAfter(args, '-f')).toBe('matroska')
   })
 })
+
+describe('buildRepairCommand — replacing incompatible audio', () => {
+  const settings = { ...DEFAULT_SETTINGS, compatibilityAudio: 'replace' as const }
+
+  it('encodes only the tracks named in the plan, and copies the video', () => {
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng' }),
+        audio({ index: 1, codec: 'truehd', channels: 8, language: 'eng' }),
+        audio({ index: 2, codec: 'dts', profile: 'DTS-HD MA', channels: 6, language: 'fra' })
+      ]),
+      settings
+    )
+    const { args } = buildRepairCommand({ result, settings, outputPath: OUT })
+
+    // The picture is never touched by an audio repair.
+    expect(valueAfter(args, '-c:v')).toBe('copy')
+    // Copy is still the default for audio; the named ordinals override it.
+    expect(valueAfter(args, '-c:a')).toBe('copy')
+    expect(valueAfter(args, '-c:a:0')).toBe('aac')
+    expect(valueAfter(args, '-c:a:1')).toBe('aac')
+    expect(valueAfter(args, '-ac:a:0')).toBe('6')
+    expect(valueAfter(args, '-b:a:0')).toBe(`${6 * settings.aacBitratePerChannel}k`)
+  })
+
+  it('leaves a playable track alone rather than re-encoding the whole file', () => {
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng' }),
+        mainAudio({ index: 1, language: 'eng' }),
+        audio({ index: 2, codec: 'truehd', channels: 8, language: 'eng' })
+      ]),
+      settings
+    )
+    const { args } = buildRepairCommand({ result, settings, outputPath: OUT })
+
+    expect(valueAfter(args, '-c:a')).toBe('copy')
+    expect(args.some((arg) => /^-c:a:\d+$/.test(arg))).toBe(false)
+  })
+})

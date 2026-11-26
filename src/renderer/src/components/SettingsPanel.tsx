@@ -1114,13 +1114,29 @@ function CompatibilitySection(props: SettingsPanelProps): React.JSX.Element {
         </select>
       </Field>
 
-      <Field label="Audio" inline hint="Originals are kept; the new track is added alongside them.">
-        <input
-          type="checkbox"
-          checked={settings.ensureAacStereo}
-          onChange={(event) => set({ ensureAacStereo: event.target.checked })}
-        />
-        <span className="muted">Add an AAC track when nothing compatible exists</span>
+      <Field
+        label="Compatible audio"
+        hint="What to do with a file where not one audio track plays everywhere. Only the offending tracks are ever encoded — the video is copied either way."
+      >
+        <select
+          value={settings.compatibilityAudio}
+          onChange={(event) => set({ compatibilityAudio: event.target.value as AppSettings['compatibilityAudio'] })}
+        >
+          <option value="add">Add an AAC track beside the originals, keeping them</option>
+          <option value="replace">Replace the tracks with AAC — the originals are not kept</option>
+          <option value="off">Neither — report it and leave the file alone</option>
+        </select>
+        {settings.compatibilityAudio === 'replace' ? (
+          <span className="muted">
+            A disc rip&rsquo;s lossless track is usually the reason the file is as large as it is, and replacing
+            is how you lose it. &ldquo;Add&rdquo; costs one more track and keeps it.
+          </span>
+        ) : null}
+        {settings.compatibilityAudio === 'off' ? (
+          <span className="muted">
+            Files like this will keep reporting as blocked, because nothing will be fixing them.
+          </span>
+        ) : null}
       </Field>
 
       <Field

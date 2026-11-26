@@ -23,7 +23,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   remuxMkvToMp4: true,
   resyncSubtitlesOnRepair: false,
   dropImageSubtitlesOnMp4: true,
-  ensureAacStereo: true,
+  compatibilityAudio: 'add',
   // On by default: HEVC direct plays on every current Apple device, Chromecast
   // with Google TV, the Nvidia Shield and most smart TVs sold in the last few
   // years, and a modern library is mostly HEVC — treating it as incompatible
@@ -128,6 +128,15 @@ export function withDefaults(partial: Partial<AppSettings> | undefined | null): 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(merged as any)[key] = value
     }
+  }
+
+  // Before 0.3.7 this was a boolean: "always add a stereo AAC track". It grew a
+  // third answer — replace the track rather than add beside it — so the saved
+  // boolean is carried across rather than dropped, which would silently turn
+  // the behaviour back on for anybody who had turned it off.
+  const wasABoolean = (partial as { ensureAacStereo?: unknown }).ensureAacStereo
+  if (typeof wasABoolean === 'boolean' && partial.compatibilityAudio === undefined) {
+    merged.compatibilityAudio = wasABoolean ? 'add' : 'off'
   }
 
   // 0.2.8 had one naming pattern for everything. A single pattern was a film

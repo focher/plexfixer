@@ -134,7 +134,7 @@ function describeSettings(settings: AppSettings): string[] {
     `HEVC compatible   ${settings.allowHevc}`,
     `max H.264 level   ${settings.maxH264Level}`,
     `max height        ${settings.maxHeight}`,
-    `ensure AAC       ${settings.ensureAacStereo}`,
+    `compat audio     ${settings.compatibilityAudio}`,
     `audio language    ${settings.preferredAudioLanguage} (untagged treated as ${settings.assumeUndefinedIs})`,
     `subtitle language ${settings.preferredSubtitleLanguage}`,
     `extensions        ${settings.mediaExtensions.join(', ')}`

@@ -26,6 +26,7 @@
 
 import type {
   AppSettings,
+  AudioReplacementSpec,
   AudioStream,
   CompatibilityAudioSpec,
   Finding,
@@ -134,6 +135,8 @@ export interface ScanState {
   incompatibleAudio: AudioStream[]
   /** Not one audio track is playable everywhere, and the setting says to add one. */
   needsCompatibilityAudio: boolean
+  /** Not one audio track is playable everywhere, and the setting says to replace them. */
+  needsAudioReplacement: boolean
 
   /** Streams that cannot travel into the target container and have to be left out. */
   dropStreams: number[]
@@ -178,6 +181,7 @@ export interface ScanSignals {
   needsTagFix?: boolean
   incompatibleAudio?: AudioStream[]
   needsCompatibilityAudio?: boolean
+  needsAudioReplacement?: boolean
   dropStreams?: number[]
   resyncSubtitles?: SubtitleStream[]
   trackChanges?: TrackPlanChange[]
@@ -277,6 +281,7 @@ export interface PlanFragment {
   metadataTags?: Record<string, string>
   videoTranscode?: VideoTranscodeSpec
   addCompatibilityAudio?: CompatibilityAudioSpec
+  replaceAudio?: AudioReplacementSpec[]
   resyncSubtitles?: RepairPlan['resyncSubtitles']
   videoLevel?: number
 }
@@ -347,6 +352,7 @@ export function initialState(settings: AppSettings): ScanState {
     needsTagFix: false,
     incompatibleAudio: [],
     needsCompatibilityAudio: false,
+    needsAudioReplacement: false,
     dropStreams: [],
     resyncSubtitles: [],
     userRequests: [],
@@ -372,6 +378,7 @@ export function mergeSignals(state: ScanState, signals: ScanSignals | undefined)
   if (signals.convertDolbyVision) next.convertDolbyVision = true
   if (signals.needsTagFix) next.needsTagFix = true
   if (signals.needsCompatibilityAudio) next.needsCompatibilityAudio = true
+  if (signals.needsAudioReplacement) next.needsAudioReplacement = true
 
   if (signals.scaleHeight !== undefined) next.scaleHeight = signals.scaleHeight
   if (signals.relabelLevel !== undefined) next.relabelLevel = signals.relabelLevel

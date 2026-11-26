@@ -24,15 +24,28 @@ export const addCompatibilityAudio: RepairModule = {
     'this app exists to remove. Encoding one audio track is quick — the video is copied, not re-encoded.',
   ifDisabled:
     'Files whose every audio track needs converting are left that way, and the server keeps converting the ' +
-    'soundtrack on every play.',
+    'soundtrack on every play. The findings stay on the report as unresolved, because they are.',
   answers: ['audio-no-compatible-track', 'audio-codec-unsupported', 'audio-codec-limited', 'audio-channels-high'],
 
   run({ audio, settings, state }) {
-    // An incompatible track is a reason to encode audio even when no companion
-    // track is being added.
-    if (!state.needsCompatibilityAudio) {
-      return state.incompatibleAudio.length > 0 ? { strategy: 'transcode-audio' } : {}
-    }
+    /*
+     * This module used to answer `{ strategy: 'transcode-audio' }` here when
+     * the setting was off but the file had incompatible audio — on the theory
+     * that an incompatible track is a reason to encode audio whether or not a
+     * companion is added. Nothing then encoded anything: the strategy is what
+     * `unresolvedFindings` reads to decide the audio blockers are handled, and
+     * what `costNote` reads to bill for "one audio encode", but the ffmpeg
+     * arguments come from the *plan*, and the plan was empty. So a DTS-HD-only
+     * rip with the setting off reported both its blockers as resolved, ran a
+     * plain remux, and came back from the next scan with both of them still
+     * there, for ever.
+     *
+     * A module that adds nothing now claims nothing. Replacing the tracks is
+     * `repair.replace-incompatible-audio`, which says so in the plan; leaving
+     * them is the third setting, and leaves the findings unresolved, which is
+     * the truth about them.
+     */
+    if (!state.needsCompatibilityAudio) return {}
     if (audio.length === 0) return {}
 
     // Derive the companion track from the audio the viewer would actually pick:

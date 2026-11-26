@@ -289,6 +289,21 @@ export interface CompatibilityAudioSpec {
   bitrateKbps: number
 }
 
+/**
+ * One audio track to re-encode in place of itself.
+ *
+ * Distinct from `CompatibilityAudioSpec`, which *adds* a track: this one
+ * replaces, so it carries no language — the track keeps whatever it had, being
+ * the same track. Only the named tracks are encoded; everything else in the
+ * file, the video above all, is still copied.
+ */
+export interface AudioReplacementSpec {
+  /** The track to encode, by its index in the source file. */
+  sourceStreamIndex: number
+  channels: number
+  bitrateKbps: number
+}
+
 /** Everything the command builder needs for a video re-encode. */
 export interface VideoTranscodeSpec {
   sourceStreamIndex: number
@@ -328,6 +343,14 @@ export interface RepairPlan {
   resyncSubtitles: number[]
   /** Set when a companion AAC track should be added. */
   addCompatibilityAudio?: CompatibilityAudioSpec
+  /**
+   * Audio tracks to re-encode in place of themselves.
+   *
+   * Empty or absent on almost every plan. When it is set, the video is still
+   * copied: this is the cheap kind of encode, and the list says exactly which
+   * tracks pay for it.
+   */
+  replaceAudio?: AudioReplacementSpec[]
   /** Set when the video stream must be re-encoded. */
   videoTranscode?: VideoTranscodeSpec
   /** Write the MP4 index to the front of the file. */
@@ -455,8 +478,18 @@ export interface AppSettings {
   resyncSubtitlesOnRepair: boolean
   /** Drop image-based (PGS/VobSub) subtitles when remuxing to MP4. */
   dropImageSubtitlesOnMp4: boolean
-  /** Always add a stereo AAC track when none exists. */
-  ensureAacStereo: boolean
+  /**
+   * What to do with a file whose every audio track needs converting.
+   *
+   * `add` keeps the originals and puts one AAC track beside them, which is the
+   * right answer for a disc rip: the lossless track is the reason the file is
+   * forty gigabytes, and throwing it away to fix a compatibility problem is a
+   * poor trade. `replace` re-encodes the offending tracks in place of
+   * themselves, for somebody who wants one audio track and wants it to play.
+   * `off` leaves the file alone and says so — the findings stay on the report
+   * as unresolved, because they are.
+   */
+  compatibilityAudio: 'add' | 'replace' | 'off'
   /** Treat HEVC as compatible (modern client fleet only). */
   allowHevc: boolean
   /** Highest H.264 level to accept without flagging, e.g. 41 for Level 4.1. */

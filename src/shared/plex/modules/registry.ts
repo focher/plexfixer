@@ -54,6 +54,7 @@ import { dropUnstorableSubtitles } from './repairs/drop-unstorable-subtitles.js'
 import { dropExtraVideo } from './repairs/drop-extra-video.js'
 import { customRequests } from './repairs/custom-requests.js'
 import { addCompatibilityAudio } from './repairs/add-compatibility-audio.js'
+import { replaceIncompatibleAudio } from './repairs/replace-incompatible-audio.js'
 import { convertStyledSubtitles } from './repairs/convert-styled-subtitles.js'
 import { resyncSubtitles } from './repairs/resync-subtitles.js'
 import { fixTrackMetadata } from './repairs/fix-track-metadata.js'
@@ -122,6 +123,7 @@ export const REPAIR_MODULES: readonly RepairModule[] = [
   dropExtraVideo,
   customRequests,
   addCompatibilityAudio,
+  replaceIncompatibleAudio,
   convertStyledSubtitles,
   resyncSubtitles,
   fixTrackMetadata,

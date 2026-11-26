@@ -267,9 +267,63 @@ describe('analyzeFile — audio', () => {
   it('does not add a companion track when the setting is off', () => {
     const result = analyzeFile(
       mkv([video({ language: 'eng' }), audio({ index: 1, codec: 'truehd', channels: 8 })]),
-      { ...base, ensureAacStereo: false }
+      { ...base, compatibilityAudio: 'off' }
     )
     expect(result.plan.addCompatibilityAudio).toBeUndefined()
+  })
+
+  /*
+   * The regression this pair exists for.
+   *
+   * With the setting off, the plan used to come back `transcode-audio` with an
+   * empty plan: billed for an audio encode that never ran, and — because
+   * `unresolvedFindings` reads the strategy and not the plan — with both audio
+   * blockers reported as answered. The file was announced repaired, copied
+   * unchanged, and raised the same two blockers on the next scan.
+   */
+  it('leaves the audio blockers unresolved when the setting is off, rather than claiming an encode', () => {
+    const result = analyzeFile(
+      mkv([video({ language: 'eng' }), audio({ index: 1, codec: 'truehd', channels: 8 })]),
+      { ...base, compatibilityAudio: 'off' }
+    )
+    expect(result.plan.strategy).not.toBe('transcode-audio')
+    expect(result.plan.costNote).not.toContain('audio encode')
+    expect(result.plan.unresolved.map((f) => f.code)).toContain('audio-no-compatible-track')
+  })
+
+  it('replaces the unplayable tracks when the setting says replace', () => {
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng' }),
+        audio({ index: 1, codec: 'truehd', channels: 8, language: 'eng' }),
+        audio({ index: 2, codec: 'dts', profile: 'DTS-HD MA', channels: 6, language: 'fra' })
+      ]),
+      { ...base, compatibilityAudio: 'replace' }
+    )
+    expect(result.plan.strategy).toBe('transcode-audio')
+    expect(result.plan.addCompatibilityAudio).toBeUndefined()
+    expect(result.plan.replaceAudio?.map((spec) => spec.sourceStreamIndex)).toEqual([1, 2])
+    // 8 channels come down to 5.1; 6 are already there and stay.
+    expect(result.plan.replaceAudio?.map((spec) => spec.channels)).toEqual([6, 6])
+    expect(result.plan.unresolved.map((f) => f.code)).not.toContain('audio-no-compatible-track')
+  })
+
+  /*
+   * The "minimal effort" half of the same promise: an exotic track beside a
+   * playable one is not a fault, so "replace" must not re-encode it. Nothing
+   * here is blocking, so nothing here is work.
+   */
+  it('re-encodes nothing in replace mode when one track already plays everywhere', () => {
+    const result = analyzeFile(
+      mkv([
+        video({ language: 'eng' }),
+        audio({ index: 1, codec: 'truehd', channels: 8, language: 'eng' }),
+        mainAudio({ index: 2, language: 'eng' })
+      ]),
+      { ...base, compatibilityAudio: 'replace' }
+    )
+    expect(result.plan.replaceAudio).toBeUndefined()
+    expect(result.plan.strategy).not.toBe('transcode-audio')
   })
 })
 

@@ -15,8 +15,9 @@ export const audioCompatibleTrack: CheckModule = {
     'one ordinary track sits beside them. Having none is what forces a transcode.',
   howItWorks:
     'Looks for a single track that is both in a format everything decodes and at 5.1 channels or fewer. If ' +
-    'none exists, the file is flagged — and, when "Add an AAC track" is on under Compatibility, the repair ' +
-    'adds one alongside the originals rather than replacing anything.',
+    'none exists, the file is flagged, and what happens next is the "Compatible audio" choice under ' +
+    'Compatibility: add one AAC track alongside the originals, re-encode the offending tracks in place of ' +
+    'themselves, or neither — in which case the finding stays on the report as something nothing will fix.',
   ifDisabled:
     'A file whose every audio track needs converting will not be flagged, and no companion track will be ' +
     'proposed for it.',
@@ -32,7 +33,10 @@ export const audioCompatibleTrack: CheckModule = {
     if (hasUniversal) return {}
 
     return {
-      signals: { needsCompatibilityAudio: settings.ensureAacStereo },
+      signals: {
+        needsCompatibilityAudio: settings.compatibilityAudio === 'add',
+        needsAudioReplacement: settings.compatibilityAudio === 'replace'
+      },
       findings: [
         {
           code: 'audio-no-compatible-track',

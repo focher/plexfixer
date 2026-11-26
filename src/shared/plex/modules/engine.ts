@@ -153,6 +153,9 @@ export function analyzeWithModules(
     const fragment = result.plan
     if (fragment?.videoTranscode) plan.videoTranscode = fragment.videoTranscode
     if (fragment?.addCompatibilityAudio) plan.addCompatibilityAudio = fragment.addCompatibilityAudio
+    if (fragment?.replaceAudio?.length) {
+      plan.replaceAudio = [...(plan.replaceAudio ?? []), ...fragment.replaceAudio]
+    }
     if (fragment?.resyncSubtitles?.length) plan.resyncSubtitles.push(...fragment.resyncSubtitles)
     if (fragment?.videoLevel !== undefined) plan.videoLevel = fragment.videoLevel
     if (fragment?.metadataTags) plan.metadataTags = { ...plan.metadataTags, ...fragment.metadataTags }
@@ -176,8 +179,26 @@ export function analyzeWithModules(
   // Metadata changes are a reason to rewrite the file in their own right, and
   // the only one that can still evaporate at this point: a repair is allowed to
   // withdraw a change it cannot actually make.
-  const settled: PlanStrategy =
+  let settled: PlanStrategy =
     trackChanges.length > 0 ? strongerStrategy(strategy, 'remux') : strategy
+
+  /*
+   * `transcode-audio` is a claim about the file, and it has to be paid for.
+   *
+   * The strategy is read in two places that assume an audio encode is going to
+   * happen: `costNote`, which bills for one, and `unresolvedFindings`, which
+   * treats every audio blocker as answered. Neither looks at the plan. So a
+   * module that raised the strategy and then put nothing in the plan made the
+   * app report a file as repaired that it had not changed — and the next scan
+   * raised the same blockers again, for ever.
+   *
+   * One module did exactly that for a year. Rather than fix the one and wait
+   * for the next, the claim is checked against the plan here: no encode in the
+   * plan, no encode in the strategy.
+   */
+  if (settled === 'transcode-audio' && !plan.addCompatibilityAudio && !plan.replaceAudio?.length) {
+    settled = trackChanges.length > 0 || remuxParts.length > 0 ? 'remux' : 'none'
+  }
 
   // What is left depends on the plan rather than shaping it, so it runs now
   // that the plan has stopped moving.

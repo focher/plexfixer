@@ -378,6 +378,31 @@ export function buildRepairCommand(options: BuildCommandOptions): BuiltCommand {
     )
   }
 
+  /*
+   * Tracks being replaced by an AAC version of themselves.
+   *
+   * Scoped to the output ordinal, exactly as the companion track above is, so
+   * everything not named here is still a stream copy. That is the whole point
+   * of the feature: one audio encode is seconds, and re-encoding a track that
+   * was already fine would be work nobody asked for.
+   */
+  for (const spec of plan.replaceAudio ?? []) {
+    const entry = mapped.find((m) => m.specifier === 'a' && m.source.index === spec.sourceStreamIndex)
+    // The companion track maps the same source a second time; it has its own
+    // encoder settings above and must not be caught by this loop.
+    if (!entry || entry.ordinal === compatAudioOrdinal) continue
+    args.push(
+      `-c:a:${entry.ordinal}`,
+      'aac',
+      `-ac:a:${entry.ordinal}`,
+      String(spec.channels),
+      `-b:a:${entry.ordinal}`,
+      `${spec.bitrateKbps}k`,
+      `-profile:a:${entry.ordinal}`,
+      'aac_low'
+    )
+  }
+
   if (counters.s > 0) {
     // MP4 stores text subtitles as tx3g; MKV keeps whatever came in. Asking
     // for tx3g is a conversion, though, not a container note: `-c:s mov_text`
