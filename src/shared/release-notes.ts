@@ -34,6 +34,51 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.3.7',
+    headline:
+      'The services you already run \u2014 Radarr, Sonarr and Bazarr \u2014 are asked about your files instead of a database being asked to guess at their names.',
+    changes: [
+      {
+        title: 'Radarr and Sonarr are asked first, and they are not guessing',
+        body:
+          'Looking a film up used to mean reading a title out of \u201cthe.movie.2019.1080p.x264.mkv\u201d and asking ' +
+          'themoviedb.org what that might be \u2014 which is the step that gets a film wrong. If you run Radarr or ' +
+          'Sonarr, they already know: they put the file where it is. Switch them on under Settings \u2192 Services ' +
+          'and they are asked first, with the file\u2019s path, and themoviedb.org is asked only about files they ' +
+          'have never heard of. An episode comes from the file Sonarr imported rather than from the numbers in ' +
+          'its name, which is the case nothing else gets right when a release is numbered differently from the ' +
+          'series. In a bulk lookup, a row matched this way arrives ticked: it is not a better guess, it is not ' +
+          'a guess.'
+      },
+      {
+        title: 'Your library manager is told when a file has been replaced',
+        body:
+          'PlexFixer repairs \u201cDune (2021).mkv\u201d into \u201cDune (2021).mp4\u201d and moves the original into the backup ' +
+          'folder. Radarr\u2019s record still points at the .mkv: the film reads as missing, and on its next ' +
+          'search Radarr downloads a replacement for a film sitting exactly where it left it. A finished repair ' +
+          'now asks Radarr or Sonarr to look at the folder again \u2014 the same thing their own \u201cManual Import\u201d ' +
+          'button does. Nothing happens if you do not run them.'
+      },
+      {
+        title: 'Subtitles can come from Bazarr instead of OpenSubtitles',
+        body:
+          'Bazarr already has your accounts at every subtitle provider, your languages and your scoring rules. ' +
+          'Asking it is asking all of them at once, under settings you decided on once. It does not hand a ' +
+          'subtitle back the way a subtitle service does \u2014 it fetches the file into the film\u2019s own folder and ' +
+          'answers with nothing \u2014 so PlexFixer waits for the file to appear and reads what actually arrived, ' +
+          'and says so plainly if nothing does. A subtitle that was already there is never mistaken for the one ' +
+          'just fetched.'
+      },
+      {
+        title: 'A bulk lookup no longer stops halfway and sits there',
+        body:
+          'Looking up a selection could stall on \u201cSearching\u2026 4 of 6\u201d for good, with no error and nothing to do ' +
+          'but cancel. The flag that stops the searches was being set by a cleanup that ran whenever the window ' +
+          'behind the dialog redrew, and nothing ever set it back.'
+      }
+    ]
+  },
+  {
     version: '0.3.6',
     headline: 'Drag the queue into the order you want, and a finished repair is no longer thrown away over a question asked too early.',
     changes: [

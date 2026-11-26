@@ -214,7 +214,8 @@ says so before you agree to it.
 
 **Looking a title up.** Settings → Metadata takes a credential for
 [themoviedb.org](https://www.themoviedb.org), and the search box on the
-metadata screen fills the tags in from a result.
+metadata screen fills the tags in from a result. If you run Radarr or Sonarr,
+they are asked before it — see **Your own services** below.
 
 TMDB hands out two and does not make it obvious that either will do: an **API
 Key**, which is 32 characters and travels in the address, and an **API Read
@@ -237,6 +238,57 @@ talk to this app and to nothing else, and widening that to reach an outside host
 would widen it for everything else the page could ever be made to do; a command
 with the host written into it cannot be pointed anywhere else. PlexFixer is not
 endorsed by or affiliated with TMDB.
+
+### Your own services
+
+Radarr, Sonarr and Bazarr are not alternatives to themoviedb.org and
+OpenSubtitles so much as answers to a different question. A database will tell
+anybody about any film, and has to be asked about a title guessed out of a file
+name — which is the step that gets a film wrong. A library manager is the thing
+that *put the file where it is*: it is only useful to somebody who runs it, and
+to that person it is right, because it is not guessing.
+
+Settings → Services takes an address and an API key for each. Nothing here is
+required, and with none of them set up everything works as it did.
+
+**Radarr and Sonarr** are asked first, and are told the file's path — that is
+how they know which film it is. themoviedb.org is asked afterwards, and only
+about files they have never heard of, which is the ordinary case for anything
+imported by hand. A path match is stated as such on screen, and in a bulk
+lookup those rows arrive ticked: a file name whose year disagrees with the
+film's is a fact about the file name.
+
+An episode is taken from the file Sonarr imported rather than from the numbers
+in its name. A release numbered differently from the series itself is the case
+nothing but a library manager gets right.
+
+A finished repair also **tells them the file has been replaced**. This is the
+least visible part and the one that matters most: PlexFixer turns
+`Dune (2021).mkv` into `Dune (2021).mp4` and moves the original into the backup
+folder, and Radarr's record still points at the `.mkv`. The film reads as
+missing, and on its next search Radarr downloads a replacement for a film
+sitting exactly where it left it. One rescan command fixes that — the same
+thing their own *Manual Import* button runs. It is sent with the path the
+service still knows, since that is the only one it can find the film by, and
+only to a service that matched the file itself.
+
+**Bazarr** replaces OpenSubtitles as where subtitles are looked for, if you
+switch it on. It already has your accounts at every provider, your languages
+and your scoring rules, so asking it is asking all of them under settings you
+decided on once.
+
+It does not behave like a subtitle service, and PlexFixer does not pretend it
+does. Its download endpoint answers `204` with an empty body: what it has
+actually done is queue the work, and some seconds later the subtitle is written
+into the film's own folder. So PlexFixer notes what is beside the film *before*
+asking, waits up to a minute for something new to appear, and reads that — and
+says plainly if nothing does. A subtitle the film already had is never mistaken
+for the one just fetched.
+
+Addresses typed here are the only outside addresses PlexFixer will reach beyond
+the ones built into it, and they are read from the saved settings when a
+request is made rather than passed in alongside one. Naming Radarr on one port
+does not let anything reach a different service on another.
 
 ### Subtitles
 
@@ -279,7 +331,8 @@ it came from, or as a new one.
 
 **Finding one.** Settings → Subtitles takes an OpenSubtitles API key, which is
 yours rather than one shipped with PlexFixer for the same reason as the TMDB
-one. Searching needs only the key; *downloading* spends one of a daily
+one. (If you run Bazarr, switch it on under Services instead and these fields
+stop being used — see **Your own services** above.) Searching needs only the key; *downloading* spends one of a daily
 allowance that belongs to an account, so that needs a username and password
 too. Both go into `settings.json` in the clear, like every other credential
 here — PlexFixer has no keychain integration, and that is worth knowing before
@@ -897,12 +950,18 @@ src/
     plex/metadata.ts What a person may change by hand
     plex/destination.ts Where one run writes, as against where Settings says
     tmdb.ts         Addresses and answers for themoviedb.org
+    providers/http.ts  What every outside service is talked to through
+    metadata/       Who to ask about a file, and in what order
+      providers/      One file per service: TMDB, Radarr, Sonarr
+      service.ts      Asking them in turn, and caching what came back
+      tags.ts         What a match writes into the file, whoever answered
+      rescan.ts       Telling a library manager its file has been replaced
     subtitles/      Finding, timing, transcribing and translating subtitles
       cues.ts         The cue list every subtitle becomes, whatever it arrived as
       hash.ts         The file hash that identifies this exact encode
       silence.ts      Where the talking is, from where the silence is not
       sync.ts         Whether a subtitle follows the audio, and by how much it does not
-      providers/      One file per subtitle service, pure request and reply
+      providers/      One file per subtitle service (OpenSubtitles, Bazarr)
       asr.ts          Whisper, local and hosted — not a language model's job
       models.ts       The ggml models: what there is, and fetching one
       llm.ts          Chat endpoints: OpenAI-shaped, Anthropic, Ollama
