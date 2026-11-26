@@ -177,6 +177,19 @@ function Technical({ result }: { result: AnalysisResult }): React.JSX.Element {
   )
 }
 
+/**
+ * The plan's track changes with identical wording folded together.
+ *
+ * Two subtitle tracks rewritten the same way is one thing happening twice, not
+ * two things, and printing the sentence twice only makes the column look
+ * broken. Order is the order the plan listed them in.
+ */
+function countedReasons(changes: readonly { reason: string }[]): { reason: string; times: number }[] {
+  const counts = new Map<string, number>()
+  for (const change of changes) counts.set(change.reason, (counts.get(change.reason) ?? 0) + 1)
+  return [...counts].map(([reason, times]) => ({ reason, times }))
+}
+
 export default function ResultsTable(props: ResultsTableProps): React.JSX.Element {
   const allSelected = props.results.length > 0 && props.results.every((r) => props.selected.has(r.file.path))
 
@@ -260,9 +273,21 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 <Technical result={result} />
               </span>
               <span className="reason" title={reason.detail}>
-                <span className="reason-text">{reason.headline}</span>
+                {/*
+                  Every finding, one per line, rather than the first and a
+                  "+2 more" count. The count told you something was missing
+                  without telling you what, and there was nowhere to click to
+                  find out — the row had to be opened, which is a long way
+                  round for two words.
+                */}
+                <span className="reason-text">
+                  {reason.titles.map((line, index) => (
+                    <span key={`${line}-${index}`} className="reason-line" title={line}>
+                      {line}
+                    </span>
+                  ))}
+                </span>
                 <span className="reason-note">
-                  {reason.others > 0 ? <span className="more-count">+{reason.others} more</span> : null}
                   {mode.source !== 'default' ? (
                     <span
                       className={`badge ${MODE_TONE[mode.mode]}`}
@@ -307,14 +332,18 @@ export default function ResultsTable(props: ResultsTableProps): React.JSX.Elemen
                 */}
                 {changes.length > 0 ? (
                   <span className="plan-changes">
-                    {changes.slice(0, 3).map((change, index) => (
-                      <span key={index} className="plan-change">
-                        {change.reason}
+                    {/*
+                      All of them, for the same reason the issues are all
+                      listed. Identical lines are counted rather than repeated:
+                      a file with two ASS tracks produced the same sentence
+                      twice, which reads as a bug rather than as two tracks.
+                    */}
+                    {countedReasons(changes).map(({ reason, times }) => (
+                      <span key={reason} className="plan-change" title={reason}>
+                        {reason}
+                        {times > 1 ? ` ×${times}` : ''}
                       </span>
                     ))}
-                    {changes.length > 3 ? (
-                      <span className="plan-change muted">+{changes.length - 3} more</span>
-                    ) : null}
                   </span>
                 ) : null}
               </span>

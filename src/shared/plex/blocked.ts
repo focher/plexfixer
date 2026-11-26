@@ -14,6 +14,7 @@
  */
 
 import type { AnalysisResult, Finding, FindingCode, RemedyClass } from '../types.js'
+import { videoStreams } from './tracks.js'
 
 export interface BlockedReason {
   code: FindingCode
@@ -31,7 +32,28 @@ interface Explanation {
   youCan: string
 }
 
-const BY_CODE: Partial<Record<FindingCode, Explanation>> = {
+/**
+ * Either one fixed answer, or one worked out from the file.
+ *
+ * Most of these say the same thing whatever the file looks like. A few cannot:
+ * "Dolby Vision" covers two unrelated problems with two different answers, and
+ * handing a profile 7 file the profile 5 advice sends somebody off to turn on a
+ * conversion that will not touch their file and then to run a re-encode that
+ * does nothing.
+ */
+type Explain = Explanation | ((result: AnalysisResult) => Explanation)
+
+const DOLBY_VISION_5: Explanation = {
+  why: 'Profile 5 keeps its picture in IPT-PQ-C2 with no HDR10 base layer, so no amount of relabelling helps — a file rewritten as 8.1 still shows the wrong colours. Only rebuilding the picture fixes it, and that is a full re-encode.',
+  youCan: 'Set Dolby Vision profile 5 to "Convert to HDR10" under Compatibility if it is not already on, then repair the file in Force transcode; it needs an ffmpeg with a working libplacebo, which Settings will tell you about. Otherwise keep the file and accept that only Dolby Vision clients render it correctly.'
+}
+
+const DOLBY_VISION_OTHER: Explanation = {
+  why: 'This profile carries a second enhancement layer on top of the base picture. Reading that layer is not something ffmpeg does, so there is nothing to re-encode from — Force transcode on this file re-encodes the base layer and throws the Dolby Vision away, which is not a repair. Converting to HDR10 is a profile 5 setting and does not apply here.',
+  youCan: 'Nothing inside PlexFixer. Either keep the file as it is — Dolby Vision clients play it correctly, and the rest get the base layer — or replace it with a profile 8.1 copy, which falls back to HDR10 cleanly. Converting profile 7 needs a dedicated tool (dovi_tool and friends), not a transcoder.'
+}
+
+const BY_CODE: Partial<Record<FindingCode, Explain>> = {
   'drm-protected': {
     why: 'The file is encrypted. Its streams cannot be copied or re-encoded without the decryption key, so there is nothing any repair tool can do with it.',
     youCan: 'Replace it with a DRM-free copy. Plex cannot direct play this one either.'
@@ -40,10 +62,8 @@ const BY_CODE: Partial<Record<FindingCode, Explanation>> = {
     why: 'No video stream was found, so there is no video repair to plan. Everything PlexFixer does assumes a video file.',
     youCan: 'Check the file plays at all. If it is audio-only, it does not belong in a video library; if it does not play, it is damaged.'
   },
-  'video-dolby-vision-profile': {
-    why: 'Profile 5 keeps its picture in IPT-PQ-C2 with no HDR10 base layer, so no amount of relabelling helps — a file rewritten as 8.1 still shows the wrong colours. Only rebuilding the picture fixes it, and that is a full re-encode. Profile 7 instead carries an enhancement layer, which is a different job and not one ffmpeg does.',
-    youCan: 'For profile 5, set Dolby Vision profile 5 to "Convert to HDR10" under Compatibility and repair the file in Force transcode; it needs an ffmpeg with a working libplacebo, which Settings will tell you about. Otherwise keep the file and accept that only Dolby Vision clients render it correctly.'
-  },
+  'video-dolby-vision-profile': (result) =>
+    videoStreams(result.file)[0]?.dolbyVisionProfile === 5 ? DOLBY_VISION_5 : DOLBY_VISION_OTHER,
   'video-resolution-high': {
     why: 'The only way to change this is to re-encode the picture smaller, which throws away detail permanently. PlexFixer will not do that to chase a bandwidth warning, and Force transcode will not either — the plan for this file is a stream copy.',
     youCan: 'Raise the height ceiling in Settings if your clients and your upload can handle it, or keep a separate smaller copy for remote viewing.'
@@ -131,7 +151,8 @@ export function isBlocked(result: AnalysisResult): boolean {
 /** Why each blocking finding has no automatic repair, and the way out of it. */
 export function blockedReasons(result: AnalysisResult): BlockedReason[] {
   return blockingFindings(result).map((finding) => {
-    const explanation = BY_CODE[finding.code] ?? BY_REMEDY[finding.remedy]
+    const entry = BY_CODE[finding.code] ?? BY_REMEDY[finding.remedy]
+    const explanation = typeof entry === 'function' ? entry(result) : entry
     return {
       code: finding.code,
       severity: finding.severity,

@@ -15,7 +15,7 @@ describe('summarizeReason', () => {
     const reason = summarizeReason(result)
     expect(reason.tone).toBe('ok')
     expect(reason.headline).toBe('Direct plays as-is')
-    expect(reason.others).toBe(0)
+    expect(reason.titles).toEqual(['Direct plays as-is'])
   })
 
   it('leads with the blocker, not the first finding', () => {
@@ -29,7 +29,10 @@ describe('summarizeReason', () => {
     const reason = summarizeReason(result)
     expect(result.findings.length).toBeGreaterThan(1)
     expect(reason.headline).toMatch(/VC1/i)
-    expect(reason.others).toBe(result.findings.length - 1)
+    // Every finding is listed, the headline first and nothing left behind a count.
+    expect(reason.titles).toHaveLength(result.findings.length)
+    expect(reason.titles[0]).toBe(reason.headline)
+    expect([...reason.titles].sort()).toEqual(result.findings.map((finding) => finding.title).sort())
   })
 
   it('reports a video re-encode as needing Force transcode', () => {

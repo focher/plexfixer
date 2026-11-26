@@ -27,3 +27,34 @@ export function pruneSelection<T>(
   }
   return next ?? selected
 }
+
+/**
+ * The selection a bulk action is allowed to touch, and what it is leaving out.
+ *
+ * Ticks outlive a filter on purpose: pick three files, narrow the list to look
+ * at something else, widen it again, and the three are still ticked. But a
+ * selection the list is not showing is a selection nobody is looking at, and a
+ * bulk action that reaches it acts on files the user cannot see and did not
+ * tick on this screen — "2 selected" over a list with nothing ticked in it,
+ * and two other films repaired.
+ *
+ * So the action takes the ticks that are on screen, in the order they are on
+ * screen, and the rest are reported separately rather than acted on. Clearing
+ * the selection still clears the lot: that is the one control that means every
+ * tick, and it says so.
+ */
+export function actionableSelection(
+  selected: ReadonlySet<string>,
+  visibleOrder: readonly string[],
+  known: (path: string) => boolean
+): { paths: string[]; hidden: number } {
+  const onScreen = visibleOrder.filter((path) => selected.has(path))
+  const shown = new Set(onScreen)
+  let hidden = 0
+  for (const path of selected) {
+    // A path the library no longer holds is gone, not hidden; it is dropped
+    // with the scan that lost it and should not be counted against anything.
+    if (!shown.has(path) && known(path)) hidden += 1
+  }
+  return { paths: onScreen, hidden }
+}

@@ -31,7 +31,7 @@ import RemoteBrowser from './components/RemoteBrowser.js'
 import JobsPanel from './components/JobsPanel.js'
 import SettingsPanel from './components/SettingsPanel.js'
 import { analyzeFile } from '@shared/plex/analyze.js'
-import { pruneSelection } from '@shared/selection.js'
+import { actionableSelection, pruneSelection } from '@shared/selection.js'
 import { latestNotes, notesSince, type ReleaseNote } from '@shared/release-notes.js'
 import { formatBytes } from './format.js'
 import { readPref, readText, writePref, writeText } from './prefs.js'
@@ -795,7 +795,14 @@ export default function App(): React.JSX.Element {
     )
   }
 
-  const selectedPaths = [...selected].filter((path) => library.has(path))
+  // What a bulk action gets: the ticks that are on screen, in the order they
+  // are on screen. See `actionableSelection` for why the hidden ones are
+  // counted rather than acted on.
+  const { paths: selectedPaths, hidden: hiddenSelected } = actionableSelection(
+    selected,
+    visibleResults.map((entry) => entry.file.path),
+    (path) => library.has(path)
+  )
   const chipFiltersActive = facets.size > 0 || codecFilterActive(codecs)
 
   return (
@@ -847,7 +854,19 @@ export default function App(): React.JSX.Element {
           <>
             {results.length > 0 ? (
               <>
-                <span className="muted nowrap selection-count">{selectedPaths.length} selected</span>
+                <span
+                  className="muted nowrap selection-count"
+                  title={
+                    hiddenSelected > 0
+                      ? `${selectedPaths.length} ticked in the list below, which is what Bulk acts on. ` +
+                        `${hiddenSelected} more ${hiddenSelected === 1 ? 'is' : 'are'} still ticked but hidden by the ` +
+                        'search, the tiles or the filters — widen the list to reach them, or Clear selection to drop them.'
+                      : 'What Bulk acts on'
+                  }
+                >
+                  {selectedPaths.length} selected
+                  {hiddenSelected > 0 ? <span className="muted"> · {hiddenSelected} hidden</span> : null}
+                </span>
                 <button
                   onClick={() => setSelected(new Set())}
                   disabled={selected.size === 0}

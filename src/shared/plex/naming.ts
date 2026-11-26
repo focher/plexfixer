@@ -110,13 +110,29 @@ export interface NamedFile {
 
 /* Numbers are written bare — see `bareNumber`, which is where the rule lives. */
 
+/**
+ * The release date in the form a file name can carry.
+ *
+ * A date tag comes back in whatever shape the file holds it: `2022`,
+ * `2022-03-24`, or a full ISO instant — `2022-03-24T12:00:00Z` — which is what
+ * a lookup writes when the source gave it one. The clock half is never what
+ * anybody means by {date} in a file name, and it is the half made of colons, so
+ * it survives sanitising as "12 - 00 - 00Z" and renames the film to something
+ * nobody would type. Only a value that is a date followed by a time is cut;
+ * anything else is handed back exactly as it came, because guessing at an
+ * unfamiliar format is how a name loses the part that mattered.
+ */
+function calendarDate(value: string): string {
+  return /^(\d{4}(?:-\d{2}){0,2})[T ]/.exec(value)?.[1] ?? value
+}
+
 function valueFor(key: string, tags: Record<string, string>, sourceStem: string): string {
   const tag = (name: string): string => (tags[name] ?? '').trim()
   switch (key) {
     case 'title':
       return tag('title')
     case 'date':
-      return tag('date')
+      return calendarDate(tag('date'))
     case 'year':
       return /^(\d{4})/.exec(tag('date'))?.[1] ?? ''
     case 'show':

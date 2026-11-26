@@ -988,11 +988,6 @@ button.info-button:hover:not(:disabled) {
   white-space: nowrap;
 }
 
-.more-count {
-  font-size: 11px;
-  color: var(--text-faint);
-}
-
 /* ---------- the "technical" column: size over video and audio codec ---------- */
 
 .row .technical {
@@ -1021,16 +1016,31 @@ button.info-button:hover:not(:disabled) {
   cursor: help;
 }
 
+/* Every finding, one per line. The column grows with the row rather than
+   hiding the tail behind a count, so a file with four problems says four
+   things. Each line keeps to one line of its own: the full text is in the
+   hover and in the detail pane, and a cell that reflows is a cell nobody can
+   scan down. */
 .reason-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.reason-line {
   font-size: 12px;
   line-height: 1.35;
   color: var(--text);
-  /* Two lines, then ellipsis — the tooltip and the detail pane have the rest. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The first line is the one that drives the status; the rest are context. */
+.reason-line:not(:first-child) {
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .reason-note {

@@ -13,6 +13,11 @@ const dolbyVision = analyzeFile(
   DEFAULT_SETTINGS
 )
 
+const dolbyVision7 = analyzeFile(
+  mp4([video({ codec: 'hevc', codecTag: 'hvc1', dolbyVisionProfile: 7 }), mainAudio({ codec: 'aac' })]),
+  DEFAULT_SETTINGS
+)
+
 // Faststart off as well, so this file has a blocker the plan *does* fix
 // alongside the ceiling warning it does not.
 const tooTall = analyzeFile(
@@ -42,6 +47,19 @@ describe('blockedReasons', () => {
     expect(reason?.why).toContain('8.1')
     expect(reason?.why).toContain('re-encode')
     expect(reason?.youCan).toContain('HDR10')
+  })
+
+  it('does not send a profile 7 file off to a conversion and a re-encode that do nothing', () => {
+    // Force transcode on profile 7 re-encodes the base layer and throws the
+    // Dolby Vision away; the profile 5 conversion setting never touches it.
+    // Both were being recommended, and a user who followed the advice got a
+    // repair that reported "nothing to do".
+    const [reason] = blockedReasons(dolbyVision7)
+    expect(reason?.code).toBe('video-dolby-vision-profile')
+    expect(reason?.youCan).not.toMatch(/Force transcode/i)
+    expect(reason?.youCan).not.toMatch(/Convert to HDR10/i)
+    expect(reason?.why).toMatch(/enhancement layer/i)
+    expect(reason?.youCan).toMatch(/8\.1/)
   })
 
   it('does not block on a warning only a re-encode would clear', () => {

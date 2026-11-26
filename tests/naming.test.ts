@@ -29,6 +29,25 @@ describe('nameFor', () => {
     expect(nameFor('{title} ({date})', film, 'whatever').stem).toBe('Casino Royale (2006-11-14)')
   })
 
+  it('drops the clock half of an ISO timestamp', () => {
+    // What a lookup writes when the source gave it an instant rather than a
+    // date. Left whole, the colons sanitise into " - " and the film ends up
+    // called "Casino Royale (2006-11-14T12 - 00 - 00Z)".
+    expect(nameFor('{title} ({date})', { ...film, date: '2006-11-14T12:00:00Z' }, 'x').stem).toBe(
+      'Casino Royale (2006-11-14)'
+    )
+    expect(nameFor('{date}', { date: '2006-11-14 12:00:00' }, 'x').stem).toBe('2006-11-14')
+    expect(nameFor('{date}', { date: '2006-11' }, 'x').stem).toBe('2006-11')
+    expect(nameFor('{date}', { date: '2006' }, 'x').stem).toBe('2006')
+  })
+
+  it('leaves a date it does not recognise exactly as it found it', () => {
+    // Cutting at the first thing that looks like a time would turn a date
+    // written some other way into a shorter wrong one.
+    expect(nameFor('{date}', { date: '14 November 2006' }, 'x').stem).toBe('14 November 2006')
+    expect(nameFor('{date}', { date: '20061114' }, 'x').stem).toBe('20061114')
+  })
+
   it('reads the year off the front of the date', () => {
     expect(nameFor('{year}', { date: '2006' }, 'x').stem).toBe('2006')
     expect(nameFor('{year}', { date: '2006-11-14' }, 'x').stem).toBe('2006')

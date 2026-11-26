@@ -31,10 +31,15 @@ export type ReasonTone =
 
 export interface ReasonSummary {
   tone: ReasonTone
-  /** One-line headline naming the problem, for the table cell. */
+  /** One-line headline naming the problem, for sorting and for narrow rooms. */
   headline: string
-  /** Findings beyond the headline one, for a "+N more" hint. */
-  others: number
+  /**
+   * Every finding's title, headline first, then the rest in the same order the
+   * detail pane uses. The table prints the lot: a row that says "+2 more" is a
+   * row that has told you there is something you are not being shown, which is
+   * worse than the two extra lines it was saving.
+   */
+  titles: string[]
   /** Short phrase for what happens about it, e.g. "fixed by remux". */
   outcome: string
   /** Every finding plus the plan's limits, one per line, for the tooltip. */
@@ -67,7 +72,7 @@ export function summarizeReason(result: AnalysisResult): ReasonSummary {
     return {
       tone: 'ok',
       headline: 'Direct plays as-is',
-      others: 0,
+      titles: ['Direct plays as-is'],
       outcome: 'nothing to do',
       detail: 'Every stream, the container and the track flags are already in Plex’s safe set.'
     }
@@ -93,11 +98,15 @@ export function summarizeReason(result: AnalysisResult): ReasonSummary {
   // and leading with a problem the repair already handles buries the one it
   // does not.
   const lead = blocking.length > 0 ? rank(blocking, unresolved)[0] : rank(findings, unresolved)[0]
+  // The lead first, then everything else in the detail pane's own order. The
+  // lead is skipped by identity rather than by title, so two findings that
+  // happen to say the same thing both still show.
+  const rest = rank(findings, unresolved).filter((finding) => finding !== lead)
 
   return {
     tone,
     headline: lead.title,
-    others: findings.length - 1,
+    titles: [lead.title, ...rest.map((finding) => finding.title)],
     outcome: outcomeFor(tone, result),
     detail: detailFor(result, unresolved)
   }
