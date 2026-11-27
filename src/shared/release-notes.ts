@@ -34,6 +34,38 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.3.9',
+    headline:
+      'A repair can no longer die without telling you \u2014 and on Windows, Dolby Vision profile 7 films were all dying of a program that never made it into the installer.',
+    changes: [
+      {
+        title: 'A queue that looked stuck was full of repairs that had already failed',
+        body:
+          'A repair that went wrong in a place nothing was expecting reported nothing at all. The queue did ' +
+          'everything right \u2014 it freed the slot and started the next one \u2014 but the row went on saying ' +
+          '\u201cQueued\u201d for good. Pick eight files, have seven of them fail instantly, and what is left looks ' +
+          'exactly like a broken queue: one repair running and seven rows apparently waiting their turn ' +
+          'behind it. A repair now either says what became of it or the queue says it for them.'
+      },
+      {
+        title: 'Windows never had dovi_tool, so every profile 7 film failed',
+        body:
+          'Converting Dolby Vision profile 7 needs dovi_tool, and the Windows installer has never contained ' +
+          'it. The build fetched it correctly and then failed to put it in place \u2014 the runner unpacks on one ' +
+          'drive and builds on another, and moving between them needs a copy rather than a rename. Fetching ' +
+          'it is allowed to fail without failing the release, so the build went green and said nothing. ' +
+          'Windows builds now ship it, and profile 7 films convert as they always should have.'
+      },
+      {
+        title: 'Save diagnostics… now saves',
+        body:
+          'It did nothing at all \u2014 no file, no dialog, no error. The window had never been given permission ' +
+          'to open a save dialog, so asking for one failed silently. It works, and if it ever fails again it ' +
+          'says so and points at Copy instead.'
+      }
+    ]
+  },
+  {
     version: '0.3.8',
     headline:
       'When something stalls, the app can now say what it is waiting on \u2014 and one unreadable file no longer takes the rest of a batch down with it.',
