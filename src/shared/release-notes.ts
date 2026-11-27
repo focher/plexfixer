@@ -34,6 +34,40 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.3.8',
+    headline:
+      'When something stalls, the app can now say what it is waiting on \u2014 and one unreadable file no longer takes the rest of a batch down with it.',
+    changes: [
+      {
+        title: 'Diagnostics says what the app is waiting on',
+        body:
+          'A queue that appears stuck looks the same whether it is holding while a batch arrives, out of slots, ' +
+          'or sitting on one call to a file server that has not come back \u2014 and the log could not tell them ' +
+          'apart, because a call that hangs never gets as far as logging anything. Queue \u2192 Diagnostics now ' +
+          'opens with every call that started and never finished, and how long ago. Underneath it: where the ' +
+          'queue stands, what every kind of call cost, and a timestamped account of what the app did. Copy it ' +
+          'or save it to a file. Nothing that could be a password or an API key is written into it.'
+      },
+      {
+        title: 'A repair reports itself during the checks that come before it',
+        body:
+          'Two checks run before a repair commits to anything \u2014 whether the tags alone would do, and whether ' +
+          'the header can be edited where it lies rather than the file being rewritten. Both reach the disk, ' +
+          'and on a network share either can take a long time. The row reads \u201cConnecting\u201d throughout, which ' +
+          'on a slow share is indistinguishable from a repair that has not started. They are now timed and ' +
+          'named in the report.'
+      },
+      {
+        title: 'One unreadable file no longer silently cancels the rest of the batch',
+        body:
+          'Every file is re-probed on its way into the queue, which reaches the disk \u2014 so a file moved, ' +
+          'renamed or unmounted since the scan threw, and the throw took the whole batch with it. Every file ' +
+          'after it was never queued and nothing said so. It is now one file\u2019s failure, written into the ' +
+          'report, and the rest of the selection is queued as asked.'
+      }
+    ]
+  },
+  {
     version: '0.3.7',
     headline:
       'The services you already run \u2014 Radarr, Sonarr and Bazarr \u2014 are asked about your files instead of a database being asked to guess at their names.',

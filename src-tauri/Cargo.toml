@@ -1,6 +1,6 @@
 [package]
 name = "plexfixer"
-version = "0.3.7"
+version = "0.3.8"
 description = "Analyze and fix MKV/M4V media files for reliable Plex direct play"
 authors = ["Timothy Weaver"]
 edition = "2021"

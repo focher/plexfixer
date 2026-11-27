@@ -630,6 +630,42 @@ measurements of every repair in the session into one plain-text block to paste
 into a bug report. Each individual repair also still has its own **Copy
 report**.
 
+### When something has stalled
+
+Measurements describe repairs that finished. They say nothing about one that
+has not, which is the case somebody actually writes in about — and a queue that
+appears stuck looks identical whether it is holding while a batch arrives, out
+of slots, or sitting on a single call to a file server that has not come back.
+The job log cannot tell them apart either: a call that hangs never gets as far
+as logging anything, so it leaves a silence rather than a line.
+
+So the same report carries a running account of what the app did, and it opens
+with **the calls that started and never finished** — what each one was, and how
+long ago it began. Anything there for more than a few seconds is where the app
+is stuck. Underneath it:
+
+- **State right now** — how many repairs may run at once, how many are running,
+  how many are waiting, and whether the queue is being held.
+- **Where the time went** — every kind of call totalled: how many, how long
+  altogether, the worst one, and how many failed. A thousand slow reads of a
+  network share reads as one line rather than a thousand.
+- **What the app did** — timestamped, with job ids shortened to eight
+  characters so one file can be followed across the queue, the runner and the
+  bridge.
+
+Every call across the bridge is timed, and every ffmpeg or ffprobe process is
+timed from the moment it starts to the code it exits with. The two checks that
+run *before* a repair commits to anything — whether its tags alone would do,
+and whether its header can be edited where it lies — are named and timed too.
+Those run while the row still says **Connecting**, which on a slow share is
+indistinguishable from a repair that has not started.
+
+Nothing secret is written down. A value is hidden by the name of its field, so
+anything called a key, token, password, credential or authorization is recorded
+as `(hidden)` or `(unset)` and never by value; a URL keeps its path and loses
+its query, because that is where every service here takes its key. The report
+is meant to be pasted somewhere public, and it is safe to.
+
 ## Running it
 
 ```bash
