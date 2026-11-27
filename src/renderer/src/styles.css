@@ -2641,6 +2641,17 @@ button.expander:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+/*
+ * A toolbar note that is reporting a failure rather than a success.
+ *
+ * Same size and place as the "Copied ✓" beside it — the only difference is
+ * that it is not grey, because "could not save" said in the colour of an aside
+ * reads as an aside.
+ */
+.note-bad {
+  color: var(--warn);
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;

@@ -24,7 +24,8 @@
  * declines to touch it, which is what it did before this existed.
  */
 
-import { chmod, mkdir, readdir, rename, rm } from 'node:fs/promises'
+import { chmod, mkdir, readdir, rm } from 'node:fs/promises'
+import { move } from './move.mjs'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -126,7 +127,9 @@ export async function ensureDoviTool({ platformKey, outputDir, workDir, force = 
 
     await mkdir(outputDir, { recursive: true })
     await rm(destination, { force: true })
-    await rename(found, destination)
+    // `move`, not `rename`: the archive is unpacked in a temp directory, which
+    // on the Windows runner is on a different drive from the checkout.
+    await move(found, destination)
     if (!platformKey.startsWith('win32')) await chmod(destination, 0o755)
     return { state: 'fetched', version: VERSION }
   } catch (error) {

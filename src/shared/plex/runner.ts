@@ -293,6 +293,41 @@ export class RepairRunner {
     for (const job of next) this.jobs.set(job.id, job)
   }
 
+  /**
+   * The last word on a repair that threw where nothing was expecting it to.
+   *
+   * Everything inside a repair that can go wrong is caught and reported where
+   * it happens — but "everything" is a claim about code, and it was wrong. A
+   * Dolby Vision conversion with no dovi_tool to run threw before the handler
+   * that would have caught it, the queue freed the slot as it should, the
+   * caller's promise was discarded, and the row went on saying **Queued**
+   * forever. Eight files were picked, seven of them died in a millisecond
+   * each, and the queue looked broken: one repair running and nothing behind
+   * it ever starting, because there was nothing behind it left alive.
+   *
+   * So the queue's own task now ends in this. A repair either reports what
+   * became of it or this does it for them, and the one outcome a row can no
+   * longer have is none at all.
+   */
+  private reportUnexpected(id: string, error: unknown, signal?: AbortSignal): void {
+    const job = this.jobs.get(id)
+    // Already said its piece, or dropped from the list by "Clear queue".
+    if (!job || isFinished(job.state)) return
+
+    const cancelled = signal?.aborted ?? false
+    const text = cancelled ? 'Cancelled' : error instanceof Error ? error.message : String(error)
+    trace('job', `ended without reporting itself: ${text}`, { ref: id, outcome: 'failed' })
+
+    this.update({
+      ...job,
+      state: cancelled ? 'cancelled' : 'failed',
+      stage: 'finished',
+      message: text,
+      finishedAt: Date.now(),
+      log: [...job.log, { at: Date.now(), level: cancelled ? 'warn' : 'error', text }]
+    })
+  }
+
   private update(job: Job): void {
     // A job removed from the list stays removed. A task that was already
     // off the queue when it was dropped still reports its abort, and this
@@ -486,8 +521,12 @@ export class RepairRunner {
       this.update(base)
       void this.queue.add({
         id,
-        run: async () => {
-          await this.justRename(id, result.file.path, outputPath)
+        run: async (signal) => {
+          try {
+            await this.justRename(id, result.file.path, outputPath)
+          } catch (error) {
+            this.reportUnexpected(id, error, signal)
+          }
         }
       })
       return base
@@ -521,7 +560,11 @@ export class RepairRunner {
     void this.queue.add({
       id,
       run: async (signal) => {
-        await this.execute(id, options, outputPath, signal)
+        try {
+          await this.execute(id, options, outputPath, signal)
+        } catch (error) {
+          this.reportUnexpected(id, error, signal)
+        }
       }
     })
 
@@ -1626,9 +1669,12 @@ export class RepairRunner {
 
     const doviToolPath = this.binaries.doviToolPath
     if (!doviToolPath) {
+      // Said to somebody running the app, not building it: the advice used to
+      // be to run a build script, which is no use inside an installed copy.
       throw new Error(
-        'Converting Dolby Vision profile 7 needs dovi_tool, which is not available here. ' +
-          'Run "npm run fetch:ffmpeg" in a development checkout, or turn the conversion off under Compatibility.'
+        'Converting Dolby Vision profile 7 needs dovi_tool, which this build does not have. ' +
+          'Turn the conversion off under Settings \u2192 Compatibility to repair the file as it is, ' +
+          'or update to a build that ships it.'
       )
     }
     const spawnPipeline = this.host.spawnPipeline

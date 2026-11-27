@@ -133,10 +133,11 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: resources/bin
-          # The libs are in the key too: they decide what qt-faststart and
-          # mp4tags are built from, and a cache that outlived a change to one
-          # would ship the old binary.
-          key: ffmpeg-${{ runner.os }}-${{ hashFiles('scripts/fetch-ffmpeg.mjs', 'scripts/lib/qt-faststart.mjs', 'scripts/lib/mp4tags.mjs') }}
+          # Every lib is in the key: they decide what qt-faststart, mp4tags
+          # and dovi_tool are built from or fetched from, and a cache that
+          # outlived a change to one would ship the old binary. dovi-tool.mjs
+          # was missing from this list for as long as it has existed.
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('scripts/fetch-ffmpeg.mjs', 'scripts/lib/qt-faststart.mjs', 'scripts/lib/mp4tags.mjs', 'scripts/lib/dovi-tool.mjs', 'scripts/lib/move.mjs') }}
 
       # Which of this runner's targets the run actually asked for. A dispatch
       # can name targets belonging to the other runner, which is not an error

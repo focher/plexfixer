@@ -221,6 +221,8 @@ export default function JobsPanel({
   const [dropAt, setDropAt] = useState<number>()
   const [copied, setCopied] = useState<string>()
   const [saved, setSaved] = useState<string>()
+  /** Why a save did not happen, when it did not. */
+  const [saveFailed, setSaveFailed] = useState<string>()
   const [hideCompleted, setHideCompleted] = useState(() => readPref('hideCompleted'))
   // Which outcome group the list is narrowed to, if any. Not a preference:
   // it describes this run, and a run is over by the next time the app opens.
@@ -274,12 +276,30 @@ export default function JobsPanel({
     }
   }, [])
 
+  /**
+   * Write the report to a file the user picks.
+   *
+   * The failure is caught and shown. It used to be neither: the save dialog
+   * was not among the things the window is allowed to ask the native side for,
+   * so asking for one threw, the rejection was discarded along with the
+   * promise, and the menu item did nothing whatsoever — no file, no dialog,
+   * no error. A button that silently does nothing is worse than one that is
+   * not there, and the report is most wanted exactly when something else has
+   * already gone wrong.
+   */
   const save = useCallback(async () => {
+    setSaveFailed(undefined)
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
-    const path = await onSave(`plexfixer-diagnostics-${stamp}.txt`, diagnostics())
-    if (!path) return
-    setSaved(path)
-    setTimeout(() => setSaved(undefined), 6000)
+    try {
+      const path = await onSave(`plexfixer-diagnostics-${stamp}.txt`, diagnostics())
+      // No path means the save dialog was dismissed, which is an answer.
+      if (!path) return
+      setSaved(path)
+      setTimeout(() => setSaved(undefined), 6000)
+    } catch (error) {
+      setSaveFailed(error instanceof Error ? error.message : String(error))
+      setTimeout(() => setSaveFailed(undefined), 10_000)
+    }
   }, [onSave, diagnostics])
 
   const finished = jobs.filter((job) => job.state !== 'queued' && job.state !== 'running')
@@ -376,13 +396,15 @@ export default function JobsPanel({
    * long enough to wrap the toolbar onto two rows and push the buttons around,
    * and the user chose the folder a moment ago in a save dialog.
    */
-  const note = saved
-    ? { text: 'Diagnostics saved ✓', title: saved }
-    : copied === 'diagnostics'
-      ? { text: 'Diagnostics copied ✓' }
-      : copied === 'all'
-        ? { text: 'Reports copied ✓' }
-        : undefined
+  const note = saveFailed
+    ? { text: 'Could not save — use Copy instead', title: saveFailed, bad: true }
+    : saved
+      ? { text: 'Diagnostics saved ✓', title: saved }
+      : copied === 'diagnostics'
+        ? { text: 'Diagnostics copied ✓' }
+        : copied === 'all'
+          ? { text: 'Reports copied ✓' }
+          : undefined
 
   if (jobs.length === 0) {
     return (
@@ -390,7 +412,7 @@ export default function JobsPanel({
         <div className="toolbar queue-toolbar">
           <span className="spacer" />
           {note ? (
-            <span className="muted nowrap" title={note.title}>
+            <span className={note.bad ? 'note-bad nowrap' : 'muted nowrap'} title={note.title}>
               {note.text}
             </span>
           ) : null}
@@ -410,7 +432,7 @@ export default function JobsPanel({
         <span className="spacer" />
         {hideSwitch}
         {note ? (
-          <span className="muted nowrap" title={note.title}>
+          <span className={note.bad ? 'note-bad nowrap' : 'muted nowrap'} title={note.title}>
             {note.text}
           </span>
         ) : null}

@@ -11,6 +11,7 @@
     "core:window:allow-set-focus",
     "core:event:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "dialog:allow-message",
     "dialog:allow-confirm",
     "opener:allow-open-url",
