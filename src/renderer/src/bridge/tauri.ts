@@ -14,7 +14,8 @@
  *     editing Rust. Same for the command line, which `parseLaunchArgs` reads.
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './ipc.js'
+import { setFact, timed, trace } from '@shared/trace.js'
 import { listen } from '@tauri-apps/api/event'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -212,6 +213,12 @@ async function ensureRunner(): Promise<RepairRunner> {
     runner.setConcurrency(ready.settings.concurrency)
     runner.setHost(ready.host)
   }
+  // The handful of settings that decide how a queue behaves, stated as they
+  // are now rather than left to be worked out from a history of changes.
+  setFact('files at once', String(ready.settings.concurrency))
+  setFact('host', `${ready.host.kind} — ${ready.host.label}`)
+  setFact('output', ready.settings.outputPlacement)
+  setFact('ffmpeg', binaries.ffmpegPath)
   return runner
 }
 
@@ -969,29 +976,58 @@ function buildApi() {
           const settings = withOutput(ready.settings, output)
 
           const jobs: Job[] = []
-          for (const request of requests) {
+          const refused: string[] = []
+          for (const [index, request] of requests.entries()) {
             if (batch.cancelled) break
-            // Analysed now, with today's settings, so the plan matches what the
-            // table shows rather than whatever was true when it was scanned.
-            const probed = await probeFile(request.file.path, {
-              ffprobePath: ready.ffprobePath,
-              host: ready.host
-            })
-            // Checked again: the probe is the slow part, and a file probed
-            // before the click must not be queued after it.
-            if (batch.cancelled) break
-            jobs.push(
-              active.enqueue({
-                // `edits` is set when this came from the metadata screen: the
-                // plan then includes what was asked for by hand.
-                result: analyzeFile(probed, settings, request.edits),
-                settings,
-                mode: repairModeFor(probed.path, overrides, settings.defaultMode, mode),
-                caps: environment.capabilities,
-                scanRoot: request.scanRoot
-              })
-            )
+            /*
+             * One file's failure is one file's failure.
+             *
+             * This used to be bare. Probing reaches the disk, so a file that
+             * has been moved, unmounted or locked since the scan throws here —
+             * and the throw took the whole batch with it: every file after it
+             * was never queued, and nothing said so, because the click that
+             * started it had nothing left to report to. The rest of the
+             * selection simply did not happen.
+             */
+            try {
+              // Analysed now, with today's settings, so the plan matches what
+              // the table shows rather than whatever was true when it was
+              // scanned.
+              const probed = await timed(
+                'batch',
+                `probing ${request.file.path} (${index + 1} of ${requests.length})`,
+                () =>
+                  probeFile(request.file.path, {
+                    ffprobePath: ready.ffprobePath,
+                    host: ready.host
+                  })
+              )
+              // Checked again: the probe is the slow part, and a file probed
+              // before the click must not be queued after it.
+              if (batch.cancelled) break
+              jobs.push(
+                active.enqueue({
+                  // `edits` is set when this came from the metadata screen: the
+                  // plan then includes what was asked for by hand.
+                  result: analyzeFile(probed, settings, request.edits),
+                  settings,
+                  mode: repairModeFor(probed.path, overrides, settings.defaultMode, mode),
+                  caps: environment.capabilities,
+                  scanRoot: request.scanRoot
+                })
+              )
+            } catch (error) {
+              const why = error instanceof Error ? error.message : String(error)
+              refused.push(`${request.file.path}: ${why}`)
+              trace('batch', `could not queue ${request.file.path}`, { outcome: 'failed', detail: why })
+            }
           }
+          if (refused.length > 0) {
+            trace('batch', `${refused.length} of ${requests.length} files could not be queued`, {
+              detail: refused.join('\n')
+            })
+          }
+          trace('batch', `queued ${jobs.length} of ${requests.length}${batch.cancelled ? ' (cancelled part-way)' : ''}`)
           return jobs
         } finally {
           batch.finish()

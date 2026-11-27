@@ -22,6 +22,7 @@ import { blockedReasons } from './plex/blocked.js'
 import { explainProblem, nameFor, templateFor } from './plex/naming.js'
 import { tagsOf } from './plex/metadata.js'
 import { diagnoseMetrics, formatBytes, formatMs, metricsLines, phase, summarizeMetrics } from './metrics.js'
+import { traceReport, traceTotals } from './trace.js'
 
 export interface ReportContext {
   job: Job
@@ -388,6 +389,15 @@ export interface DiagnosticsContext {
   /** How the scanned library breaks down, for context on what was repaired. */
   library?: { total: number; passed: number; fixable: number; reencode: number; blocked: number }
   platform?: string
+  /**
+   * Leave out the running account of what the app did.
+   *
+   * Only for tests and for a caller that wants the summary alone; the whole
+   * point of the report is that the trace is in it, because the questions it
+   * answers — which call is slow, which one never came back — cannot be
+   * answered from the job log.
+   */
+  trace?: false
 }
 
 /** The settings that decide how fast a repair runs, rather than what it does. */
@@ -495,6 +505,13 @@ export function buildDiagnosticsReport(context: DiagnosticsContext): string {
     if (slowest) {
       out.push(`longest repair    ${formatMs(phase(slowest.metrics!, 'total')?.ms ?? 0)} — ${slowest.sourcePath}`)
     }
+  }
+
+  if (context.trace !== false) {
+    out.push(section('Where the time went'))
+    out.push(...traceTotals())
+    out.push(section('What the app did'))
+    out.push(...traceReport())
   }
 
   return out.join('\n')

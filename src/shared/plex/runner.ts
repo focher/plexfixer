@@ -7,6 +7,7 @@
  */
 
 import { newId } from '../ids.js'
+import { begin, timed, trace } from '../trace.js'
 import type {
   AnalysisResult,
   AppSettings,
@@ -309,6 +310,7 @@ export class RepairRunner {
   private setStage(id: string, stage: JobStage): void {
     const job = this.jobs.get(id)
     if (!job || job.stage === stage) return
+    trace('job', `stage ${job.stage ?? 'none'} -> ${stage}`, { ref: id })
     this.update({ ...job, stage })
   }
 
@@ -443,6 +445,8 @@ export class RepairRunner {
     // In the list before anything reports on it, because `update` will not
     // add a job it has not seen.
     this.jobs.set(id, base)
+    // The one line that ties a job id in the rest of the log to a file.
+    trace('job', `queued ${result.file.path} (${result.plan.strategy}, mode ${mode})`, { ref: id })
 
     if (mode === 'report') {
       const job: Job = {
@@ -969,9 +973,28 @@ export class RepairRunner {
     outputPath: string,
     signal: AbortSignal
   ): Promise<void> {
-    const { result, settings, caps } = options
+    const { result } = options
     const current = this.jobs.get(id)
     if (!current) return
+    const finishedExecuting = begin('job', `repairing ${this.host.paths.basename(result.file.path)}`, { ref: id })
+    try {
+      await this.repair(id, options, outputPath, signal, current)
+      finishedExecuting()
+    } catch (error) {
+      finishedExecuting({ failed: error })
+      throw error
+    }
+  }
+
+  /** The repair itself; `execute` wraps this so the report can time it. */
+  private async repair(
+    id: string,
+    options: EnqueueOptions,
+    outputPath: string,
+    signal: AbortSignal,
+    current: Job
+  ): Promise<void> {
+    const { result, settings, caps } = options
 
     // Language tags and default flags are fixed-width fields in the moov
     // atom, so they can be written straight into the file. Rewriting 6 GB
@@ -984,19 +1007,38 @@ export class RepairRunner {
     // Tags first: a tag edit is the one repair that needs neither a copy nor a
     // header patch, and asking about it before the patcher keeps the patcher's
     // refusal reasons about the things it actually refuses.
-    if (await this.tryTagsOnly(id, options, outputPath)) return
-    if (await this.tryInPlace(id, options, outputPath)) return
+    //
+    // Both of these run while the row still reads "Queued", because neither
+    // has committed to anything yet — which is why they are traced by name. A
+    // repair that appears not to have started is usually one of these waiting
+    // on a file server, and without this the log shows nothing at all.
+    if (await timed('job', 'checking whether tags alone would do', () => this.tryTagsOnly(id, options, outputPath), id)) {
+      return
+    }
+    if (await timed('job', 'checking whether the header can be edited in place', () => this.tryInPlace(id, options, outputPath), id)) {
+      return
+    }
     const checkMs = performance.now() - checkStarted
 
     // Before the repair, not after: the retimed tracks are inputs to it. The
     // measurement reads the audio from end to end, which is why it is only
     // done when the plan actually asked for it.
-    const retimedSubtitles = await this.retimeSubtitles(id, result, settings, signal)
+    const retimedSubtitles = await timed(
+      'job',
+      'checking subtitle timing',
+      () => this.retimeSubtitles(id, result, settings, signal),
+      id
+    )
     if (signal.aborted) return
 
     // Likewise an input: the converted Dolby Vision stream is a file on disk
     // by the time ffmpeg is asked to mux anything.
-    const convertedVideo = await this.convertDolbyVision7(id, result, signal)
+    const convertedVideo = await timed(
+      'job',
+      'converting Dolby Vision if needed',
+      () => this.convertDolbyVision7(id, result, signal),
+      id
+    )
     if (signal.aborted) {
       if (convertedVideo) await this.host.remove(convertedVideo.path).catch(() => {})
       return

@@ -5,6 +5,8 @@
  * cancel one or all of them, tell me when each finishes".
  */
 
+import { setFact, trace } from '../trace.js'
+
 export interface QueuedTask<T> {
   id: string
   run: (signal: AbortSignal) => Promise<T>
@@ -16,6 +18,8 @@ export class TaskQueue {
   private active = 0
   /** How many callers are currently keeping new tasks from starting. */
   private holds = 0
+  /** The last reason nothing started, so the same one is not said twice. */
+  private lastBlocked: string | undefined
 
   constructor(private concurrency: number) {}
 
@@ -28,7 +32,10 @@ export class TaskQueue {
    * until enough have finished to be back under the limit.
    */
   setConcurrency(value: number): void {
+    const was = this.concurrency
     this.concurrency = Math.max(1, Math.min(16, value))
+    if (was !== this.concurrency) trace('queue', `how many run at once: ${was} -> ${this.concurrency}`)
+    this.report()
     this.pump()
   }
 
@@ -46,11 +53,15 @@ export class TaskQueue {
    */
   hold(): () => void {
     this.holds++
+    trace('queue', `held, so nothing new starts (holds now ${this.holds})`)
+    this.report()
     let released = false
     return () => {
       if (released) return
       released = true
       this.holds--
+      trace('queue', `hold released (holds now ${this.holds})`)
+      this.report()
       this.pump()
     }
   }
@@ -84,6 +95,8 @@ export class TaskQueue {
           }
         }
       })
+      trace('queue', 'added', { ref: task.id })
+      this.report()
       this.pump()
     })
   }
@@ -138,8 +151,36 @@ export class TaskQueue {
   }
 
   cancelAll(): void {
+    trace('queue', `cancel all: ${this.pending.length} waiting dropped, ${this.controllers.size} running aborted`)
     this.pending.length = 0
     for (const controller of this.controllers.values()) controller.abort()
+    this.report()
+  }
+
+  /**
+   * Say where the queue stands, for the report.
+   *
+   * A state rather than an event: the question someone asks about a queue that
+   * has not moved is what it looks like *now*, and a history of changes
+   * answers that only by being read to the end.
+   */
+  private report(): void {
+    setFact(
+      'queue',
+      `${this.active} of ${this.concurrency} running, ${this.pending.length} waiting` +
+        (this.holds > 0 ? `, HELD by ${this.holds}` : '')
+    )
+    setFact('queue running', this.controllers.size === 0 ? '(none)' : [...this.controllers.keys()].join(' '))
+  }
+
+  /** Why nothing started, when nothing did and something was waiting. */
+  private blockedBecause(): string | undefined {
+    if (this.pending.length === 0) return undefined
+    if (this.holds > 0) return `held by ${this.holds} caller${this.holds === 1 ? '' : 's'} still adding a batch`
+    if (this.active >= this.concurrency) {
+      return this.concurrency === 1 ? 'the only slot is busy' : `all ${this.concurrency} slots are busy`
+    }
+    return undefined
   }
 
   private pump(): void {
@@ -149,6 +190,9 @@ export class TaskQueue {
       const controller = new AbortController()
       this.controllers.set(task.id, controller)
       this.active++
+      const startedAt = Date.now()
+      trace('queue', `started (${this.active} of ${this.concurrency} now running)`, { ref: task.id })
+      this.report()
 
       void task
         .run(controller.signal)
@@ -159,8 +203,21 @@ export class TaskQueue {
         .finally(() => {
           this.controllers.delete(task.id)
           this.active--
+          trace('queue', 'finished', { ref: task.id, ms: Date.now() - startedAt })
+          this.report()
           this.pump()
         })
+    }
+
+    /*
+     * Said once, not once per file. A batch of eighty arrives one at a time
+     * and every one of them finds the queue held, which would be eighty
+     * identical lines in the middle of the one stretch of log worth reading.
+     */
+    const blocked = this.blockedBecause()
+    if (blocked !== this.lastBlocked) {
+      this.lastBlocked = blocked
+      if (blocked) trace('queue', `nothing is starting: ${blocked}`)
     }
   }
 }

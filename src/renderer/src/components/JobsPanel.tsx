@@ -341,18 +341,18 @@ export default function JobsPanel({
   const diagnosticsMenu = (
     <MenuButton
       label="Diagnostics"
-      title="Copy or save a report of this session, for a bug report"
+      title="Copy or save a report of this session — including what is still running and what has stalled"
       items={[
         {
           key: 'copy',
           label: 'Copy diagnostics',
-          hint: 'The build, the settings and every measurement from this session',
+          hint: 'The build, the settings, every measurement — and what the app is waiting on',
           onSelect: () => void copy('diagnostics', diagnostics())
         },
         {
           key: 'save',
           label: 'Save diagnostics…',
-          hint: 'The same report, written to a file you pick',
+          hint: 'The same report, written to a file you pick — better when a queue has stalled',
           onSelect: () => void save()
         },
         {

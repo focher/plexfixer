@@ -8,11 +8,12 @@
  * code a host backed by `node:fs`, and the remote one a host backed by SSH.
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './ipc.js'
 import { listen } from '@tauri-apps/api/event'
 import type { HostEntry, HostProcess, HostStat, RepairHost, ExecOptions } from '@shared/host.js'
 import type { HostKeyTools } from '@shared/plex/hostkey.js'
 import { newId } from '@shared/ids.js'
+import { begin } from '@shared/trace.js'
 import { pathsFor } from '@shared/paths.js'
 import { kindOfFilesystem, parseDf } from '@shared/plex/volumes.js'
 import type { VolumeInfo } from '@shared/types.js'
@@ -74,10 +75,17 @@ export function tauriHost(platform: string): RepairHost {
    * single process are watched identically — `start` is the only difference
    * between them, and it is the argument.
    */
-  function watched(start: (id: string) => Promise<unknown>): HostProcess {
+  function watched(start: (id: string) => Promise<unknown>, what: string): HostProcess {
     const id = newId()
     const stdout: ((chunk: string) => void)[] = []
     const stderr: ((chunk: string) => void)[] = []
+    /*
+     * Timed from here to the end event, not to the end of `process_start`.
+     * Starting a process returns at once; what is worth knowing is how long
+     * the process ran and what it exited with, and that arrives as an event.
+     * A process that never ends leaves this open, which is the point.
+     */
+    const ran = begin('proc', what, { ref: id })
 
     outputListeners.set(id, (event) => {
       for (const listener of event.stream === 'stdout' ? stdout : stderr) listener(event.text)
@@ -87,6 +95,11 @@ export function tauriHost(platform: string): RepairHost {
       endedListeners.set(id, (event) => {
         outputListeners.delete(id)
         endedListeners.delete(id)
+        ran(
+          event.code === 0
+            ? undefined
+            : { failed: `exit ${event.code ?? '?'}${event.signalName ? ` (${event.signalName})` : ''}` }
+        )
         resolve({ code: event.code, signalName: event.signalName })
       })
 
@@ -95,6 +108,7 @@ export function tauriHost(platform: string): RepairHost {
         .catch((error: unknown) => {
           outputListeners.delete(id)
           endedListeners.delete(id)
+          ran({ failed: error })
           reject(error instanceof Error ? error : new Error(String(error)))
         })
     })
@@ -160,13 +174,17 @@ export function tauriHost(platform: string): RepairHost {
       invoke('find_media', { roots, extensions, recursive }),
 
     spawnProcess(command: string, args: string[]): HostProcess {
-      return watched((id) => invoke('process_start', { id, command, args }))
+      const name = command.split(/[\\/]/).pop() ?? command
+      return watched((id) => invoke('process_start', { id, command, args }), `${name} ${args.join(' ')}`.slice(0, 400))
     },
 
     spawnPipeline(stages: readonly { command: string; args: string[] }[]): HostProcess {
       // One id for the whole pipeline: the stages share a stderr stream from
       // the caller's point of view, and stopping it stops all of them.
-      return watched((id) => invoke('process_start_pipeline', { id, stages }))
+      return watched(
+        (id) => invoke('process_start_pipeline', { id, stages }),
+        stages.map((stage) => (stage.command.split(/[\\/]/).pop() ?? stage.command)).join(' | ')
+      )
     },
 
     kill: (marker: string): Promise<void> => invoke('process_kill_matching', { marker })
