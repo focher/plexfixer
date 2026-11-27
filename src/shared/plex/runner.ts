@@ -757,7 +757,7 @@ export class RepairRunner {
 
     const job = this.jobs.get(id)
     if (!job) return false
-    this.update({ ...job, state: 'running', stage: 'planning', startedAt: Date.now(), command: [] })
+    this.update({ ...job, state: 'running', stage: 'planning', startedAt: job.startedAt ?? Date.now(), command: [] })
     this.log(id, 'info', 'Planned actions', describePlan(result))
     // An instant clone before the edit, where the volume can make one: it
     // shares the file's data, so it costs no time and almost no space.
@@ -930,7 +930,13 @@ export class RepairRunner {
     const args = buildMp4TagsCommand(result.file.path, tags)
     if (args.length === 0) return false
 
-    this.update({ ...job, state: 'running', stage: 'planning', startedAt: Date.now(), command: [mp4tags, ...args] })
+    this.update({
+      ...job,
+      state: 'running',
+      stage: 'planning',
+      startedAt: job.startedAt ?? Date.now(),
+      command: [mp4tags, ...args]
+    })
     this.log(id, 'info', 'Planned actions', describePlan(result))
 
     // The same instant clone the header editor takes: it shares the file's
@@ -1039,13 +1045,25 @@ export class RepairRunner {
   ): Promise<void> {
     const { result, settings, caps } = options
 
+    /*
+     * Running from here, not from the mux.
+     *
+     * The row used to go on saying "Queued" until ffmpeg was about to be
+     * handed a command, and everything before that — the two checks below, a
+     * subtitle pass, and a Dolby Vision conversion that reads the whole film —
+     * happened under a word that means "has not started". A profile 7
+     * conversion of a 60 GB film is an hour of work spent looking like a file
+     * waiting its turn behind something else. The stage says which part of it
+     * is happening; the state only has to be true.
+     */
+    this.update({ ...current, state: 'running', stage: 'connecting', startedAt: Date.now() })
+
     // Language tags and default flags are fixed-width fields in the moov
     // atom, so they can be written straight into the file. Rewriting 6 GB
     // across a network share to change four bytes is the slowest thing this
     // app does, and for most of a real library it is all a repair amounts to.
     // Reaching the file at all is a step of its own when it is on another
     // machine: an unreachable host hangs here, not in ffmpeg.
-    this.setStage(id, 'connecting')
     const checkStarted = performance.now()
     // Tags first: a tag edit is the one repair that needs neither a copy nor a
     // header patch, and asking about it before the patcher keeps the patcher's
@@ -1107,11 +1125,14 @@ export class RepairRunner {
 
     // Re-read rather than reusing the snapshot above: `tryInPlace` logs why it
     // gave up, and spreading the older copy would drop that entry.
+    const beforeFfmpeg = this.jobs.get(id) ?? current
     this.update({
-      ...(this.jobs.get(id) ?? current),
+      ...beforeFfmpeg,
       state: 'running',
       stage: 'planning',
-      startedAt: Date.now(),
+      // Kept from when the repair actually began, which is before this: a
+      // Dolby Vision conversion that ran first is part of what it cost.
+      startedAt: beforeFfmpeg.startedAt ?? Date.now(),
       command: qtCommand ?? ffmpegCommand,
       message: encoderLabel ? `Encoding with ${encoderLabel}` : undefined
     })
@@ -1745,12 +1766,48 @@ export class RepairRunner {
       if (errors.length > 40) errors.splice(0, errors.length - 40)
     })
 
+    /*
+     * Say how far it has got, by looking at what it has written.
+     *
+     * Neither program will tell us. ffmpeg's progress goes down the pipe into
+     * dovi_tool, and dovi_tool draws a bar for a terminal rather than
+     * reporting to a caller. So the file itself is asked, every few seconds.
+     *
+     * No percentage, because there is no honest denominator: the result is
+     * the video track without its enhancement layer, and how much smaller
+     * that is than the film is exactly what the conversion is deciding. A
+     * number climbing is the truth; a percentage would be a guess that stops
+     * at seventy.
+     *
+     * It is also a sign of life. A running repair that reports nothing for
+     * twenty seconds is marked as having gone quiet, and this one reported
+     * nothing for the length of a feature film.
+     */
+    let watching = true
+    const watch = async (): Promise<void> => {
+      while (watching && !signal.aborted) {
+        await new Promise((resolve) => setTimeout(resolve, CONVERT_REPORT_MS))
+        if (!watching || signal.aborted) return
+        const soFar = (await this.host.stat(converted).catch(() => undefined))?.sizeBytes
+        if (soFar == null) continue
+        const job = this.jobs.get(jobId)
+        if (!job || job.state !== 'running') continue
+        this.update({
+          ...job,
+          progress: { ...job.progress, bytesWritten: soFar },
+          message: `Converting Dolby Vision — ${formatBytes(soFar)} written`
+        })
+      }
+    }
+    void watch()
+
     const onAbort = (): void => process.terminate()
     signal.addEventListener('abort', onAbort, { once: true })
     let ended: { code: number | null; signalName?: string }
     try {
       ended = await process.closed
     } finally {
+      watching = false
       signal.removeEventListener('abort', onAbort)
     }
 
@@ -1982,6 +2039,15 @@ function describeFfmpegFailure(error: unknown): string {
  * Short, and only paid when the share and ffmpeg disagree: a local disk
  * answers correctly first time and never waits at all.
  */
+/**
+ * How often a Dolby Vision conversion says how far it has got.
+ *
+ * One `stat` of a file being written, which costs nothing even across a
+ * share. Often enough that a row never looks dead, rarely enough that an
+ * hour of it is a few hundred updates rather than a few hundred thousand.
+ */
+const CONVERT_REPORT_MS = 3000
+
 const SETTLE_PAUSES_MS = [500, 1500, 3000]
 
 /**

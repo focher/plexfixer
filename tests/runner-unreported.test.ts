@@ -102,6 +102,37 @@ async function settles(instance: RepairRunner, id: string, timeoutMs = 20_000): 
   }
 }
 
+describe('a repair that has started says so', () => {
+  /*
+   * The row used to go on saying "Queued" until ffmpeg was about to be handed
+   * a command — and everything before that point reaches the disk: two
+   * checks, a subtitle pass, and a Dolby Vision conversion that reads the
+   * whole film. A profile 7 conversion of a 60 GB film is an hour of work
+   * spent under a word that means it has not begun, which is most of why a
+   * working queue looked like a stuck one.
+   */
+  it('is running, not queued, while the steps before ffmpeg are happening', async () => {
+    const { instance, updates } = runner(1)
+    const job = queue(instance, 'A')
+    await settles(instance, job.id)
+    // The first thing reported after the job is queued is that it is running.
+    const first = updates.find((one) => one.id === job.id && one.state !== 'queued')
+    expect(first?.state).toBe('running')
+    expect(first?.stage).toBe('connecting')
+  }, 30_000)
+
+  it('counts the time from when it began, not from the mux', async () => {
+    const { instance, updates } = runner(1)
+    const job = queue(instance, 'A')
+    const first = updates.find((one) => one.id === job.id && one.startedAt != null)?.startedAt
+    const settled = await settles(instance, job.id)
+    expect(first).toBeDefined()
+    // The same instant throughout: a conversion that ran first is part of
+    // what the repair cost, not something that happened before it started.
+    expect(settled.startedAt).toBe(first)
+  }, 30_000)
+})
+
 describe('a repair that throws without reporting itself', () => {
   it('is marked failed rather than left saying it is queued', async () => {
     const { instance } = runner()
@@ -142,12 +173,21 @@ describe('a repair that throws without reporting itself', () => {
   }, 30_000)
 
   it('leaves a job that was cleared from the queue cleared', async () => {
-    // A row removed by "Clear queue" must not come back as a failure: the
-    // report is of something the user has already said they do not want.
+    /*
+     * A row removed by "Clear queue" must not come back as a failure: it is a
+     * report about something the user has already said they do not want.
+     *
+     * The one slot is taken by the first repair, so the second is genuinely
+     * waiting — which is what "Clear queue" is about. The first is left alone
+     * on purpose: it has started, and stopping something that has started is
+     * what Cancel is for.
+     */
     const { instance } = runner(1)
-    const job = queue(instance, 'A')
-    instance.clearQueued()
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    expect(instance.list().some((one) => one.id === job.id)).toBe(false)
+    const running = queue(instance, 'A')
+    const waiting = queue(instance, 'B')
+    expect(instance.clearQueued()).toBe(1)
+
+    await settles(instance, running.id)
+    expect(instance.list().some((one) => one.id === waiting.id)).toBe(false)
   }, 30_000)
 })
