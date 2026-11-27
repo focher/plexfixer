@@ -34,6 +34,32 @@ export interface ReleaseNote {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '0.3.10',
+    headline:
+      'A repair says it is running while it is running, and a Dolby Vision conversion says how far it has got.',
+    changes: [
+      {
+        title: 'A repair no longer says \u201cQueued\u201d for an hour while it works',
+        body:
+          'A repair was not marked as running until ffmpeg was about to be handed a command \u2014 and everything ' +
+          'before that point reaches the disk: the checks for an in-place edit, a subtitle pass, and a Dolby ' +
+          'Vision conversion that reads the whole film. Converting a 60 GB profile 7 film is an hour of work ' +
+          'that was spent under a word meaning it had not begun, which is most of why a queue doing exactly ' +
+          'what it should looked like one that had died. The time a repair took is measured from the same ' +
+          'moment now, so a conversion that ran first counts as part of what it cost.'
+      },
+      {
+        title: 'A Dolby Vision conversion reports what it has written',
+        body:
+          'Neither program in it will say: ffmpeg\u2019s progress goes down the pipe into dovi_tool, and dovi_tool ' +
+          'draws a progress bar for a terminal rather than reporting to whatever started it. So the file ' +
+          'being written is asked its size every few seconds, and the row says how much is there. No ' +
+          'percentage \u2014 how much smaller the result is than the film is exactly what the conversion is ' +
+          'deciding, and a percentage would be a guess that stops at seventy.'
+      }
+    ]
+  },
+  {
     version: '0.3.9',
     headline:
       'A repair can no longer die without telling you \u2014 and on Windows, Dolby Vision profile 7 films were all dying of a program that never made it into the installer.',
